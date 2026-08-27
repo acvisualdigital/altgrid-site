@@ -16,17 +16,18 @@ values
     '{}'::jsonb
   ),
   (
-    'PRO', 'Pro', 10, true, true, 20, 100,
+    'PRO', 'Pro', 6, true, true, 20, 100,
     '{"basic_grids":true,"fullscreen_sessions":true,"game_presets":true,"advanced_grids":true,"eco_mode":true,"session_restore":true,"founder_badge":false,"beta_features":false}'::jsonb,
     '{}'::jsonb
   ),
   (
-    'FOUNDER', 'Founder', 20, true, true, 30, 200,
+    'FOUNDER', 'Founder', 15, true, true, 30, 200,
     '{"basic_grids":true,"fullscreen_sessions":true,"game_presets":true,"advanced_grids":true,"eco_mode":true,"session_restore":true,"founder_badge":true,"beta_features":true}'::jsonb,
     '{}'::jsonb
   )
 on conflict (code) do update
 set
+  max_accounts = excluded.max_accounts,
   entitlement_rank = excluded.entitlement_rank,
   features = excluded.features,
   updated_at = now();
@@ -55,7 +56,8 @@ select
 from (
   values
     ('PRO_LIFETIME', 'PRO Lifetime', 'Acesso vitalício ao plano PRO.', 'PRO', 24.99),
-    ('FOUNDER_LIFETIME', 'Founder Lifetime', 'Acesso vitalício ao plano Founder.', 'FOUNDER', 99.99)
+    ('FOUNDER_LIFETIME', 'Founder Lifetime', 'Acesso vitalício ao plano Founder.', 'FOUNDER', 99.99),
+    ('FOUNDER_UPGRADE', 'Founder Upgrade', 'Upgrade do PRO para o plano Founder.', 'FOUNDER', 75.00)
 ) as seed(code, name, description, plan_code, price_amount)
 join public.plans on plans.code = seed.plan_code
 on conflict (code) do update

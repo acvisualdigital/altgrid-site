@@ -300,7 +300,7 @@ export class SupabaseRepository implements
     const { data, error } = await this.client
       .from('products')
       .select('code,name,description,price_amount,currency,lifetime')
-      .in('code', ['PRO_LIFETIME', 'FOUNDER_LIFETIME'])
+      .in('code', ['PRO_LIFETIME', 'FOUNDER_LIFETIME', 'FOUNDER_UPGRADE'])
       .eq('enabled', true)
       .not('price_amount', 'is', null)
       .gt('price_amount', 0)

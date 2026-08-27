@@ -2095,15 +2095,23 @@ export class AuthApp {
             ${uiIcon('chevron')}
           </summary>
           <div class="menu-popover menu-popover--up sidebar-profile-popover" aria-label="Conta e plano">
+            <div class="sidebar-profile-popover__identity">
+              <span class="profile-avatar">${escapeHtml(this.profileDisplayName().slice(0, 1).toUpperCase())}</span>
+              <div><strong>${escapeHtml(this.profileDisplayName())}</strong><small>Conta AltGrid</small></div>
+            </div>
             <div class="sidebar-profile-popover__plan">
-              <small>Plano atual</small>
+              <div class="sidebar-profile-popover__plan-label"><small>Plano atual</small><span class="sidebar-profile-popover__plan-dot"></span></div>
               <div><strong>${escapeHtml(this.renderPlanName())}</strong><span>${escapeHtml(this.renderSessionLimitSummary(activeSessions))}</span></div>
             </div>
-            <button class="menu-item" data-open-dialog="my-plan" type="button">Meu plano</button>
-            <button class="menu-item" data-open-dialog="about" type="button">Minha conta</button>
-            <button class="menu-item" data-open-dialog="settings" type="button">Configurações</button>
-            <a class="menu-item" href="/admin">Painel administrativo</a>
-            <button class="menu-item menu-item--danger" id="logout-button" type="button">Sair</button>
+            <div class="sidebar-profile-popover__actions">
+              <button class="menu-item" data-open-dialog="my-plan" type="button"><span><i aria-hidden="true">◆</i>Meu plano</span><b aria-hidden="true">›</b></button>
+              <button class="menu-item" data-open-dialog="about" type="button"><span><i aria-hidden="true">◎</i>Minha conta</span><b aria-hidden="true">›</b></button>
+              <button class="menu-item" data-open-dialog="settings" type="button"><span><i aria-hidden="true">⚙</i>Configurações</span><b aria-hidden="true">›</b></button>
+            </div>
+            <div class="sidebar-profile-popover__footer-actions">
+              <a class="menu-item" href="/admin"><span><i aria-hidden="true">▣</i>Painel administrativo</span><b aria-hidden="true">↗</b></a>
+              <button class="menu-item menu-item--danger" id="logout-button" type="button"><span><i aria-hidden="true">↪</i>Sair</span></button>
+            </div>
           </div>
         </details>
       </aside>
@@ -2320,7 +2328,7 @@ export class AuthApp {
     }
 
     const communityStats = currentChannel?.type === 'global' && this.appMetrics
-      ? `<span class="chat-community-stats" title="Ativos nos últimos ${Math.round(this.appMetrics.active_window_seconds / 60)} minutos"><strong><i aria-hidden="true"></i>${this.appMetrics.users.active.toLocaleString('pt-BR')} online</strong><span>${this.appMetrics.users.total.toLocaleString('pt-BR')} usuários</span></span>`
+      ? `<div class="chat-community-stats" title="Ativos nos últimos ${Math.round(this.appMetrics.active_window_seconds / 60)} minutos"><span class="chat-community-stat chat-community-stat--online"><i aria-hidden="true"></i><strong>${this.appMetrics.users.active.toLocaleString('pt-BR')}</strong><small>online</small></span><span class="chat-community-stat"><strong>${this.appMetrics.users.total.toLocaleString('pt-BR')}</strong><small>usuários</small></span></div>`
       : ''
 
     return `
@@ -3225,7 +3233,9 @@ export class AuthApp {
     const currentPlan = this.permissionService.getCurrentPlan()
     const currentLimit = this.permissionService.getAccountLimit()
     const productFor = (plan: 'FOUNDER' | 'PRO'): PublicProduct | null =>
-      this.products.find((product) => product.code === `${plan}_LIFETIME`) ?? null
+      this.products.find((product) => product.code === (plan === 'FOUNDER' && currentPlan === 'PRO'
+        ? 'FOUNDER_UPGRADE'
+        : `${plan}_LIFETIME`)) ?? null
 
     return `
       <dialog class="modal modal--plans" id="app-dialog" aria-labelledby="dialog-title">
@@ -3235,20 +3245,24 @@ export class AuthApp {
           <p>Mais sessões, a mesma privacidade local.</p>
         </div>
         <div class="plan-list">
-          ${this.renderPlanOption('FREE', 'Huntera: 3 · demais jogos: 2', currentPlan, null)}
+          ${this.renderPlanOption('FREE', '3 Huntera · 2 nos demais jogos', 'Entrada', currentPlan, null, ['Recursos essenciais', 'Presets de jogos', 'Privacidade local'])}
           ${this.renderPlanOption(
             'PRO',
-            currentPlan === 'PRO' ? `Até ${currentLimit} contas` : 'Até o limite configurado',
+            currentPlan === 'PRO' ? `Seu plano atual · até ${currentLimit} contas` : 'Até 6 contas simultâneas',
+            'Plano avançado',
             currentPlan,
             productFor('PRO'),
+            ['Grades avançadas', 'Eco mode', 'Restauração de sessões'],
           )}
           ${this.renderPlanOption(
             'FOUNDER',
             currentPlan === 'FOUNDER'
-              ? `Até ${currentLimit} contas · benefícios especiais`
-              : 'Benefícios especiais',
+              ? `Seu plano atual · até ${currentLimit} contas`
+              : currentPlan === 'PRO' ? 'Upgrade com crédito do PRO' : 'Até 15 contas simultâneas',
+            currentPlan === 'PRO' ? 'Upgrade especial' : 'Plano máximo',
             currentPlan,
             productFor('FOUNDER'),
+            ['Benefícios Founder', 'Recursos beta', 'Badge especial no chat'],
           )}
         </div>
         ${this.products.length === 0 ? '<p class="modal__note">Os preços estarão disponíveis quando os serviços AltGrid reconectarem.</p>' : ''}
@@ -3377,14 +3391,21 @@ export class AuthApp {
     }
 
     if (this.activeDialog === 'my-plan') {
+      const currentPlan = this.permissionService.getCurrentPlan()
+      const currentLimit = this.permissionService.getAccountLimit()
+      const planSummary = currentPlan === 'FREE'
+        ? 'Começo essencial para organizar suas primeiras sessões.'
+        : currentPlan === 'PRO'
+          ? 'Seu plano atual libera grades avançadas, eco mode e restauração de sessões.'
+          : 'Acesso máximo, recursos beta e presença Founder no chat.'
       const validity = this.me?.lifetime
         ? 'Vitalício'
         : this.me?.expires_at ? `Ativo até ${formatDate(this.me.expires_at)}` : 'Sem vencimento'
       return `
         <dialog class="modal modal--plan-summary" id="app-dialog" aria-labelledby="dialog-title">
           <div class="modal__header"><p class="eyebrow">Assinatura</p><h2 id="dialog-title">Meu plano</h2><p>Benefícios vinculados à sua conta AltGrid.</p></div>
-          <div class="current-plan-card"><span>${escapeHtml(this.renderPlanName())}</span><strong>${this.permissionService.getCurrentPlan() === 'FREE' ? 'Huntera: 3 · demais jogos: 2' : `${this.permissionService.getAccountLimit()} contas simultâneas`}</strong><small>${escapeHtml(validity)}</small></div>
-          <div class="modal__actions">${this.permissionService.getCurrentPlan() === 'FREE' ? '<button class="button button--primary" data-show-plans type="button">Conhecer PRO</button>' : ''}<button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
+          <div class="current-plan-card"><div class="current-plan-card__heading"><span>${escapeHtml(this.renderPlanName())}</span><small>${escapeHtml(validity)}</small></div><strong>${currentPlan === 'FREE' ? 'Huntera: 3 · demais jogos: 2' : `${currentLimit} contas simultâneas`}</strong><p>${escapeHtml(planSummary)}</p><div class="current-plan-card__meter"><span style="width:${currentPlan === 'FREE' ? '18' : currentPlan === 'PRO' ? '55' : '100'}%"></span></div><small class="current-plan-card__hint">${currentPlan === 'FOUNDER' ? 'Nível máximo do AltGrid' : 'Veja o próximo nível e seus benefícios'}</small></div>
+          <div class="modal__actions">${currentPlan !== 'FOUNDER' ? '<button class="button button--primary" data-show-plans type="button">Ver opções de upgrade</button>' : ''}<button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
         </dialog>
       `
     }
@@ -3413,8 +3434,10 @@ export class AuthApp {
   private renderPlanOption(
     plan: string,
     description: string,
+    label: string,
     currentPlan: string,
     product: PublicProduct | null,
+    benefits: string[],
   ): string {
     const current = plan === currentPlan
 
@@ -3422,13 +3445,14 @@ export class AuthApp {
       <div class="plan-option ${current ? 'plan-option--current' : ''}">
         <div>
           <strong>${plan}</strong>
-          <span>${escapeHtml(description)}</span>
-          ${product ? `<b>${escapeHtml(formatCurrency(product.price_amount, product.currency))}</b>` : ''}
+          <span>${escapeHtml(label)} · ${escapeHtml(description)}</span>
+          <ul>${benefits.map((benefit) => `<li>${escapeHtml(benefit)}</li>`).join('')}</ul>
+          ${product ? `<b>${escapeHtml(formatCurrency(product.price_amount, product.currency))}${product.code === 'FOUNDER_UPGRADE' ? '<small> com desconto</small>' : ''}</b>` : ''}
         </div>
         ${current
           ? '<span class="plan-option__badge">Plano atual</span>'
           : product
-            ? `<button class="button button--primary button--compact" data-buy-product="${escapeHtml(product.code)}" type="button">Ativar com PIX</button>`
+            ? `<button class="button button--primary button--compact" data-buy-product="${escapeHtml(product.code)}" type="button">${product.code === 'FOUNDER_UPGRADE' ? 'Fazer upgrade' : 'Ativar com PIX'}</button>`
             : '<span class="plan-option__badge">Indisponível</span>'}
       </div>
     `
