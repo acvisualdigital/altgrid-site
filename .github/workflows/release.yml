@@ -37,6 +37,12 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -58,6 +64,14 @@ jobs:
         run: |
           pnpm exec vite build --mode desktop
           pnpm desktop:compile
+
+      - name: Build Android beta
+        shell: pwsh
+        run: |
+          pnpm android:sync
+          Push-Location android
+          .\gradlew.bat assembleDebug
+          Pop-Location
 
       - name: Configure optional Windows signing
         shell: pwsh
@@ -96,6 +110,9 @@ jobs:
         run: |
           pnpm exec electron-builder --win nsis portable --publish never
 
+          $androidArtifact = "release/AltGrid-Android-$($env:RELEASE_TAG.Substring(1)).apk"
+          Copy-Item -LiteralPath "android/app/build/outputs/apk/debug/app-debug.apk" -Destination $androidArtifact
+
           $releaseRepo = "acvisualdigital/altgrid-releases"
           $releaseTag = $env:RELEASE_TAG
           $releaseArgs = @(
@@ -120,6 +137,7 @@ jobs:
             "release/AltGrid-Setup-$($env:RELEASE_TAG.Substring(1)).exe",
             "release/AltGrid-Setup-$($env:RELEASE_TAG.Substring(1)).exe.blockmap",
             "release/AltGrid-Portable-$($env:RELEASE_TAG.Substring(1)).exe",
+            "release/AltGrid-Android-$($env:RELEASE_TAG.Substring(1)).apk",
             "release/latest.yml"
           )
           foreach ($artifact in $artifacts) {

@@ -89,7 +89,7 @@ type BackendLoadStatus = 'error' | 'idle' | 'loading' | 'ready'
 type ServiceStatus = 'checking' | 'offline' | 'online' | 'unknown'
 type WorkspaceMode = 'account' | 'grid'
 const CHAT_GAME_SELECTION_STORAGE_KEY = 'altgrid.chat.visible-game-channels.v1'
-const RMT_DISCORD_URL = 'https://discord.gg/Q53THjmmv'
+const RMT_DISCORD_URL = 'https://discord.gg/jqbWgSPVe'
 type ApplicationBackend = Pick<BackendApi, 'getEntitlements' | 'getGames' | 'getMe'>
   & Partial<Pick<
     BackendApi,
