@@ -8,8 +8,8 @@ import { IPC_CHANNELS, type UpdateState } from './contracts.js'
 
 const { autoUpdater } = electronUpdater
 
-const STARTUP_CHECK_DELAY_MS = 15_000
-const PERIODIC_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000
+const STARTUP_CHECK_DELAY_MS = 5_000
+const PERIODIC_CHECK_INTERVAL_MS = 30 * 60 * 1_000
 const MAX_RELEASE_NOTES_LENGTH = 4_000
 const GITHUB_SEGMENT_PATTERN = /^[a-zA-Z0-9_.-]{1,100}$/
 
@@ -84,7 +84,7 @@ export class UpdaterService {
     this.supported = this.configureProvider()
     this.state = { status: 'idle', supported: this.supported }
 
-    autoUpdater.autoDownload = false
+    autoUpdater.autoDownload = true
     // Beta installations follow the prerelease channel until 1.0.0 is shipped.
     // Stable installations remain on stable releases only.
     autoUpdater.allowPrerelease = app.getVersion().includes('-')

@@ -15,6 +15,7 @@ import type {
   AdminConfigEntry,
   AdminGame,
   AdminProduct,
+  AdminPaymentLog,
   AdminUserDetail,
   AdminUserSummary,
 } from './types/admin-api'
@@ -27,6 +28,7 @@ type AdminTab =
   | 'config'
   | 'games'
   | 'products'
+  | 'payments'
   | 'users'
 type AdminView = 'checking' | 'denied' | 'error' | 'ready' | 'signed-out'
 
@@ -45,6 +47,7 @@ type AdminBackend = Pick<
   | 'getAdminConfig'
   | 'getAdminGames'
   | 'getAdminProducts'
+  | 'getAdminPaymentLogs'
   | 'getAdminSession'
   | 'getAdminUser'
   | 'grantAdminProDays'
@@ -159,6 +162,10 @@ export class AdminApp {
   private editingGameId: string | null = null
   private config: AdminConfigEntry[] = []
   private products: AdminProduct[] = []
+  private paymentLogs: AdminPaymentLog[] = []
+  private paymentPage = 1
+  private paymentHasMore = false
+  private paymentTotal = 0
   private announcements: AdminAnnouncement[] = []
   private editingAnnouncementId: string | null = null
   private chatReports: AdminChatReport[] = []
@@ -313,6 +320,14 @@ export class AdminApp {
         if (expectedRevision === this.revision) {
           this.products = response.products
         }
+      } else if (tab === 'payments') {
+        const response = await this.backend.getAdminPaymentLogs(this.paymentPage, 50)
+        if (expectedRevision === this.revision) {
+          this.paymentLogs = response.payments
+          this.paymentPage = response.pagination.page
+          this.paymentHasMore = response.pagination.has_more
+          this.paymentTotal = response.pagination.total
+        }
       } else if (tab === 'announcements') {
         const response = await this.backend.getAdminAnnouncements()
         if (expectedRevision === this.revision) {
@@ -405,6 +420,7 @@ export class AdminApp {
               ${this.renderTab('games', 'Jogos')}
               ${this.renderTab('config', 'Configuração')}
               ${this.renderTab('products', 'Produtos')}
+              ${this.renderTab('payments', 'Pagamentos')}
               ${this.renderTab('announcements', 'Avisos')}
               ${this.renderTab('chat', 'Chat')}
               ${this.renderTab('audit', 'Auditoria')}
@@ -496,6 +512,9 @@ export class AdminApp {
     }
     if (this.activeTab === 'products') {
       return this.renderProducts()
+    }
+    if (this.activeTab === 'payments') {
+      return this.renderPaymentLogs()
     }
     if (this.activeTab === 'announcements') {
       return this.renderAnnouncements()
@@ -806,7 +825,7 @@ export class AdminApp {
 
   private renderProducts(): string {
     const allowed = this.products.filter((product) =>
-      ['PRO_LIFETIME', 'FOUNDER_LIFETIME', 'FOUNDER_UPGRADE'].includes(product.code))
+      ['PRO_LIFETIME', 'PRO_PLUS_LIFETIME', 'PRO_PLUS_UPGRADE', 'FOUNDER_LIFETIME', 'FOUNDER_UPGRADE', 'PLUS_FOUNDER_UPGRADE'].includes(product.code))
     return `
       <div class="admin-product-list">
         ${allowed.length > 0
@@ -993,6 +1012,35 @@ export class AdminApp {
     `
   }
 
+  private renderPaymentLogs(): string {
+    return `
+      <div class="admin-list-column">
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead><tr><th>Quando</th><th>Usuário</th><th>Produto</th><th>Valor</th><th>Status</th><th>Pago em</th><th>Ativado em</th><th>Falha</th></tr></thead>
+            <tbody>
+              ${this.paymentLogs.length > 0
+                ? this.paymentLogs.map((payment) => `
+                    <tr>
+                      <td>${escapeHtml(formatDate(payment.created_at))}</td>
+                      <td><small>${escapeHtml(payment.user_id)}</small></td>
+                      <td>${escapeHtml(payment.product_code)}</td>
+                      <td>${escapeHtml(formatMoney(payment.amount, payment.currency))}</td>
+                      <td><strong>${escapeHtml(payment.status)}</strong></td>
+                      <td>${payment.paid_at ? escapeHtml(formatDate(payment.paid_at)) : '—'}</td>
+                      <td>${payment.fulfilled_at ? escapeHtml(formatDate(payment.fulfilled_at)) : '—'}</td>
+                      <td>${escapeHtml(payment.failure_reason ?? '—')}</td>
+                    </tr>
+                  `).join('')
+                : '<tr><td colspan="8" class="admin-empty">Nenhum pagamento registrado.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+        ${this.renderPagination('payments', this.paymentPage, this.paymentHasMore, this.paymentTotal)}
+      </div>
+    `
+  }
+
   private renderAudit(): string {
     return `
       <div class="admin-list-column">
@@ -1022,14 +1070,14 @@ export class AdminApp {
   }
 
   private renderPagination(
-    scope: 'audit' | 'users',
+    scope: 'audit' | 'payments' | 'users',
     page: number,
     hasMore: boolean,
     total: number,
   ): string {
     return `
       <div class="admin-pagination" aria-label="Paginação">
-        <span>Página ${page} · ${total} ${scope === 'users' ? 'usuários' : 'registros'}</span>
+        <span>Página ${page} · ${total} ${scope === 'users' ? 'usuários' : scope === 'payments' ? 'pagamentos' : 'registros'}</span>
         <div>
           <button class="text-button" data-admin-page="${scope}-previous" type="button" ${page <= 1 ? 'disabled' : ''}>Anterior</button>
           <button class="text-button" data-admin-page="${scope}-next" type="button" ${hasMore ? '' : 'disabled'}>Próxima</button>
@@ -1095,6 +1143,12 @@ export class AdminApp {
           } else if (action === 'audit-next' && this.auditHasMore) {
             this.auditPage += 1
             void this.loadTab('audit')
+          } else if (action === 'payments-previous' && this.paymentPage > 1) {
+            this.paymentPage -= 1
+            void this.loadTab('payments')
+          } else if (action === 'payments-next' && this.paymentHasMore) {
+            this.paymentPage += 1
+            void this.loadTab('payments')
           }
         })
       })

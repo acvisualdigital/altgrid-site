@@ -180,8 +180,11 @@ describe('SupabaseAdminRepository RPC boundary', () => {
     await expect(repository.getAdminProducts()).resolves.toEqual(products)
     expect(inFilter).toHaveBeenCalledWith('code', [
       'PRO_LIFETIME',
+      'PRO_PLUS_LIFETIME',
+      'PRO_PLUS_UPGRADE',
       'FOUNDER_LIFETIME',
       'FOUNDER_UPGRADE',
+      'PLUS_FOUNDER_UPGRADE',
     ])
   })
 })

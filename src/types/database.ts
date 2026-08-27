@@ -6,7 +6,7 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[]
 
-export type PlanCode = 'FREE' | 'PRO' | 'FOUNDER'
+export type PlanCode = 'FREE' | 'PRO' | 'PRO_PLUS' | 'FOUNDER'
 
 export type LicenseStatus = 'active' | 'expired' | 'suspended' | 'revoked'
 

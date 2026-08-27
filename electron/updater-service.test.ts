@@ -144,7 +144,7 @@ describe('UpdaterService', () => {
     expect(updaterMocks.autoUpdater.checkForUpdates).not.toHaveBeenCalled()
     expect(updaterMocks.autoUpdater.downloadUpdate).not.toHaveBeenCalled()
     expect(updaterMocks.autoUpdater.quitAndInstall).not.toHaveBeenCalled()
-    expect(updaterMocks.autoUpdater.autoDownload).toBe(false)
+    expect(updaterMocks.autoUpdater.autoDownload).toBe(true)
     expect(updaterMocks.autoUpdater.autoInstallOnAppQuit).toBe(true)
 
     service.stop()
@@ -272,19 +272,19 @@ describe('UpdaterService', () => {
 
     service.start()
     service.start()
-    await vi.advanceTimersByTimeAsync(14_999)
+    await vi.advanceTimersByTimeAsync(4_999)
     expect(updaterMocks.autoUpdater.checkForUpdates).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
     expect(updaterMocks.autoUpdater.checkForUpdates).toHaveBeenCalledOnce()
 
     updaterMocks.emit('update-not-available', { version: '2.0.0' })
-    await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1_000)
+    await vi.advanceTimersByTimeAsync(30 * 60 * 1_000)
     expect(updaterMocks.autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2)
     updaterMocks.emit('update-not-available', { version: '2.0.1' })
 
     service.stop()
     updaterMocks.emit('update-available', { version: '9.9.9' })
-    await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1_000)
+    await vi.advanceTimersByTimeAsync(30 * 60 * 1_000)
     expect(updaterMocks.autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2)
     expect(service.getState().version).toBe('2.0.1')
     expect(updaterMocks.autoUpdater.off).toHaveBeenCalledTimes(6)

@@ -93,4 +93,26 @@ describe('SupabaseRepository presence and metrics RPC boundary', () => {
       p_request_key: 'upgrade-request',
     })
   })
+
+  it('surfaces the previous lifetime plan requirement for new upgrades', async () => {
+    const rpc = vi.fn(async () => ({
+      data: null,
+      error: {
+        code: 'P0001',
+        details: null,
+        hint: null,
+        message: 'lifetime upgrade requires the previous lifetime plan',
+      },
+    }))
+    const repository = new SupabaseRepository({ rpc } as unknown as SupabaseClient)
+
+    await expect(repository.createPendingMercadoPagoPayment(
+      USER_ID,
+      'PRO_PLUS_UPGRADE',
+      'upgrade-plus-request',
+    )).rejects.toMatchObject({
+      status: 409,
+      code: 'lifetime_upgrade_ineligible',
+    })
+  })
 })

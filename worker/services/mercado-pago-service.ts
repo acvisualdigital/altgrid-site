@@ -10,7 +10,14 @@ import type {
 } from '../types'
 
 const MERCADO_PAGO_API = 'https://api.mercadopago.com'
-const PRODUCT_CODES = new Set(['PRO_LIFETIME', 'FOUNDER_LIFETIME', 'FOUNDER_UPGRADE'])
+const PRODUCT_CODES = new Set([
+  'PRO_LIFETIME',
+  'PRO_PLUS_LIFETIME',
+  'PRO_PLUS_UPGRADE',
+  'FOUNDER_LIFETIME',
+  'FOUNDER_UPGRADE',
+  'PLUS_FOUNDER_UPGRADE',
+])
 const WEBHOOK_BODY_LIMIT = 32_768
 const HEX_SHA256 = /^[a-f0-9]{64}$/i
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -295,7 +302,7 @@ export class MercadoPagoPaymentService implements PaymentService {
     const expiresAt = new Date(Date.now() + 30 * 60 * 1_000).toISOString()
     const providerBody: Record<string, unknown> = {
       transaction_amount: Number(localPayment.amount),
-      description: `AltGrid ${productCode === 'FOUNDER_UPGRADE' || productCode === 'FOUNDER_LIFETIME' ? 'Founder' : 'PRO'} Lifetime`,
+      description: `AltGrid ${productCode.includes('FOUNDER') ? 'Founder' : productCode.includes('PLUS') ? 'PLUS' : 'PRO'} Lifetime`,
       payment_method_id: 'pix',
       payer: { email: user.email },
       external_reference: localPayment.id,

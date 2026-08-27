@@ -25,6 +25,7 @@ import type {
   AdminGameUpdate,
   AdminProduct,
   AdminProductUpdate,
+  AdminPaymentLog,
   AdminUserDetail,
   AdminUserSummary,
 } from '../src/types/admin-api'
@@ -327,6 +328,10 @@ export interface AdminRepository {
     page: number,
     pageSize: number,
   ): Promise<{ entries: AdminAuditEntry[]; total: number }>
+  getAdminPaymentLogs(
+    page: number,
+    pageSize: number,
+  ): Promise<{ payments: AdminPaymentLog[]; total: number }>
 }
 
 export type ApplicationRepository = BackendRepository & AdminRepository

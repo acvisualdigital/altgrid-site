@@ -85,10 +85,14 @@ export class DeviceRegistrationService {
       this.storage.setItem(INSTALLATION_ID_KEY, installationId)
     }
 
+    const mobile = ['android', 'ios'].includes(platform.toLowerCase())
+
     await this.backend.registerDevice({
       app_version: appVersion || null,
       device_hash: await sha256(`altgrid-device-v1:${installationId}`),
-      display_name: platform ? `AltGrid Desktop · ${platform}` : 'AltGrid Desktop',
+      display_name: platform
+        ? `AltGrid ${mobile ? 'Mobile' : 'Desktop'} · ${platform}`
+        : 'AltGrid',
       platform: platform || null,
     })
   }

@@ -47,6 +47,7 @@ import type {
   AdminProductResponse,
   AdminProductsResponse,
   AdminProductUpdate,
+  AdminPaymentLogsResponse,
   AdminSessionResponse,
   AdminSetPlanInput,
   AdminUserDetailResponse,
@@ -422,6 +423,12 @@ export class BackendApi {
 
   getAdminProducts(): Promise<AdminProductsResponse> {
     return this.privateRead<AdminProductsResponse>('/v1/admin/products')
+  }
+
+  getAdminPaymentLogs(page = 1, pageSize = 50): Promise<AdminPaymentLogsResponse> {
+    return this.privateRead<AdminPaymentLogsResponse>(
+      `/v1/admin/payments?page=${page}&page_size=${pageSize}`,
+    )
   }
 
   updateAdminProduct(

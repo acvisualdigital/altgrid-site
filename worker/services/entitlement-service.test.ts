@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { FeatureMap } from '../../src/types/backend-api'
+import { UNLIMITED_ACCOUNT_LIMIT } from '../../src/types/backend-api'
 import type {
   EntitlementRecord,
   LicenseRecord,
@@ -91,7 +92,7 @@ describe('EntitlementService', () => {
         eco_mode: true,
         session_restore: true,
       }),
-      plan('FOUNDER', 200, 20, {
+      plan('FOUNDER', 200, UNLIMITED_ACCOUNT_LIMIT, {
         advanced_grids: true,
         eco_mode: true,
         session_restore: true,
@@ -189,7 +190,7 @@ describe('EntitlementService', () => {
       plan: 'FOUNDER',
       lifetime: true,
       founder_number: 7,
-      account_limit: 20,
+      account_limit: UNLIMITED_ACCOUNT_LIMIT,
     })
     expect(result.entitlements.features.founder_badge).toBe(true)
     expect(result.entitlements.features.beta_features).toBe(true)

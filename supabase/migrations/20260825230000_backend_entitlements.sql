@@ -93,7 +93,7 @@ values
     2,
     true,
     false,
-    10,
+    6,
     0,
     '{
       "basic_grids": true,

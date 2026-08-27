@@ -165,6 +165,19 @@ describe('OfflineLicenseService', () => {
     })
   })
 
+  it('accepts signed offline snapshots for the PLUS plan', async () => {
+    const response = await sign(payload({
+      account_limit: 10,
+      plan: 'PRO_PLUS',
+    }))
+
+    await expect(service({ loader: async () => response }).loadEntitlements(USER_ID))
+      .resolves.toMatchObject({
+        entitlements: { account_limit: 10, plan: 'PRO_PLUS' },
+        source: 'network',
+      })
+  })
+
   it('removes a cached snapshot after its signed expiration', async () => {
     const storage = new MemoryStorage()
     const key = cacheKey('expired-cache')

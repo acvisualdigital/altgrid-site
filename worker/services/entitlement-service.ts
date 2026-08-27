@@ -13,7 +13,7 @@ import type {
 } from '../types'
 
 const FEATURE_KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
-const PLAN_CODES = new Set<PlanCode>(['FREE', 'PRO', 'FOUNDER'])
+const PLAN_CODES = new Set<PlanCode>(['FREE', 'PRO', 'PRO_PLUS', 'FOUNDER'])
 
 interface LicenseWithPlan {
   license: LicenseRecord

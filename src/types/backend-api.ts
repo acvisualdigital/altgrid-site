@@ -2,6 +2,9 @@ import type { Json, PlanCode } from './database'
 
 export type FeatureMap = Record<string, boolean>
 
+/** SQL-compatible sentinel used to represent an unlimited account allowance. */
+export const UNLIMITED_ACCOUNT_LIMIT = 2_147_483_647
+
 export interface SafeUser {
   id: string
   email: string | null

@@ -70,4 +70,24 @@ describe('DeviceRegistrationService', () => {
     )
     expect(storage.setItem).toHaveBeenCalledOnce()
   })
+
+  it('registers Android installations as mobile devices', async () => {
+    const registerDevice = vi.fn(async (_input: RegisterDeviceInput) => ({
+      device: {} as never,
+    }))
+    const service = new DeviceRegistrationService(
+      { registerDevice },
+      {
+        randomUuid: () => 'android-installation-id',
+        storage: createStorage(),
+      },
+    )
+
+    await service.register({ appVersion: '0.9.0-beta.7', platform: 'android' })
+
+    expect(registerDevice).toHaveBeenCalledWith(expect.objectContaining({
+      display_name: 'AltGrid Mobile · android',
+      platform: 'android',
+    }))
+  })
 })

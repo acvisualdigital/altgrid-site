@@ -15,7 +15,7 @@
     ]
   },
   "vars": {
-    "ALLOWED_ORIGINS": "altgrid://app,http://127.0.0.1:3000,http://localhost:3000",
+    "ALLOWED_ORIGINS": "altgrid://app,https://localhost,http://localhost,capacitor://localhost,http://127.0.0.1:3000,http://localhost:3000",
     "LICENSE_KEY_ID": "altgrid-license-v1"
   },
   "ratelimits": [

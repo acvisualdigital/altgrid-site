@@ -60,6 +60,18 @@ export interface AdminPayment {
   created_at: string
 }
 
+export interface AdminPaymentLog extends AdminPayment {
+  user_id: string
+  provider_payment_id: string | null
+  failure_reason: string | null
+  updated_at: string
+}
+
+export interface AdminPaymentLogsResponse {
+  payments: AdminPaymentLog[]
+  pagination: AdminPagination
+}
+
 export interface AdminLicense {
   id: string
   plan: PlanCode

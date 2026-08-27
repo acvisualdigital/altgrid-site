@@ -110,7 +110,7 @@ begin
     or selected_product.price_amount <= 0
     or selected_product.currency <> 'BRL'
     or not selected_product.lifetime
-    or selected_product.plan_code not in ('PRO', 'FOUNDER') then
+    or selected_product.plan_code not in ('PRO', 'PRO_PLUS', 'FOUNDER') then
     raise exception using errcode = 'P0002', message = 'product unavailable';
   end if;
 
@@ -306,7 +306,7 @@ begin
     where pr.code = local_payment.product_code;
 
     if not found or not selected_product.lifetime
-      or selected_product.selected_plan_code not in ('PRO', 'FOUNDER') then
+      or selected_product.selected_plan_code not in ('PRO', 'PRO_PLUS', 'FOUNDER') then
       raise exception using errcode = 'P0002', message = 'fulfillment product invalid';
     end if;
 
@@ -417,6 +417,7 @@ begin
 
   if normalized_code not in (
     'PRO_LIFETIME',
+    'PRO_PLUS_LIFETIME',
     'FOUNDER_LIFETIME',
     'FOUNDER_UPGRADE'
   ) then

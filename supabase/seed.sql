@@ -21,7 +21,7 @@ values
     '{}'::jsonb
   ),
   (
-    'FOUNDER', 'Founder', 15, true, true, 30, 200,
+    'FOUNDER', 'Founder', 2147483647, true, true, 30, 200,
     '{"basic_grids":true,"fullscreen_sessions":true,"game_presets":true,"advanced_grids":true,"eco_mode":true,"session_restore":true,"founder_badge":true,"beta_features":true}'::jsonb,
     '{}'::jsonb
   )
@@ -52,13 +52,16 @@ select
   'BRL',
   true,
   true,
-  '{}'::jsonb
+  seed.metadata::jsonb
 from (
   values
-    ('PRO_LIFETIME', 'PRO Lifetime', 'Acesso vitalício ao plano PRO.', 'PRO', 24.99),
-    ('FOUNDER_LIFETIME', 'Founder Lifetime', 'Acesso vitalício ao plano Founder.', 'FOUNDER', 99.99),
-    ('FOUNDER_UPGRADE', 'Founder Upgrade', 'Upgrade do PRO para o plano Founder.', 'FOUNDER', 75.00)
-) as seed(code, name, description, plan_code, price_amount)
+    ('PRO_LIFETIME', 'PRO Lifetime', 'Acesso vitalício ao plano PRO.', 'PRO', 19.90, '{}'),
+    ('PRO_PLUS_LIFETIME', 'PLUS Lifetime', 'Acesso vitalício ao plano PLUS.', 'PRO_PLUS', 39.90, '{}'),
+    ('PRO_PLUS_UPGRADE', 'PLUS Upgrade', 'Upgrade do PRO para o plano PLUS.', 'PRO_PLUS', 19.90, '{"upgrade_from":"PRO_LIFETIME","discount_amount":20.00}'),
+    ('FOUNDER_LIFETIME', 'Founder Lifetime', 'Acesso vitalício ao plano Founder.', 'FOUNDER', 79.90, '{}'),
+    ('FOUNDER_UPGRADE', 'Founder Upgrade', 'Upgrade do PRO para o plano Founder.', 'FOUNDER', 59.90, '{"upgrade_from":"PRO_LIFETIME","discount_amount":20.00}'),
+    ('PLUS_FOUNDER_UPGRADE', 'Founder Upgrade PLUS', 'Upgrade do PLUS para o plano Founder.', 'FOUNDER', 39.90, '{"upgrade_from":"PRO_PLUS_LIFETIME","discount_amount":40.00}')
+) as seed(code, name, description, plan_code, price_amount, metadata)
 join public.plans on plans.code = seed.plan_code
 on conflict (code) do update
 set
@@ -66,6 +69,7 @@ set
   currency = excluded.currency,
   lifetime = excluded.lifetime,
   enabled = excluded.enabled,
+  metadata = excluded.metadata,
   updated_at = now();
 
 insert into public.app_config (key, value)

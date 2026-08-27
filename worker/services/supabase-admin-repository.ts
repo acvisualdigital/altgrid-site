@@ -16,6 +16,7 @@ import type {
   AdminGameUpdate,
   AdminLicense,
   AdminPayment,
+  AdminPaymentLog,
   AdminProduct,
   AdminProductUpdate,
   AdminReferral,
@@ -35,7 +36,14 @@ const ADMIN_CONFIG_KEYS = [
   'latest_version',
   'update_channel',
 ]
-const ADMIN_PRODUCT_CODES = ['PRO_LIFETIME', 'FOUNDER_LIFETIME', 'FOUNDER_UPGRADE']
+const ADMIN_PRODUCT_CODES = [
+  'PRO_LIFETIME',
+  'PRO_PLUS_LIFETIME',
+  'PRO_PLUS_UPGRADE',
+  'FOUNDER_LIFETIME',
+  'FOUNDER_UPGRADE',
+  'PLUS_FOUNDER_UPGRADE',
+]
 
 type ProfileRow = {
   user_id: string
@@ -565,5 +573,22 @@ export class SupabaseAdminRepository implements AdminRepository {
       .range(offset, offset + pageSize - 1)
     if (error) dataError(error)
     return { entries: (data ?? []) as AdminAuditEntry[], total: count ?? 0 }
+  }
+
+  async getAdminPaymentLogs(
+    page: number,
+    pageSize: number,
+  ): Promise<{ payments: AdminPaymentLog[]; total: number }> {
+    const offset = (page - 1) * pageSize
+    const { data, error, count } = await this.client
+      .from('payments')
+      .select('id,user_id,provider,provider_payment_id,product_code,amount,currency,status,failure_reason,fulfilled_at,paid_at,created_at,updated_at', {
+        count: 'exact',
+      })
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(offset, offset + pageSize - 1)
+    if (error) dataError(error)
+    return { payments: (data ?? []) as AdminPaymentLog[], total: count ?? 0 }
   }
 }

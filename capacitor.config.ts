@@ -5,6 +5,14 @@ const config: CapacitorConfig = {
   appName: 'AltGrid',
   webDir: 'dist',
   bundledWebRuntime: false,
+  android: {
+    allowMixedContent: false,
+    backgroundColor: '#080c11',
+  },
+  server: {
+    androidScheme: 'https',
+    hostname: 'localhost',
+  },
 }
 
 export default config

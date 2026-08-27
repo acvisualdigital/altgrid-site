@@ -11,6 +11,7 @@ import type {
   AdminGamesResponse,
   AdminProductResponse,
   AdminProductsResponse,
+  AdminPaymentLogsResponse,
   AdminSessionResponse,
   AdminUserDetailResponse,
   AdminUsersResponse,
@@ -48,6 +49,7 @@ export function adminAllowedMethods(pathname: string): string[] | null {
     || pathname === '/v1/admin/config'
     || pathname === '/v1/admin/products'
     || pathname === '/v1/admin/audit'
+    || pathname === '/v1/admin/payments'
     || /^\/v1\/admin\/users\/[^/]+$/.test(pathname)
   ) return pathname === '/v1/admin/games' ? ['GET', 'POST'] : ['GET']
 
@@ -309,6 +311,16 @@ export async function handleAdminRequest(
     const result = await repository.getAdminAudit(page, pageSize)
     const body: AdminAuditResponse = {
       entries: result.entries,
+      pagination: pagination(page, pageSize, result.total),
+    }
+    return jsonResponse(body)
+  }
+
+  if (pathname === '/v1/admin/payments') {
+    const { page, pageSize } = readAdminPagination(request.url)
+    const result = await repository.getAdminPaymentLogs(page, pageSize)
+    const body: AdminPaymentLogsResponse = {
+      payments: result.payments,
       pagination: pagination(page, pageSize, result.total),
     }
     return jsonResponse(body)

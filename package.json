@@ -14,7 +14,7 @@
     "desktop:dev": "pnpm desktop:compile && concurrently --kill-others --success first \"vite --mode desktop\" \"wait-on http://127.0.0.1:3000 && cross-env ALTGRID_DEV_SERVER_URL=http://127.0.0.1:3000 electron .\"",
     "desktop:build": "pnpm typecheck && vite build --mode desktop && pnpm desktop:compile && node scripts/package-desktop.mjs",
     "android:sync": "pnpm build:android:web && cap sync android",
-    "build:android:web": "vite build --mode android",
+    "build:android:web": "pnpm typecheck && vite build --mode android",
     "android:open": "cap open android",
     "android:build": "pnpm android:sync && cd android && gradlew.bat assembleDebug",
     "release:preflight": "node scripts/release-preflight.mjs",

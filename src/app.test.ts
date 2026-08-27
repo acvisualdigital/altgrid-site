@@ -1,7 +1,12 @@
 import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { AuthApp, compareVersions, passwordRecoveryRedirectUrl } from './app'
+import {
+  AuthApp,
+  compareVersions,
+  passwordRecoveryRedirectUrl,
+  type AccountSessionStatusEvent,
+} from './app'
 import {
   AuthService,
   AuthServiceError,
@@ -52,6 +57,13 @@ describe('password recovery redirect', () => {
       origin: 'http://127.0.0.1:3000',
       protocol: 'http:',
     })).toBe('http://127.0.0.1:3000/?auth=recovery')
+  })
+
+  it('returns to the Android app from the stable Capacitor origin', () => {
+    expect(passwordRecoveryRedirectUrl({
+      origin: 'https://localhost',
+      protocol: 'https:',
+    })).toBe('altgrid://app/?auth=recovery')
   })
 })
 
@@ -647,6 +659,84 @@ describe('AuthApp session lifecycle', () => {
     app.destroy()
   })
 
+  it('renders the game inside the mobile host and switches accounts from quick tabs', async () => {
+    installBrowser('https://app.example.com/')
+    const root = createRoot()
+    const auth = createAuthServiceDouble()
+    auth.getSession.mockResolvedValue(session)
+    const accounts = new ConfiguredAccountService({
+      createId: (() => {
+        let index = 0
+        return () => `mobile-account-${++index}`
+      })(),
+      storage: null,
+    })
+    const configured = accounts.add(user.id, {
+      displayName: 'Conta móvel',
+      gameSlug: 'huntera',
+    })
+    const saved = accounts.add(user.id, {
+      displayName: 'Conta salva',
+      gameSlug: 'tibia',
+    })
+    const permissions = new PermissionService()
+    const open = vi.fn()
+    let statusHandler: (event: AccountSessionStatusEvent) => void = () => undefined
+    const app = new AuthApp(root, auth.service, {
+      accountService: accounts,
+      permissionService: permissions,
+      sessionLauncher: {
+        mobileNative: true,
+        open,
+        registerStatusHandler(handler) {
+          statusHandler = handler
+          return () => undefined
+        },
+      },
+    })
+
+    await app.start()
+    const harness = app as unknown as {
+      openConfiguredAccount(
+        accountId: string,
+        button: HTMLButtonElement,
+      ): Promise<void>
+      showSessionAlert(message: string): void
+    }
+    await harness.openConfiguredAccount(
+      configured.id,
+      { disabled: false, textContent: 'Abrir' } as HTMLButtonElement,
+    )
+
+    expect(root.innerHTML).toContain('mobile-navigation')
+    expect(root.innerHTML).toContain('data-native-session-host')
+    expect(root.innerHTML.match(/data-account-tab\b/g)).toHaveLength(2)
+    expect(root.innerHTML).not.toContain('mobile-session-ready')
+    expect(root.innerHTML).not.toContain('Retomar jogo')
+    expect(root.innerHTML).not.toContain('data-toggle-grid')
+    expect(root.innerHTML).not.toContain('class="game-sidebar"')
+    expect(permissions.getActiveSessionIds()).toEqual([configured.id])
+
+    const showSessionAlert = vi.fn()
+    harness.showSessionAlert = showSessionAlert
+    await harness.openConfiguredAccount(
+      saved.id,
+      { disabled: false, textContent: 'Abrir' } as HTMLButtonElement,
+    )
+    expect(open).toHaveBeenCalledTimes(2)
+    expect(permissions.getActiveSessionIds()).toEqual([configured.id, saved.id])
+    expect(showSessionAlert).toHaveBeenCalledWith('')
+
+    showSessionAlert.mockClear()
+    statusHandler({ accountId: configured.id, type: 'closed' })
+
+    await vi.waitFor(() => {
+      expect(permissions.getActiveSessionIds()).toEqual([saved.id])
+      expect(showSessionAlert).toHaveBeenCalledWith('Sessão encerrada no celular.')
+    })
+    app.destroy()
+  })
+
   it('does not authorize password recovery from the query marker alone', async () => {
     installBrowser('https://app.example.com/?auth=recovery')
     const root = createRoot()
@@ -1088,6 +1178,9 @@ describe('AuthApp session lifecycle', () => {
     expect(root.innerHTML).toContain('3 Huntera · 2 nos demais jogos')
     expect(root.innerHTML).toContain('PRO')
     expect(root.innerHTML).toContain('Até 6 contas simultâneas')
+    expect(root.innerHTML).toContain('PLUS')
+    expect(root.innerHTML).toContain('Até 10 contas simultâneas')
+    expect(root.innerHTML).toContain('Mais escolhido')
     expect(root.innerHTML).toContain('FOUNDER')
     expect(root.innerHTML).toContain('Benefícios Founder')
     expect(root.innerHTML).not.toContain('checkout')
@@ -1099,7 +1192,7 @@ describe('AuthApp session lifecycle', () => {
     app.destroy()
   })
 
-  it('hides native game views behind the FREE limit dialog and restores them with ESC', async () => {
+  it('hides native game views behind mobile overlays and restores the host afterward', async () => {
     installBrowser('https://app.example.com/')
 
     const frame = new AcceptanceElement()
@@ -1157,11 +1250,17 @@ describe('AuthApp session lifecycle', () => {
       appliedLayouts.push(layout)
     })
     const open = vi.fn()
+    let mobileChatOpen = false
+    const chatService = {
+      getState: () => ({ open: mobileChatOpen }),
+      reset: vi.fn(),
+    } as unknown as ChatService
     const auth = createAuthServiceDouble()
     const app = new AuthApp(asHtmlElement(rootElement), auth.service, {
       accountService: accounts,
+      chatService,
       permissionService: permissions,
-      sessionLauncher: { applyLayout, open, reload: vi.fn() },
+      sessionLauncher: { applyLayout, mobileNative: true, open, reload: vi.fn() },
     })
     const harness = app as unknown as {
       activeDialog: 'add-account' | 'free-limit' | null
@@ -1203,6 +1302,23 @@ describe('AuthApp session lifecycle', () => {
     expect(manager.get(configured[0]!.id)).not.toBeNull()
     expect(manager.get(configured[1]!.id)).not.toBeNull()
     expect(open).not.toHaveBeenCalled()
+
+    mobileChatOpen = true
+    harness.applyWorkspacePresentation()
+    await vi.waitFor(() => expect(applyLayout).toHaveBeenCalledTimes(3))
+    expect(appliedLayouts[2]!.slots).toEqual([])
+    expect(appliedLayouts[2]!.overflowSessionIds).toEqual([
+      configured[0]!.id,
+      configured[1]!.id,
+    ])
+
+    mobileChatOpen = false
+    harness.applyWorkspacePresentation()
+    await vi.waitFor(() => expect(applyLayout).toHaveBeenCalledTimes(4))
+    expect(appliedLayouts[3]!.slots.map((slot) => slot.sessionId)).toEqual([
+      configured[0]!.id,
+      configured[1]!.id,
+    ])
 
     app.destroy()
   })

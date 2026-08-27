@@ -121,7 +121,7 @@ function nullableSafeUrl(
 }
 
 function planCode(value: unknown, allowFree = true): PlanCode {
-  if (!['FREE', 'PRO', 'FOUNDER'].includes(String(value))) {
+  if (!['FREE', 'PRO', 'PRO_PLUS', 'FOUNDER'].includes(String(value))) {
     throw validationError('plan inválido.')
   }
   if (!allowFree && value === 'FREE') {

@@ -50,16 +50,21 @@ try {
   const offlineLicenseService = backendApi && __LICENSE_PUBLIC_KEY__.trim()
     ? createEmbeddedOfflineLicenseService(backendApi)
     : null
-  const deviceRegistrationService = backendApi && desktop
+  const deviceRegistrationService = backendApi && (desktop || mobile)
     ? new DeviceRegistrationService(backendApi)
     : null
-  const unsubscribeFromDeviceRegistration = deviceRegistrationService && desktop
+  const resolvePlatform = desktop
+    ? () => desktop.getPlatform()
+    : mobile
+      ? () => Promise.resolve(mobile.getPlatform())
+      : null
+  const unsubscribeFromDeviceRegistration = deviceRegistrationService && resolvePlatform
     ? authService.onAuthStateChange((_event, session) => {
         if (!session) {
           return
         }
 
-        void desktop.getPlatform()
+        void resolvePlatform()
           .then((platform) => deviceRegistrationService.register({
             appVersion: __APP_VERSION__,
             platform,

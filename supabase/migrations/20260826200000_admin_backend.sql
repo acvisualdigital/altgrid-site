@@ -82,6 +82,7 @@ select
 from (
   values
     ('PRO_LIFETIME', 'PRO Lifetime', 'Acesso vitalício ao plano PRO.', 'PRO'),
+    ('PRO_PLUS_LIFETIME', 'PLUS Lifetime', 'Acesso vitalício ao plano PLUS.', 'PRO_PLUS'),
     ('FOUNDER_LIFETIME', 'Founder Lifetime', 'Acesso vitalício ao plano Founder.', 'FOUNDER')
 ) as seed(code, name, description, plan_code)
 join public.plans as plan on plan.code = seed.plan_code
@@ -1040,7 +1041,7 @@ declare
 begin
   perform public.admin_assert_actor(p_actor_user_id);
 
-  if normalized_code not in ('PRO_LIFETIME', 'FOUNDER_LIFETIME') then
+  if normalized_code not in ('PRO_LIFETIME', 'PRO_PLUS_LIFETIME', 'FOUNDER_LIFETIME') then
     raise invalid_parameter_value using message = 'Product is not administrable';
   end if;
 

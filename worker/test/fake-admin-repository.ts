@@ -13,6 +13,7 @@ import type {
   AdminGameUpdate,
   AdminProduct,
   AdminProductUpdate,
+  AdminPaymentLog,
   AdminUserDetail,
   AdminUserSummary,
 } from '../../src/types/admin-api'
@@ -170,6 +171,10 @@ export class FakeAdminRepository implements AdminRepository {
 
   async getAdminProducts(): Promise<AdminProduct[]> {
     return this.products
+  }
+
+  async getAdminPaymentLogs(): Promise<{ payments: AdminPaymentLog[]; total: number }> {
+    return { payments: [], total: 0 }
   }
 
   async updateAdminProduct(

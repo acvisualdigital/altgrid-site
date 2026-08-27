@@ -4,6 +4,7 @@ import type {
   ResolvedEntitlements,
   SignedLicenseSnapshot,
 } from '../types/backend-api'
+import { UNLIMITED_ACCOUNT_LIMIT } from '../types/backend-api'
 import type { PlanCode } from '../types/database'
 import type { BackendApi } from './backend-api'
 
@@ -11,11 +12,11 @@ const CACHE_VERSION = 1
 const DEFAULT_CACHE_KEY = 'altgrid.license-snapshot.v1'
 const DEFAULT_CLOCK_SKEW_MS = 5 * 60 * 1_000
 const DEFAULT_MAX_LIFETIME_MS = 7 * 24 * 60 * 60 * 1_000
-const MAX_ACCOUNT_LIMIT = 1_000
+const MAX_ACCOUNT_LIMIT = UNLIMITED_ACCOUNT_LIMIT
 const MAX_FEATURE_COUNT = 256
 const MAX_PAYLOAD_BYTES = 16 * 1_024
 const FEATURE_KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
-const PLAN_CODES = new Set<PlanCode>(['FREE', 'PRO', 'FOUNDER'])
+const PLAN_CODES = new Set<PlanCode>(['FREE', 'PRO', 'PRO_PLUS', 'FOUNDER'])
 
 // Shared only inside the renderer process. Persistent values and memory values
 // are both reverified before they can grant an entitlement.

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { PlanCode } from '../types/database'
 import type { ResolvedEntitlements } from '../types/backend-api'
+import { UNLIMITED_ACCOUNT_LIMIT } from '../types/backend-api'
 import {
   PermissionService,
   SessionCancellationCleanupError,
@@ -92,20 +93,18 @@ describe('PermissionService session limits', () => {
 
   it('uses FOUNDER limits and features from resolved entitlements', async () => {
     const service = new PermissionService(
-      plan('FOUNDER', 20, { extended_screens: true }),
+      plan('FOUNDER', UNLIMITED_ACCOUNT_LIMIT, { extended_screens: true }),
     )
 
-    for (let index = 1; index <= 20; index += 1) {
+    for (let index = 1; index <= 100; index += 1) {
       await service.openSession('founder-' + index, vi.fn())
     }
 
     expect(service.getCurrentPlan()).toBe('FOUNDER')
-    expect(service.getAccountLimit()).toBe(20)
-    expect(service.getActiveSessionCount()).toBe(20)
+    expect(service.getAccountLimit()).toBe(UNLIMITED_ACCOUNT_LIMIT)
+    expect(service.getActiveSessionCount()).toBe(100)
     expect(service.canUseFeature('extended_screens')).toBe(true)
-    await expect(service.openSession('founder-21', vi.fn())).resolves.toBe(
-      'limit_reached',
-    )
+    await expect(service.openSession('founder-101', vi.fn())).resolves.toBe('opened')
   })
 
   it('does not close sessions or delete state after a downgrade', async () => {

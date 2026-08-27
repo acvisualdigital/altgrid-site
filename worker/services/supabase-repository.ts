@@ -91,6 +91,14 @@ function throwDataError(error: PostgrestError): never {
     )
   }
 
+  if (message.includes('lifetime upgrade requires the previous lifetime plan')) {
+    throw new ApiError(
+      409,
+      'lifetime_upgrade_ineligible',
+      'Esse upgrade exige a compra vitalícia do plano anterior.',
+    )
+  }
+
   if (message.includes('product unavailable')) {
     throw new ApiError(404, 'product_unavailable', 'Produto indisponível.')
   }
@@ -318,7 +326,7 @@ export class SupabaseRepository implements
     const { data, error } = await this.client
       .from('products')
       .select('code,name,description,price_amount,currency,lifetime')
-      .in('code', ['PRO_LIFETIME', 'FOUNDER_LIFETIME', 'FOUNDER_UPGRADE'])
+      .in('code', ['PRO_LIFETIME', 'PRO_PLUS_LIFETIME', 'PRO_PLUS_UPGRADE', 'FOUNDER_LIFETIME', 'FOUNDER_UPGRADE', 'PLUS_FOUNDER_UPGRADE'])
       .eq('enabled', true)
       .not('price_amount', 'is', null)
       .gt('price_amount', 0)
