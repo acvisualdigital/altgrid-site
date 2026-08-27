@@ -1673,6 +1673,35 @@ form {
   font-size: 11px;
 }
 
+.eco-mode-button {
+  gap: 5px;
+  min-width: 70px;
+  color: var(--text-muted);
+}
+
+.eco-mode-button .ui-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.eco-mode-button small {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.eco-mode-button.is-active {
+  color: var(--green-hover);
+}
+
+.eco-mode-button.is-active small {
+  color: var(--green-hover);
+}
+
+.eco-mode-button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
 /* Account sessions ------------------------------------------------------- */
 
 .visually-hidden {

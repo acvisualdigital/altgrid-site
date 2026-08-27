@@ -189,6 +189,7 @@ type UiIconName =
   | 'chevron'
   | 'globe'
   | 'grid'
+  | 'leaf'
   | 'refresh'
   | 'screens'
   | 'settings'
@@ -200,6 +201,7 @@ const UI_ICON_PATHS: Record<UiIconName, string> = {
   chevron: '<path d="m8 10 4 4 4-4"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+  leaf: '<path d="M20 4C11 4 5 7 5 13c0 3.9 3.1 7 7 7 6 0 8-7 8-16Z"/><path d="M4 20c3-4 6-7 12-9"/>',
   refresh: '<path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/>',
   screens: '<rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3"/>',
   settings: '<path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.97 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.52-1.03H3v-4h.08A1.7 1.7 0 0 0 4.6 8.97a1.7 1.7 0 0 0-.34-1.88l-.06-.06L7.03 4.2l.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 10 3.08V3h4v.08a1.7 1.7 0 0 0 1.03 1.52 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.92 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z"/>',
@@ -1835,6 +1837,10 @@ export class AuthApp {
           </button>
         </div>
         <div class="header-utility-actions" role="group" aria-label="Comunicação e preferências">
+          <button class="header-command-button eco-mode-button ${this.ecoModeEffective ? 'is-active' : ''}" data-toggle-eco-mode type="button" aria-label="${this.ecoModeSupported ? 'Desativar' : 'Eco Mode indisponível'} Eco Mode" aria-pressed="${this.ecoModeEffective}" ${this.ecoModeSupported ? '' : 'disabled'}>
+            ${uiIcon('leaf')}
+            <span>Eco <small>${this.ecoModeEffective ? 'ON' : 'OFF'}</small></span>
+          </button>
           ${this.renderChatButton()}
           ${this.renderNotificationCenter()}
         </div>
@@ -2201,7 +2207,7 @@ export class AuthApp {
 
   private async updateEcoModePreference(
     enabled: boolean,
-    input: HTMLInputElement,
+    input: HTMLInputElement | HTMLButtonElement,
   ): Promise<void> {
     const previous = this.ecoModeRequested
     this.ecoModeRequested = enabled
@@ -4558,6 +4564,14 @@ export class AuthApp {
           if (key) {
             localStorage.setItem(`altgrid.preference.${key}`, String(input.checked))
           }
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-toggle-eco-mode]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          void this.updateEcoModePreference(!this.ecoModeRequested, button)
         })
       })
 

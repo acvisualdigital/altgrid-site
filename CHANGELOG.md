@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.0-beta.6
+
+- Adiciona botão direto para ativar e desativar o Eco Mode.
+
 ## 0.9.0-beta.5
 
 - Corrige a publicação dos instaladores Windows no GitHub Releases.
