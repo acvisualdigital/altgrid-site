@@ -11,6 +11,8 @@ import type {
 } from './session-manager.js'
 import { isAllowedSessionUrl } from './url-policy.js'
 
+const hardenedSessions = new WeakSet<Session>()
+
 function destinationLabel(url: string): string {
   try {
     return new URL(url).origin
@@ -34,7 +36,7 @@ function secureWebPreferences(
 ) {
   return {
     allowRunningInsecureContent: false,
-    backgroundThrottling: false,
+    backgroundThrottling: true,
     contextIsolation: true,
     devTools: allowInsecureLoopback,
     navigateOnDragDrop: false,
@@ -67,14 +69,12 @@ export function createNativeSessionViewFactory(
   hostWindow: BrowserWindow,
   allowInsecureLoopback: boolean,
 ): NativeSessionViewFactory {
-  const configuredPartitions = new Set<string>()
-
   return ({ accountId, onEvent, partition }): NativeSessionView => {
     const isolatedSession = session.fromPartition(partition, { cache: true })
 
-    if (!configuredPartitions.has(partition)) {
+    if (!hardenedSessions.has(isolatedSession)) {
       hardenPartition(isolatedSession)
-      configuredPartitions.add(partition)
+      hardenedSessions.add(isolatedSession)
     }
 
     const view = new WebContentsView({
@@ -98,6 +98,14 @@ export function createNativeSessionViewFactory(
     const handleWindowOpen = ({ url }: { url: string }) => {
       if (!isAllowedSessionUrl(url, allowInsecureLoopback)) {
         reportBlockedDestination(url)
+        return { action: 'deny' as const }
+      }
+
+      if (popupWindows.size >= 1) {
+        onEvent({
+          detail: 'Feche a janela externa já aberta antes de continuar.',
+          type: 'popup-blocked',
+        })
         return { action: 'deny' as const }
       }
 
@@ -127,9 +135,9 @@ export function createNativeSessionViewFactory(
 
     const applyBackgroundThrottling = (): void => {
       if (!view.webContents.isDestroyed()) {
-        // Active games stay unthrottled so minimize/restore does not reset
-        // Huntera UI state. Eco Mode applies only to parked background views.
-        view.webContents.setBackgroundThrottling(ecoModeEnabled && parked)
+        // Hidden views keep their persistent partition but stop spending
+        // renderer time while another account is on screen.
+        view.webContents.setBackgroundThrottling(ecoModeEnabled || parked)
       }
     }
 
@@ -171,8 +179,11 @@ export function createNativeSessionViewFactory(
       }
     })
     view.webContents.on('did-start-loading', () => onEvent({ type: 'loading' }))
-    view.webContents.on('did-stop-loading', () => onEvent({ type: 'ready' }))
+    view.webContents.on('did-finish-load', () => onEvent({ type: 'ready' }))
     view.webContents.on('did-navigate', (_event, url) => {
+      onEvent({ type: 'navigated', url })
+    })
+    view.webContents.on('did-navigate-in-page', (_event, url) => {
       onEvent({ type: 'navigated', url })
     })
     view.webContents.on(
@@ -245,6 +256,12 @@ export function createNativeSessionViewFactory(
         }
       },
 
+      stop(): void {
+        if (!view.webContents.isDestroyed()) {
+          view.webContents.stop()
+        }
+      },
+
       setBounds(bounds): void {
         if (!destroyed) {
           currentBounds = { ...bounds }
@@ -267,12 +284,11 @@ export function createNativeSessionViewFactory(
 
       setVisible(visible): void {
         if (!destroyed) {
-          // Keep the WebContents alive and at the same size while hidden.
-          // Moving it outside the host preserves in-game chat/BP state across
-          // account switches without allowing it to cover renderer menus.
+          // Keep the WebContents and persistent partition alive while hiding
+          // its pixels when another account is displayed.
           parked = !visible
           applyBounds()
-          view.setVisible(true)
+          view.setVisible(visible)
           applyBackgroundThrottling()
         }
       },

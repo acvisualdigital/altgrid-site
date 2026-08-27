@@ -145,9 +145,7 @@ export class ChatService {
     }
 
     const channels = channelsResult.value.channels
-    const selected = channels.find((channel) =>
-      preferredGameId && channel.game_id === preferredGameId)
-      ?? channels.find((channel) => channel.type === 'global')
+    const selected = channels.find((channel) => channel.type === 'global')
       ?? channels[0]
       ?? null
     this.patch({ channels, loading: false })
@@ -165,15 +163,11 @@ export class ChatService {
       return
     }
 
-    const preferred = this.state.channels.find((channel) =>
-      preferredGameId && channel.game_id === preferredGameId)
-    const fallback = this.state.channels.find(
-      (channel) => channel.id === this.state.selectedChannelId,
-    ) ?? this.state.channels.find((channel) => channel.type === 'global')
+    const fallback = this.state.channels.find((channel) => channel.type === 'global')
       ?? this.state.channels[0]
 
-    if (preferred ?? fallback) {
-      await this.selectChannel((preferred ?? fallback)!.id)
+    if (fallback) {
+      await this.selectChannel(fallback.id)
     }
   }
 

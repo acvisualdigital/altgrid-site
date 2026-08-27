@@ -30,6 +30,7 @@ export class FakeRepository implements BackendRepository {
   plans: PlanRecord[] = []
   licenses: LicenseRecord[] = []
   entitlements: EntitlementRecord[] = []
+  founderUpgradeEligible = false
   games: PublicGame[] = []
   config: Record<string, Json> = Object.create(null) as Record<string, Json>
   devices: DeviceResponse[] = []
@@ -61,6 +62,10 @@ export class FakeRepository implements BackendRepository {
 
   async getEntitlementCandidates(): Promise<EntitlementRecord[]> {
     return this.entitlements
+  }
+
+  async hasProLifetimeUpgradeEligibility(): Promise<boolean> {
+    return this.founderUpgradeEligible
   }
 
   async getEnabledGames(): Promise<PublicGame[]> {

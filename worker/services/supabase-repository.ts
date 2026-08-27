@@ -83,6 +83,14 @@ function throwDataError(error: PostgrestError): never {
     throw new ApiError(409, 'founder_sold_out', 'As unidades Founder estão esgotadas.')
   }
 
+  if (message.includes('founder upgrade requires pro lifetime')) {
+    throw new ApiError(
+      409,
+      'founder_upgrade_ineligible',
+      'O upgrade Founder requer uma compra PRO Lifetime ativa.',
+    )
+  }
+
   if (message.includes('product unavailable')) {
     throw new ApiError(404, 'product_unavailable', 'Produto indisponível.')
   }
@@ -165,6 +173,16 @@ export class SupabaseRepository implements
     }
 
     return data
+  }
+
+  async hasProLifetimeUpgradeEligibility(userId: string): Promise<boolean> {
+    const { data, error } = await this.client.rpc(
+      'has_pro_lifetime_upgrade_eligibility',
+      { p_user_id: userId },
+    )
+
+    if (error) throwDataError(error)
+    return data === true
   }
 
   async updateProfile(userId: string, displayName: string): Promise<SafeProfile> {

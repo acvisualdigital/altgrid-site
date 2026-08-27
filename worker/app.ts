@@ -400,9 +400,10 @@ export function createApi(
     }
 
     if (pathname === '/v1/me') {
-      const [profile, resolution] = await Promise.all([
+      const [profile, resolution, founderUpgradeEligible] = await Promise.all([
         dependencies.repository.getProfile(user.id),
         dependencies.entitlementService.resolveForUser(user.id),
+        dependencies.repository.hasProLifetimeUpgradeEligibility(user.id),
       ])
 
       if (!profile) {
@@ -413,6 +414,7 @@ export function createApi(
         user,
         profile,
         license: resolution.license,
+        founder_upgrade_eligible: founderUpgradeEligible,
         ...resolution.entitlements,
       }
       return jsonResponse(body)

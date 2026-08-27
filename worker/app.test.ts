@@ -156,6 +156,7 @@ describe('Cloudflare Worker API', () => {
   })
 
   it('GET /v1/me returns only the authenticated user and resolved safe data', async () => {
+    repository.founderUpgradeEligible = true
     const response = await api.fetch(jsonRequest('/v1/me'))
     const payload = await response.json() as Record<string, unknown>
 
@@ -166,6 +167,7 @@ describe('Cloudflare Worker API', () => {
       plan: 'FREE',
       license: null,
       founder_number: null,
+      founder_upgrade_eligible: true,
       account_limit: 2,
     })
     expect(payload).not.toHaveProperty('access_token')

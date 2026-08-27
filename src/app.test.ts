@@ -20,7 +20,7 @@ import {
   SessionSurfaceManager,
   type SessionSurfaceElementFactory,
 } from './services/session-surface-manager'
-import type { ChatChannel, PublicGame } from './types/backend-api'
+import type { ChatChannel, PublicGame, PublicProduct } from './types/backend-api'
 
 const user = {
   aud: 'authenticated',
@@ -99,6 +99,56 @@ describe('update dialog', () => {
 
     expect(root.innerHTML).toContain('A versão Portátil não pode se atualizar sozinha.')
     expect(root.innerHTML).not.toContain('Você já está usando a versão mais recente.')
+  })
+})
+
+describe('Founder upgrade offer', () => {
+  it('uses only server eligibility for the discount and keeps the full-price fallback', () => {
+    installBrowser('https://app.example.com/')
+    const auth = createAuthServiceDouble()
+    const permissions = new PermissionService({
+      account_limit: 6,
+      expires_at: null,
+      features: {},
+      founder_number: null,
+      lifetime: true,
+      plan: 'PRO',
+    })
+    const app = new AuthApp(createRoot(), auth.service, {
+      permissionService: permissions,
+    })
+    const founder: PublicProduct = {
+      code: 'FOUNDER_LIFETIME',
+      currency: 'BRL',
+      description: null,
+      lifetime: true,
+      name: 'Founder Lifetime',
+      price_amount: 150,
+    }
+    const upgrade: PublicProduct = {
+      ...founder,
+      code: 'FOUNDER_UPGRADE',
+      name: 'Founder Upgrade',
+      price_amount: 75,
+    }
+    const harness = app as unknown as {
+      activeDialog: 'plans'
+      me: { founder_upgrade_eligible: boolean } | null
+      products: PublicProduct[]
+      renderDialog(): string | null
+    }
+
+    harness.activeDialog = 'plans'
+    harness.products = [founder, upgrade]
+    harness.me = { founder_upgrade_eligible: false }
+    expect(harness.renderDialog()).toContain('data-buy-product="FOUNDER_LIFETIME"')
+    expect(harness.renderDialog()).not.toContain('data-buy-product="FOUNDER_UPGRADE"')
+
+    harness.me = { founder_upgrade_eligible: true }
+    expect(harness.renderDialog()).toContain('data-buy-product="FOUNDER_UPGRADE"')
+
+    harness.products = [founder]
+    expect(harness.renderDialog()).toContain('data-buy-product="FOUNDER_LIFETIME"')
   })
 })
 
@@ -813,8 +863,7 @@ describe('AuthApp session lifecycle', () => {
     installBrowser('https://app.example.com/')
     const root = createRoot()
     const auth = createAuthServiceDouble()
-    const openExternalUrl = vi.fn()
-    const app = new AuthApp(root, auth.service, { openExternalUrl })
+    const app = new AuthApp(root, auth.service)
     const huntera = {
       developer_referral_url: 'https://accounts.example.com/huntera-ref',
       icon_url: 'https://cdn.example.com/huntera.png',
@@ -851,10 +900,6 @@ describe('AuthApp session lifecycle', () => {
     const harness = app as unknown as {
       activeDialog: 'add-account'
       games: Array<typeof huntera | typeof gameWithoutReferral>
-      openDeveloperReferral(
-        slug: string,
-        button: HTMLButtonElement,
-      ): Promise<void>
       renderDialog(): string
       resolveSessionLaunchTarget(
         account: ConfiguredAccount,
@@ -871,8 +916,9 @@ describe('AuthApp session lifecycle', () => {
     expect(dialog).toContain('Huntera')
     expect(dialog).toContain('Jogo 2')
     expect(dialog).toContain('URL personalizada')
-    expect(dialog.match(/Ainda não possui conta\?/g)).toHaveLength(1)
-    expect(dialog).toContain('Link de indicação do desenvolvedor')
+    expect(dialog).not.toContain('Ainda não possui conta?')
+    expect(dialog).not.toContain('Link de indicação do desenvolvedor')
+    expect(dialog).not.toContain('data-open-developer-referral')
     expect(dialog).not.toContain(huntera.developer_referral_url)
 
     expect(harness.resolveSessionLaunchTarget(presetAccount)).toMatchObject({
@@ -889,14 +935,6 @@ describe('AuthApp session lifecycle', () => {
       customLaunchUrl: 'javascript:alert(1)',
     })).toBeNull()
 
-    await harness.openDeveloperReferral(
-      huntera.slug,
-      { disabled: false, isConnected: true } as HTMLButtonElement,
-    )
-    expect(openExternalUrl).toHaveBeenCalledOnce()
-    expect(openExternalUrl).toHaveBeenCalledWith(
-      huntera.developer_referral_url,
-    )
   })
 
   it('stops loading and keeps a retryable authenticated UI when the API is offline', async () => {
@@ -1050,11 +1088,11 @@ describe('AuthApp session lifecycle', () => {
     harness.render()
     expect(root.innerHTML).toContain('Planos AltGrid')
     expect(root.innerHTML).toContain('FREE')
-    expect(root.innerHTML).toContain('Huntera: 3 · demais jogos: 2')
+    expect(root.innerHTML).toContain('3 Huntera · 2 nos demais jogos')
     expect(root.innerHTML).toContain('PRO')
-    expect(root.innerHTML).toContain('Até o limite configurado')
+    expect(root.innerHTML).toContain('Até 6 contas simultâneas')
     expect(root.innerHTML).toContain('FOUNDER')
-    expect(root.innerHTML).toContain('Benefícios especiais')
+    expect(root.innerHTML).toContain('Benefícios Founder')
     expect(root.innerHTML).not.toContain('checkout')
     expect(root.innerHTML).not.toContain('Pix')
 

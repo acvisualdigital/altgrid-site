@@ -14,6 +14,7 @@ import { GamePresetService } from './services/game-preset-service'
 import { createEmbeddedOfflineLicenseService } from './services/license-snapshot-service'
 import { PermissionService } from './services/permission-service'
 import { SupabaseChatRealtimeGateway } from './services/supabase-chat-realtime'
+import { createMobileSessionLauncher } from './services/mobile-session-adapter'
 
 const root = document.querySelector<HTMLElement>('#app')
 
@@ -34,6 +35,7 @@ try {
       })
     : null
   const desktop = createElectronDesktopIntegration()
+  const mobile = desktop ? null : createMobileSessionLauncher()
   const chatService = backendApi
     ? new ChatService(
         backendApi,
@@ -79,7 +81,7 @@ try {
         offlineLicenseService: offlineLicenseService ?? undefined,
         openExternalUrl: desktop?.openExternalUrl,
         permissionService: new PermissionService(),
-        sessionLauncher: desktop?.sessionLauncher,
+        sessionLauncher: desktop?.sessionLauncher ?? mobile ?? undefined,
         updater: desktop?.updater,
       })
 

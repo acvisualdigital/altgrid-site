@@ -133,6 +133,39 @@ export class ConfiguredAccountService {
     return { ...updated }
   }
 
+  move(
+    userId: string,
+    accountId: string,
+    direction: 'previous' | 'next',
+  ): ConfiguredAccount[] {
+    const accounts = this.list(userId)
+    const index = accounts.findIndex((account) => account.id === accountId)
+    const targetIndex = direction === 'previous' ? index - 1 : index + 1
+
+    if (index < 0 || targetIndex < 0 || targetIndex >= accounts.length) {
+      return accounts
+    }
+
+    const [account] = accounts.splice(index, 1)
+    accounts.splice(targetIndex, 0, account!)
+    this.write(this.keyFor(userId), JSON.stringify(accounts))
+    return accounts.map((account) => ({ ...account }))
+  }
+
+  moveTo(userId: string, accountId: string, targetIndex: number): ConfiguredAccount[] {
+    const accounts = this.list(userId)
+    const currentIndex = accounts.findIndex((account) => account.id === accountId)
+
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= accounts.length) {
+      return accounts
+    }
+
+    const [account] = accounts.splice(currentIndex, 1)
+    accounts.splice(targetIndex, 0, account!)
+    this.write(this.keyFor(userId), JSON.stringify(accounts))
+    return accounts.map((account) => ({ ...account }))
+  }
+
   remove(userId: string, accountId: string): boolean {
     const accounts = this.list(userId)
     const remaining = accounts.filter((account) => account.id !== accountId)

@@ -7,7 +7,8 @@ import type {
 import { isAllowedSessionUrl } from './url-policy.js'
 
 const ACCOUNT_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/
-const MAX_VIEW_DIMENSION = 32_768
+const MAX_VIEW_DIMENSION = 8_192
+const MAX_VIEW_AREA = 33_554_432
 const DEFAULT_LOAD_TIMEOUT_MS = 30_000
 const DEFAULT_SESSION_BOUNDS: SessionBounds = {
   height: 720,
@@ -27,6 +28,7 @@ export interface NativeSessionView {
   focus(): void
   loadURL(url: string): Promise<void>
   reload(): void
+  stop(): void
   setBounds(bounds: SessionBounds): void
   setEcoMode(enabled: boolean): void
   setMuted(muted: boolean): void
@@ -115,6 +117,7 @@ export function normalizeSessionBounds(input: unknown): SessionBounds {
     || bounds.height < 1
     || bounds.width > MAX_VIEW_DIMENSION
     || bounds.height > MAX_VIEW_DIMENSION
+    || bounds.width * bounds.height > MAX_VIEW_AREA
   ) {
     throw new RangeError('Bounds da sessão fora do intervalo permitido.')
   }
@@ -224,6 +227,11 @@ export class SessionManager {
 
   showSession(accountId: unknown): SessionSnapshot {
     const record = this.requireRecord(accountId)
+
+    if (record.visible) {
+      return snapshot(record)
+    }
+
     record.visible = true
     record.view.setVisible(true)
     return snapshot(record)
@@ -231,6 +239,11 @@ export class SessionManager {
 
   hideSession(accountId: unknown): SessionSnapshot {
     const record = this.requireRecord(accountId)
+
+    if (!record.visible) {
+      return snapshot(record)
+    }
+
     record.visible = false
     record.view.setVisible(false)
     return snapshot(record)
@@ -249,6 +262,16 @@ export class SessionManager {
   resizeSession(accountId: unknown, inputBounds: unknown): SessionSnapshot {
     const record = this.requireRecord(accountId)
     const bounds = normalizeSessionBounds(inputBounds)
+
+    if (
+      record.bounds.x === bounds.x
+      && record.bounds.y === bounds.y
+      && record.bounds.width === bounds.width
+      && record.bounds.height === bounds.height
+    ) {
+      return snapshot(record)
+    }
+
     record.bounds = bounds
     record.view.setBounds(bounds)
     return snapshot(record)
@@ -292,6 +315,11 @@ export class SessionManager {
     }
 
     const record = this.requireRecord(accountId)
+
+    if (record.muted === muted) {
+      return snapshot(record)
+    }
+
     record.muted = muted
     record.view.setMuted(muted)
     return snapshot(record)
@@ -368,17 +396,26 @@ export class SessionManager {
 
   private async loadWithTimeout(view: NativeSessionView, url: string): Promise<void> {
     let timer: NodeJS.Timeout | null = null
+    let timedOut = false
 
     try {
       await Promise.race([
         view.loadURL(url),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
-            () => reject(new Error('Tempo limite ao carregar a sessão.')),
+            () => {
+              timedOut = true
+              reject(new Error('Tempo limite ao carregar a sessão.'))
+            },
             this.loadTimeoutMs,
           )
         }),
       ])
+    } catch (error) {
+      if (timedOut) {
+        view.stop()
+      }
+      throw error
     } finally {
       if (timer) {
         clearTimeout(timer)

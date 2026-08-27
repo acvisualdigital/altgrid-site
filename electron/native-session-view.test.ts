@@ -50,6 +50,7 @@ const electronMocks = vi.hoisted(() => {
       setWindowOpenHandler: vi.fn((handler: EventHandler) => {
         this.windowOpenHandler = handler
       }),
+      stop: vi.fn(),
     }
     backgroundColor = ''
     bounds: unknown = null
@@ -207,7 +208,7 @@ describe('createNativeSessionViewFactory', () => {
     expect(partition.on).toHaveBeenCalledOnce()
   })
 
-  it('toggles background throttling without recreating or reloading the view', () => {
+  it('throttles hidden views without closing their persistent WebContents', () => {
     const { hostWindow } = createHostWindow()
     const factory = createNativeSessionViewFactory(hostWindow, false)
     const nativeView = factory({
@@ -218,11 +219,15 @@ describe('createNativeSessionViewFactory', () => {
     const view = electronMocks.views[0]!
 
     nativeView.setEcoMode(true)
+    nativeView.setVisible(true)
+    nativeView.setVisible(false)
     nativeView.setEcoMode(false)
 
     expect(view.webContents.setBackgroundThrottling.mock.calls).toEqual([
       [true],
-      [false],
+      [true],
+      [true],
+      [true],
     ])
     expect(view.webContents.loadURL).not.toHaveBeenCalled()
     expect(view.webContents.reload).not.toHaveBeenCalled()
@@ -304,12 +309,14 @@ describe('createNativeSessionViewFactory', () => {
     nativeView.attach()
     nativeView.setVisible(true)
     nativeView.focus()
+    nativeView.stop()
     nativeView.destroy(false)
     nativeView.destroy(true)
 
     expect(addChildView).toHaveBeenCalledOnce()
     expect(removeChildView).toHaveBeenCalledOnce()
     expect(view.webContents.focus).toHaveBeenCalledOnce()
+    expect(view.webContents.stop).toHaveBeenCalledOnce()
     expect(view.webContents.close).toHaveBeenCalledOnce()
     expect(view.webContents.close).toHaveBeenCalledWith({
       waitForBeforeUnload: false,

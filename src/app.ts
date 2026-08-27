@@ -87,6 +87,7 @@ type ActiveDialog =
 type BackendLoadStatus = 'error' | 'idle' | 'loading' | 'ready'
 type ServiceStatus = 'checking' | 'offline' | 'online' | 'unknown'
 type WorkspaceMode = 'account' | 'grid'
+const CHAT_GAME_SELECTION_STORAGE_KEY = 'altgrid.chat.visible-game-channels.v1'
 type ApplicationBackend = Pick<BackendApi, 'getEntitlements' | 'getGames' | 'getMe'>
   & Partial<Pick<
     BackendApi,
@@ -437,6 +438,8 @@ export class AuthApp {
   private paymentLoading = false
   private paymentError: string | null = null
   private chatNicknameSaving = false
+  private selectedChatGameChannelIds: Set<string> | null = null
+  private accountOrderChanged = false
   private updateState: AppUpdateState = { status: 'idle', supported: false }
   private unsubscribeFromUpdater: (() => void) | null = null
   private gridMode: GridMode = 'auto'
@@ -1448,7 +1451,7 @@ export class AuthApp {
     this.sessionSurfaceManager = null
     const authenticated = this.currentView === 'authenticated'
     this.root.innerHTML = `
-      <div class="app-frame ${authenticated ? 'app-frame--workspace' : ''} ${this.screensOnly ? 'is-screens-only' : ''}">
+      <div class="app-frame ${authenticated ? 'app-frame--workspace' : ''} ${this.screensOnly ? 'is-screens-only' : ''} ${this.ecoModeEffective ? 'is-eco-mode' : ''}">
         <header class="topbar ${authenticated ? 'topbar--workspace' : ''}">
           <div class="brand" aria-label="AltGrid">
             <img
@@ -1522,7 +1525,6 @@ export class AuthApp {
     const backendRegion = shell.querySelector<HTMLElement>('[data-backend-region]')
     const sidebarRegion = shell.querySelector<HTMLElement>('[data-sidebar-region]')
     const gridControlsRegion = shell.querySelector<HTMLElement>('[data-grid-controls-region]')
-    const statusbarRegion = shell.querySelector<HTMLElement>('[data-statusbar-region]')
     const chatRegion = shell.querySelector<HTMLElement>('[data-chat-region]')
     const overlayRegion = this.root.querySelector<HTMLElement>('[data-overlay-region]')
     const previousAccountScroller = toolbar?.querySelector<HTMLElement>(
@@ -1543,7 +1545,10 @@ export class AuthApp {
       toolbar.innerHTML = this.renderWorkspaceToolbar()
       const accountScroller = toolbar.querySelector<HTMLElement>('[data-account-tabs-scroll]')
       if (accountScroller) {
-        accountScroller.scrollLeft = previousAccountScrollLeft
+        accountScroller.scrollLeft = this.accountOrderChanged
+          ? 0
+          : previousAccountScrollLeft
+        this.accountOrderChanged = false
         if (previousFocusedAccountId !== this.focusedAccountId) {
           toolbar
             .querySelector<HTMLElement>('[data-account-tab].is-active')
@@ -1559,9 +1564,6 @@ export class AuthApp {
     }
     if (gridControlsRegion) {
       gridControlsRegion.innerHTML = this.renderGridControls()
-    }
-    if (statusbarRegion) {
-      statusbarRegion.innerHTML = this.renderStatusbar()
     }
     if (chatRegion) {
       chatRegion.innerHTML = this.renderChat()
@@ -1728,7 +1730,7 @@ export class AuthApp {
               && active
               && account.id === this.focusedAccountId
             return `
-              <div class="account-tab-shell ${selected ? 'is-active' : ''} ${active ? 'is-open' : ''}">
+              <div class="account-tab-shell ${selected ? 'is-active' : ''} ${active ? 'is-open' : ''}" draggable="true" data-account-order-id="${escapeHtml(account.id)}">
                 <button
                   class="account-tab ${selected ? 'is-active' : ''} ${active ? 'is-open' : ''}"
                   data-account-tab
@@ -2245,20 +2247,6 @@ export class AuthApp {
     return this.serviceStatus === 'offline' ? 'is-offline' : ''
   }
 
-  private renderStatusbar(): string {
-    const active = this.permissionService.getActiveSessionCount()
-    return `
-      <footer class="workspace-statusbar">
-        <span>${active} ${active === 1 ? 'sessão ativa' : 'sessões ativas'}</span>
-        <span class="workspace-statusbar__right">
-          ${this.ecoModeEffective ? '<span class="eco-mode-status"><i class="status-dot status-dot--small" aria-hidden="true"></i><strong>Eco Mode ON</strong></span>' : ''}
-          <span>Tela <strong>Original</strong></span>
-          <span><i class="status-dot status-dot--small ${this.serviceStatusDotClass()}" aria-hidden="true"></i> ${this.serviceStatusLabel()}</span>
-        </span>
-      </footer>
-    `
-  }
-
   private gameForChatChannel(
     channel: ChatState['channels'][number] | undefined,
   ): PublicGame | null {
@@ -2278,6 +2266,63 @@ export class AuthApp {
 
     const game = this.gameForChatChannel(channel)
     return game ? this.renderGameIcon(game) : uiIcon('chat')
+  }
+
+  private visibleChatChannels(channels: ChatState['channels']): ChatState['channels'] {
+    const global = channels.filter((channel) => channel.type === 'global')
+    const games = channels.filter((channel) => channel.type !== 'global')
+      .filter((channel) => (
+        this.selectedChatGameChannelIds === null
+        || this.selectedChatGameChannelIds.has(channel.id)
+      ))
+    return [...global, ...games]
+  }
+
+  private readChatGameSelection(channels: ChatState['channels']): void {
+    if (this.selectedChatGameChannelIds !== null || channels.length === 0) {
+      return
+    }
+
+    try {
+      const stored = JSON.parse(
+        localStorage.getItem(CHAT_GAME_SELECTION_STORAGE_KEY) ?? 'null',
+      )
+      this.selectedChatGameChannelIds = Array.isArray(stored)
+        ? new Set(stored.filter((id): id is string => typeof id === 'string'))
+        : new Set(channels.filter((channel) => channel.type !== 'global').map((channel) => channel.id))
+    } catch {
+      this.selectedChatGameChannelIds = new Set(
+        channels.filter((channel) => channel.type !== 'global').map((channel) => channel.id),
+      )
+    }
+  }
+
+  private setChatGameChannelVisible(channelId: string, visible: boolean): void {
+    const state = this.chatService?.getState()
+    if (!state) {
+      return
+    }
+    this.readChatGameSelection(state.channels)
+    if (visible) {
+      this.selectedChatGameChannelIds?.add(channelId)
+    } else {
+      this.selectedChatGameChannelIds?.delete(channelId)
+      if (state.selectedChannelId === channelId) {
+        const global = state.channels.find((channel) => channel.type === 'global')
+        if (global) {
+          void this.chatService?.selectChannel(global.id)
+        }
+      }
+    }
+    try {
+      localStorage.setItem(
+        CHAT_GAME_SELECTION_STORAGE_KEY,
+        JSON.stringify([...this.selectedChatGameChannelIds ?? []]),
+      )
+    } catch {
+      // Chat preferences remain available for the current session.
+    }
+    this.render()
   }
 
   private renderChatMessage(
@@ -2319,6 +2364,8 @@ export class AuthApp {
     }
 
     const state = this.chatService.getState()
+    this.readChatGameSelection(state.channels)
+    const visibleChannels = this.visibleChatChannels(state.channels)
     const currentChannel = state.channels.find(
       (channel) => channel.id === state.selectedChannelId,
     )
@@ -2341,7 +2388,7 @@ export class AuthApp {
           <button data-close-chat type="button" aria-label="Fechar chat">×</button>
         </header>
         <nav class="chat-channels" aria-label="Canais do chat">
-          ${state.channels.map((channel) => {
+          ${visibleChannels.map((channel) => {
             const unread = state.unread[channel.id] ?? 0
             return `
               <button class="${channel.id === state.selectedChannelId ? 'is-active' : ''}" data-chat-channel="${escapeHtml(channel.id)}" data-chat-channel-type="${escapeHtml(channel.type)}" type="button">
@@ -2352,6 +2399,18 @@ export class AuthApp {
             `
           }).join('')}
         </nav>
+        <details class="chat-channel-picker">
+          <summary>Selecionar chats</summary>
+          <div class="chat-channel-picker__menu">
+            ${state.channels.filter((channel) => channel.type !== 'global').map((channel) => `
+              <label>
+                <input type="checkbox" data-chat-game-toggle="${escapeHtml(channel.id)}" ${this.selectedChatGameChannelIds?.has(channel.id) ? 'checked' : ''} />
+                <span class="chat-channel__icon">${this.renderChatChannelIcon(channel)}</span>
+                <span>${escapeHtml(channel.name)}</span>
+              </label>
+            `).join('') || '<small>Nenhum chat de jogo disponível.</small>'}
+          </div>
+        </details>
         <div class="chat-messages" data-chat-messages aria-live="polite">
           ${state.hasMore ? `<button class="chat-load-more" data-chat-load-more type="button" ${state.loadingMore ? 'disabled' : ''}>${state.loadingMore ? 'Carregando…' : 'Mensagens anteriores'}</button>` : ''}
           ${state.loading
@@ -2420,7 +2479,6 @@ export class AuthApp {
               <button class="button button--primary" data-add-account type="button">＋ Adicionar conta</button>
             </div>
           </div>
-          <div data-statusbar-region>${this.renderStatusbar()}</div>
         </div>
         <div data-chat-region>${this.renderChat()}</div>
         <div class="form-alert" id="session-alert" role="alert" aria-live="polite"></div>
@@ -2636,8 +2694,9 @@ export class AuthApp {
     })
 
     activeAccounts.forEach((account) => {
-      let card = [...grid.querySelectorAll<HTMLElement>('[data-session-card]')]
-        .find((candidate) => candidate.dataset.accountId === account.id)
+      let card = this.sessionSurfaceManager?.get(account.id)?.card
+        ?? [...grid.querySelectorAll<HTMLElement>('[data-session-card]')]
+          .find((candidate) => candidate.dataset.accountId === account.id)
 
       if (!card) {
         const template = document.createElement('template')
@@ -2668,8 +2727,14 @@ export class AuthApp {
           game.textContent = this.gameNameFor(account)
         }
         if (surface) {
-          surface.innerHTML = this.renderSessionSurfaceContent(account)
-          surface.classList.toggle('has-session-issue', this.sessionIssues.has(account.id))
+          const issue = this.sessionIssues.get(account.id)
+          const contentSignature = issue ? `issue:${issue}` : 'ready'
+
+          if (surface.dataset.contentSignature !== contentSignature) {
+            surface.innerHTML = this.renderSessionSurfaceContent(account)
+            surface.dataset.contentSignature = contentSignature
+          }
+          surface.classList.toggle('has-session-issue', Boolean(issue))
         }
         if (muteButton) {
           muteButton.textContent = this.mutedAccountIds.has(account.id)
@@ -2765,6 +2830,7 @@ export class AuthApp {
     }
 
     frame.classList.toggle('is-screens-only', this.screensOnly)
+    frame.classList.toggle('is-eco-mode', this.ecoModeEffective)
     shell.classList.toggle('is-screens-only', this.screensOnly)
     shell.classList.toggle('is-sidebar-collapsed', this.sidebarCollapsed)
     shell.classList.toggle('has-maximized-session', Boolean(this.maximizedAccountId))
@@ -2860,15 +2926,11 @@ export class AuthApp {
     grid.style.setProperty('--grid-columns', String(layout.columns))
     grid.style.setProperty('--grid-rows', String(rows))
     if (scrollingGrid) {
-      const tileWidth = Math.max(
-        1,
-        (width - (layout.columns - 1) * (this.screensOnly ? 4 : 10)) / layout.columns,
-      )
-      const preferredRowHeight = Math.round(tileWidth * 9 / 16)
-        + (this.screensOnly ? 0 : 36)
+      const verticalGap = this.screensOnly ? 4 : 10
+      const availableHeight = Math.max(1, height - verticalGap * (rows - 1))
       const rowHeight = rows === 1
-        ? Math.max(1, height - (this.screensOnly ? 0 : 20))
-        : Math.min(height, Math.max(260, preferredRowHeight))
+        ? Math.max(1, height)
+        : Math.max(180, Math.floor(availableHeight / rows))
       grid.style.setProperty('--grid-row-height', `${rowHeight}px`)
     } else {
       grid.style.setProperty('--grid-row-height', '')
@@ -3047,33 +3109,6 @@ export class AuthApp {
           </label>
         `
       }).join('')
-      const referralActions = availableGames.flatMap((game, index) => {
-        const referralUrl = normalizeSafeGameUrl(game.developer_referral_url)
-
-        if (!referralUrl) {
-          return []
-        }
-
-        return [`
-          <aside
-            class="game-referral"
-            data-game-referral="${escapeHtml(game.slug)}"
-            ${index === 0 ? '' : 'hidden'}
-          >
-            <div>
-              <strong>Ainda não possui conta?</strong>
-              <small>Link de indicação do desenvolvedor</small>
-            </div>
-            <button
-              class="button button--secondary button--compact"
-              data-open-developer-referral
-              data-game-slug="${escapeHtml(game.slug)}"
-              type="button"
-            >Criar conta</button>
-          </aside>
-        `]
-      }).join('')
-
       return `
         <dialog class="modal modal--game-picker" id="app-dialog" aria-labelledby="dialog-title">
           <div class="modal__header">
@@ -3127,7 +3162,6 @@ export class AuthApp {
               />
               <small>Use HTTPS. HTTP é aceito somente em localhost.</small>
             </div>
-            <div data-game-referral-region>${referralActions}</div>
             <div class="modal__actions">
               <button class="button button--secondary" data-close-dialog type="button">Cancelar</button>
               <button class="button button--primary" type="submit">
@@ -3232,10 +3266,17 @@ export class AuthApp {
 
     const currentPlan = this.permissionService.getCurrentPlan()
     const currentLimit = this.permissionService.getAccountLimit()
-    const productFor = (plan: 'FOUNDER' | 'PRO'): PublicProduct | null =>
-      this.products.find((product) => product.code === (plan === 'FOUNDER' && currentPlan === 'PRO'
-        ? 'FOUNDER_UPGRADE'
-        : `${plan}_LIFETIME`)) ?? null
+    const founderUpgradeEligible = currentPlan === 'PRO'
+      && this.me?.founder_upgrade_eligible === true
+    const productByCode = (code: string): PublicProduct | null =>
+      this.products.find((product) => product.code === code) ?? null
+    const productFor = (plan: 'FOUNDER' | 'PRO'): PublicProduct | null => {
+      if (plan === 'PRO') {
+        return productByCode('PRO_LIFETIME')
+      }
+      return (founderUpgradeEligible ? productByCode('FOUNDER_UPGRADE') : null)
+        ?? productByCode('FOUNDER_LIFETIME')
+    }
 
     return `
       <dialog class="modal modal--plans" id="app-dialog" aria-labelledby="dialog-title">
@@ -3258,8 +3299,8 @@ export class AuthApp {
             'FOUNDER',
             currentPlan === 'FOUNDER'
               ? `Seu plano atual · até ${currentLimit} contas`
-              : currentPlan === 'PRO' ? 'Upgrade com crédito do PRO' : 'Até 15 contas simultâneas',
-            currentPlan === 'PRO' ? 'Upgrade especial' : 'Plano máximo',
+              : founderUpgradeEligible ? 'Upgrade com crédito do PRO' : 'Até 15 contas simultâneas',
+            founderUpgradeEligible ? 'Upgrade especial' : 'Plano máximo',
             currentPlan,
             productFor('FOUNDER'),
             ['Benefícios Founder', 'Recursos beta', 'Badge especial no chat'],
@@ -3608,6 +3649,45 @@ export class AuthApp {
         })
       })
 
+    this.root
+      .querySelectorAll<HTMLElement>('[data-account-order-id]')
+      .forEach((tab) => {
+        if (tab.dataset.dragBound === 'true') {
+          return
+        }
+        tab.dataset.dragBound = 'true'
+        tab.addEventListener('dragstart', (event) => {
+          const accountId = tab.dataset.accountOrderId
+          if (!accountId || !event.dataTransfer) {
+            return
+          }
+          event.dataTransfer.effectAllowed = 'move'
+          event.dataTransfer.setData('text/plain', accountId)
+          tab.classList.add('is-dragging')
+        })
+        tab.addEventListener('dragend', () => tab.classList.remove('is-dragging'))
+        tab.addEventListener('dragover', (event) => event.preventDefault())
+        tab.addEventListener('drop', (event) => {
+          event.preventDefault()
+          const sourceId = event.dataTransfer?.getData('text/plain')
+          const targetId = tab.dataset.accountOrderId
+          const userId = this.session?.user.id
+          const targetIndex = this.configuredAccounts.findIndex(
+            (account) => account.id === targetId,
+          )
+          if (!sourceId || !userId || sourceId === targetId || targetIndex < 0) {
+            return
+          }
+          this.configuredAccounts = this.accountService.moveTo(
+            userId,
+            sourceId,
+            targetIndex,
+          )
+          this.accountOrderChanged = true
+          this.render()
+        })
+      })
+
     const accountScroller = this.root.querySelector<HTMLElement>('[data-account-tabs-scroll]')
     if (accountScroller && accountScroller.dataset.scrollBound !== 'true') {
       accountScroller.dataset.scrollBound = 'true'
@@ -3798,6 +3878,21 @@ export class AuthApp {
           const channelId = button.dataset.chatChannel
           if (channelId) {
             void this.chatService?.selectChannel(channelId)
+          }
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLInputElement>('[data-chat-game-toggle]')
+      .forEach((input) => {
+        if (input.dataset.actionBound === 'true') {
+          return
+        }
+        input.dataset.actionBound = 'true'
+        input.addEventListener('change', () => {
+          const channelId = input.dataset.chatGameToggle
+          if (channelId) {
+            this.setChatGameChannelVisible(channelId, input.checked)
           }
         })
       })
@@ -4317,37 +4412,6 @@ export class AuthApp {
       customInput.required = customSelected
     }
 
-    form.querySelectorAll<HTMLElement>('[data-game-referral]')
-      .forEach((referral) => {
-        referral.hidden = referral.dataset.gameReferral !== selected
-      })
-  }
-
-  private async openDeveloperReferral(
-    gameSlug: string,
-    button: HTMLButtonElement,
-  ): Promise<void> {
-    const game = this.games.find((candidate) => candidate.slug === gameSlug)
-    const referralUrl = normalizeSafeGameUrl(game?.developer_referral_url)
-
-    if (!referralUrl) {
-      this.dialogError = 'Este link de criação de conta não está disponível.'
-      this.render()
-      return
-    }
-
-    button.disabled = true
-
-    try {
-      await this.openExternalUrl(referralUrl)
-    } catch {
-      this.dialogError = 'Não foi possível abrir o link de criação de conta.'
-      this.render()
-    } finally {
-      if (button.isConnected) {
-        button.disabled = false
-      }
-    }
   }
 
   private async createPixPayment(
@@ -4660,21 +4724,15 @@ export class AuthApp {
         displayName,
         gameSlug,
       })
+      if (this.permissionService.getCurrentPlan() === 'FREE') {
+        const referralUrl = normalizeSafeGameUrl(game.developer_referral_url)
+        if (referralUrl) {
+          void this.openExternalUrl(referralUrl)
+        }
+      }
       this.completeAddedAccount(account)
       })
     }
-
-    this.root
-      .querySelectorAll<HTMLButtonElement>('[data-open-developer-referral]')
-      .forEach((button) => {
-        this.bindButtonOnce(button, () => {
-          const gameSlug = button.dataset.gameSlug
-
-          if (gameSlug) {
-            void this.openDeveloperReferral(gameSlug, button)
-          }
-        })
-      })
 
     const renameAccountForm =
       this.root.querySelector<HTMLFormElement>('#rename-account-form')

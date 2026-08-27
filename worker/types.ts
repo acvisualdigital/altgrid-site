@@ -78,6 +78,7 @@ export interface BackendRepository {
   getPlans(): Promise<PlanRecord[]>
   getActiveLicenseCandidates(userId: string): Promise<LicenseRecord[]>
   getEntitlementCandidates(userId: string): Promise<EntitlementRecord[]>
+  hasProLifetimeUpgradeEligibility(userId: string): Promise<boolean>
   getEnabledGames(): Promise<PublicGame[]>
   getPublicConfig(): Promise<Record<string, Json>>
   registerDevice(

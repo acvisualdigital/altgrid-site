@@ -338,14 +338,22 @@ async function createMainWindow(): Promise<void> {
   })
   updaterService = new UpdaterService(browserWindow)
 
-  sessionManager.subscribe((event) => {
-    if (!browserWindow.isDestroyed()) {
+  let shellCanReceiveSessionEvents = false
+  const unsubscribeSessionEvents = sessionManager.subscribe((event) => {
+    if (
+      shellCanReceiveSessionEvents
+      && !browserWindow.isDestroyed()
+      && !browserWindow.webContents.isDestroyed()
+      && !browserWindow.webContents.isCrashed()
+    ) {
       browserWindow.webContents.send(IPC_CHANNELS.sessions.event, event)
     }
   })
 
   browserWindow.once('ready-to-show', () => browserWindow.show())
   browserWindow.on('closed', () => {
+    shellCanReceiveSessionEvents = false
+    unsubscribeSessionEvents()
     updaterService?.stop()
     sessionManager?.destroyAll()
     updaterService = null
@@ -354,6 +362,7 @@ async function createMainWindow(): Promise<void> {
     shellEntryUrl = null
   })
   browserWindow.webContents.on('render-process-gone', (_event, details) => {
+    shellCanReceiveSessionEvents = false
     if (details.reason !== 'clean-exit' && !browserWindow.isDestroyed()) {
       // The renderer owns the entitlement/session registry. Drop native views
       // before a shell restart so orphaned sessions cannot bypass that registry.
@@ -374,11 +383,14 @@ async function createMainWindow(): Promise<void> {
   let shellDocumentLoaded = false
   browserWindow.webContents.on('did-finish-load', () => {
     shellDocumentLoaded = true
+    shellCanReceiveSessionEvents = true
   })
   browserWindow.webContents.on(
     'did-start-navigation',
     (_event, _url, isInPlace, isMainFrame) => {
       if (shellDocumentLoaded && isMainFrame && !isInPlace) {
+        shellCanReceiveSessionEvents = false
+        shellDocumentLoaded = false
         // Full shell reloads reset in-memory permissions; close native views but
         // preserve their persistent partitions so game login survives reopening.
         sessionManager?.destroyAll()

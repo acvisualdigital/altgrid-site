@@ -18,6 +18,7 @@ interface FakeView extends NativeSessionView {
   focus: Mock<() => void>
   loadURL: Mock<(url: string) => Promise<void>>
   reload: Mock<() => void>
+  stop: Mock<() => void>
   setBounds: Mock<(bounds: SessionBounds) => void>
   setEcoMode: Mock<(enabled: boolean) => void>
   setMuted: Mock<(muted: boolean) => void>
@@ -39,6 +40,7 @@ function createHarness(
       focus: vi.fn(),
       loadURL: vi.fn(async () => undefined),
       reload: vi.fn(),
+      stop: vi.fn(),
       setBounds: vi.fn(),
       setEcoMode: vi.fn(),
       setMuted: vi.fn(),
@@ -107,6 +109,48 @@ describe('SessionManager', () => {
       muted: true,
       visible: true,
     })
+  })
+
+  it('skips repeated visibility, bounds, and mute updates', async () => {
+    const harness = createHarness()
+    await harness.manager.createSession('account-1', 'https://game.example/')
+    const view = harness.views.get('account-1')!
+    const initialBounds: SessionBounds = {
+      x: 0,
+      y: 0,
+      width: 1_280,
+      height: 720,
+    }
+    const resizedBounds: SessionBounds = {
+      x: 20,
+      y: 40,
+      width: 800,
+      height: 600,
+    }
+    view.setBounds.mockClear()
+    view.setMuted.mockClear()
+    view.setVisible.mockClear()
+
+    harness.manager.hideSession('account-1')
+    harness.manager.resizeSession('account-1', initialBounds)
+    harness.manager.muteSession('account-1', false)
+    harness.manager.showSession('account-1')
+    harness.manager.showSession('account-1')
+    harness.manager.hideSession('account-1')
+    harness.manager.hideSession('account-1')
+    harness.manager.resizeSession('account-1', resizedBounds)
+    harness.manager.resizeSession('account-1', { ...resizedBounds })
+    harness.manager.muteSession('account-1', true)
+    harness.manager.muteSession('account-1', true)
+
+    expect(view.setVisible.mock.calls.map((call) => call[0])).toEqual([
+      true,
+      false,
+    ])
+    expect(view.setBounds).toHaveBeenCalledOnce()
+    expect(view.setBounds).toHaveBeenCalledWith(resizedBounds)
+    expect(view.setMuted).toHaveBeenCalledOnce()
+    expect(view.setMuted).toHaveBeenCalledWith(true)
   })
 
   it('applies Eco Mode to existing sessions and new sessions without reloading', async () => {
@@ -240,6 +284,7 @@ describe('SessionManager', () => {
         focus: vi.fn(),
         loadURL: vi.fn(() => new Promise<void>(() => undefined)),
         reload: vi.fn(),
+        stop: vi.fn(),
         setBounds: vi.fn(),
         setEcoMode: vi.fn(),
         setMuted: vi.fn(),
@@ -253,6 +298,7 @@ describe('SessionManager', () => {
       'account-timeout',
       'https://game.example/',
     )).resolves.toMatchObject({ status: 'load-failed' })
+    expect(harness.views.get('account-timeout')?.stop).toHaveBeenCalledOnce()
   })
 
   it('rejects PII-like ids, unsafe URLs, and invalid view bounds', () => {
@@ -263,7 +309,15 @@ describe('SessionManager', () => {
     expect(normalizeSessionUrl('http://127.0.0.1:8080/', true)).toBe(
       'http://127.0.0.1:8080/',
     )
+    expect(normalizeSessionBounds({ x: 0, y: 0, width: 8_192, height: 4_096 }))
+      .toEqual({ x: 0, y: 0, width: 8_192, height: 4_096 })
     expect(() => normalizeSessionBounds({ x: 0, y: 0, width: 0, height: 600 }))
       .toThrow(RangeError)
+    expect(() => normalizeSessionBounds({
+      x: 0,
+      y: 0,
+      width: 8_192,
+      height: 4_097,
+    })).toThrow(RangeError)
   })
 })

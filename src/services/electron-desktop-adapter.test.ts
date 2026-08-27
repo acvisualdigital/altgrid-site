@@ -11,10 +11,14 @@ import {
   createElectronDesktopIntegration,
 } from './electron-desktop-adapter'
 
-function snapshot(accountId: string, visible: boolean): SessionSnapshot {
+function snapshot(
+  accountId: string,
+  visible: boolean,
+  bounds: SessionSnapshot['bounds'] = { height: 1, width: 1, x: 0, y: 0 },
+): SessionSnapshot {
   return {
     accountId,
-    bounds: { height: 1, width: 1, x: 0, y: 0 },
+    bounds,
     muted: false,
     partition: `persist:${accountId}`,
     status: 'ready',
@@ -58,6 +62,10 @@ describe('ElectronSessionLauncher', () => {
   it('repositions existing native views without recreating or navigating them', async () => {
     const harness = createSessionApi()
     const launcher = new ElectronSessionLauncher(harness.api)
+    harness.api.getSessions.mockResolvedValue([
+      snapshot('account-1', false),
+      snapshot('account-2', true),
+    ])
     const layout = {
       capacity: 1,
       columns: 1,
@@ -88,6 +96,40 @@ describe('ElectronSessionLauncher', () => {
     expect(harness.api.showSession).toHaveBeenCalledWith('account-1')
     expect(harness.api.createSession).not.toHaveBeenCalled()
     expect(harness.api.navigateSession).not.toHaveBeenCalled()
+  })
+
+  it('skips redundant resize and show IPC when layout already matches the native view', async () => {
+    const harness = createSessionApi()
+    const launcher = new ElectronSessionLauncher(harness.api)
+    const bounds = { height: 500, width: 799, x: 0, y: 20 }
+    harness.api.getSessions.mockResolvedValue([
+      snapshot('account-1', true, bounds),
+    ])
+    const layout = {
+      capacity: 1,
+      columns: 1,
+      overflowSessionIds: [],
+      pageCount: 1,
+      pageIndex: 0,
+      requestedMode: '1x1',
+      resolvedMode: '1x1',
+      rows: 1,
+      slots: [{
+        bounds: { height: 499.6, width: 799.7, x: -0.4, y: 20.2 },
+        column: 0,
+        index: 0,
+        row: 0,
+        sessionId: 'account-1',
+      }],
+    } satisfies GridLayout
+
+    await launcher.applyLayout(layout)
+    await launcher.applyLayout(layout)
+
+    expect(harness.api.getSessions).toHaveBeenCalledTimes(2)
+    expect(harness.api.resizeSession).not.toHaveBeenCalled()
+    expect(harness.api.showSession).not.toHaveBeenCalled()
+    expect(harness.api.hideSession).not.toHaveBeenCalled()
   })
 
   it('opens only a validated target through main-process IPC and delegates controls', async () => {
@@ -150,6 +192,9 @@ describe('ElectronSessionLauncher', () => {
     }))
 
     await launcher.reload({ id: 'account-1' })
+    harness.api.getSessions.mockResolvedValue([
+      snapshot('account-1', false),
+    ])
     await launcher.applyLayout({
       capacity: 1,
       columns: 1,

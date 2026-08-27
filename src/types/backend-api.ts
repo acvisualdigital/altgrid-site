@@ -70,6 +70,7 @@ export interface MeResponse extends ResolvedEntitlements {
   user: SafeUser
   profile: SafeProfile
   license: SafeLicense | null
+  founder_upgrade_eligible: boolean
 }
 
 export interface PublicGame {

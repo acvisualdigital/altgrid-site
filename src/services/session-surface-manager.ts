@@ -41,6 +41,19 @@ function requireLayout(layout: string): string {
   return normalized
 }
 
+function sameIds(
+  left: ReadonlySet<string> | null,
+  right: ReadonlySet<string> | null,
+): boolean {
+  if (left === right) {
+    return true
+  }
+  if (!left || !right || left.size !== right.size) {
+    return false
+  }
+  return [...left].every((accountId) => right.has(accountId))
+}
+
 const browserElementFactory: SessionSurfaceElementFactory = {
   createCard(accountId): HTMLElement {
     const card = document.createElement('article')
@@ -245,6 +258,15 @@ export class SessionSurfaceManager {
       && [...visibleAccountIds].some((accountId) => !this.records.has(accountId))
     ) {
       throw new RangeError('A apresentação contém uma surface inexistente.')
+    }
+
+    if (
+      this.layout === layout
+      && this.screensOnly === presentation.screensOnly
+      && this.maximizedAccountId === maximizedAccountId
+      && sameIds(this.visibleAccountIds, visibleAccountIds)
+    ) {
+      return
     }
 
     this.layout = layout

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0-beta.4
+
+- Otimiza sessões Electron ocultas sem perder login, cookies ou contas conectadas.
+- Adiciona HUD e sessões nativas para Android com armazenamento por conta.
+- Permite reorganizar contas por arrastar e soltar.
+- Corrige a altura dos layouts de grade para manter todas as sessões visíveis.
+- Mantém o Chat Global como primeira opção e permite selecionar chats de jogos.
+
 ## 0.9.0-beta.3
 
 - Permite recolher e restaurar o menu lateral para ampliar a área do jogo.

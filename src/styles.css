@@ -720,6 +720,12 @@ form {
   backdrop-filter: blur(4px);
 }
 
+.app-frame.is-eco-mode .topbar,
+.app-frame.is-eco-mode .app-footer,
+.app-frame.is-eco-mode .modal::backdrop {
+  backdrop-filter: none;
+}
+
 .modal__header {
   margin-bottom: 20px;
 }
@@ -874,35 +880,8 @@ form {
   line-height: 1.35;
 }
 
-.game-referral {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 10px 11px;
-  border: 1px solid rgba(35, 201, 91, 0.22);
-  border-radius: 8px;
-  background: rgba(35, 201, 91, 0.055);
-}
-
-.game-referral[hidden],
 .custom-game-url[hidden] {
   display: none;
-}
-
-.game-referral > div {
-  display: grid;
-  gap: 2px;
-}
-
-.game-referral strong {
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.game-referral small {
-  color: var(--text-muted);
-  font-size: 10px;
 }
 
 .button--compact {
@@ -1774,29 +1753,6 @@ form {
   height: 17px;
 }
 
-.workspace-context {
-  display: block;
-  min-width: 0;
-  margin-right: auto;
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-context span {
-  margin-inline: 5px;
-  color: var(--text-muted);
-}
-
-.workspace-actions {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-}
-
 .tool-button {
   display: inline-flex;
   align-items: center;
@@ -2535,11 +2491,6 @@ form {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .game-referral {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
   .session-panel {
     grid-template-columns: 1fr;
     padding: 24px 20px;
@@ -2693,6 +2644,15 @@ form {
 
 .account-tab-shell.is-open .account-tab {
   padding-right: 34px;
+}
+
+.account-tab-shell[draggable="true"] {
+  cursor: grab;
+}
+
+.account-tab-shell.is-dragging {
+  opacity: .48;
+  cursor: grabbing;
 }
 
 .account-tab__close {
@@ -3805,6 +3765,59 @@ form {
   background: rgba(35, 201, 91, 0.13);
 }
 
+.chat-channel-picker {
+  position: relative;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.chat-channel-picker summary {
+  padding: 6px 11px;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.chat-channel-picker summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-channel-picker summary::after {
+  content: '▾';
+  margin-left: 5px;
+  color: var(--green-hover);
+}
+
+.chat-channel-picker[open] summary::after {
+  content: '▴';
+}
+
+.chat-channel-picker__menu {
+  display: grid;
+  gap: 4px;
+  padding: 5px 10px 9px;
+  background: rgba(255, 255, 255, .018);
+}
+
+.chat-channel-picker__menu label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.chat-channel-picker__menu input {
+  accent-color: var(--green);
+}
+
+.chat-channel-picker__menu .chat-channel__icon {
+  width: 20px;
+  height: 20px;
+}
+
 .chat-channel__icon {
   width: 20px;
   height: 20px;
@@ -3968,6 +3981,16 @@ form {
 @keyframes founder-badge-shine {
   0%, 60%, 100% { transform: translateX(-110%); }
   78% { transform: translateX(110%); }
+}
+
+.app-frame.is-eco-mode .chat-plan-badge--founder::after {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-plan-badge--founder::after {
+    animation: none;
+  }
 }
 
 .chat-nickname-form {
@@ -4403,7 +4426,6 @@ form {
 
 .session-shell.is-screens-only .game-sidebar,
 .session-shell.is-screens-only .workspace-modebar,
-.session-shell.is-screens-only .workspace-statusbar,
 .session-shell.is-screens-only [data-chat-region] {
   display: none;
 }

@@ -191,6 +191,50 @@ describe('SessionSurfaceManager', () => {
     expect(container.classList.contains('is-screens-only')).toBe(false)
   })
 
+  it('does not touch the DOM when an equivalent presentation is applied again', () => {
+    const container = new FakeElement()
+    const elements = fakeFactory()
+    const manager = new SessionSurfaceManager(
+      asElement(container),
+      elements.factory,
+    )
+    manager.ensure('account-1')
+    manager.ensure('account-2')
+    manager.applyPresentation({
+      layout: 'grid-1x1',
+      maximizedAccountId: 'account-1',
+      screensOnly: true,
+      visibleAccountIds: ['account-1', 'account-2'],
+    })
+
+    const firstCard = elements.cards.get('account-1')!
+    const secondCard = elements.cards.get('account-2')!
+    const containerToggle = vi.spyOn(container.classList, 'toggle')
+    const firstCardToggle = vi.spyOn(firstCard.classList, 'toggle')
+    const secondCardToggle = vi.spyOn(secondCard.classList, 'toggle')
+    const firstSetAttribute = vi.spyOn(firstCard, 'setAttribute')
+    const secondSetAttribute = vi.spyOn(secondCard, 'setAttribute')
+    const firstRemoveAttribute = vi.spyOn(firstCard, 'removeAttribute')
+    const secondRemoveAttribute = vi.spyOn(secondCard, 'removeAttribute')
+    const appendCount = container.appendCount
+
+    manager.applyPresentation({
+      layout: 'GRID-1X1',
+      maximizedAccountId: 'account-1',
+      screensOnly: true,
+      visibleAccountIds: ['account-2', 'account-1'],
+    })
+
+    expect(containerToggle).not.toHaveBeenCalled()
+    expect(firstCardToggle).not.toHaveBeenCalled()
+    expect(secondCardToggle).not.toHaveBeenCalled()
+    expect(firstSetAttribute).not.toHaveBeenCalled()
+    expect(secondSetAttribute).not.toHaveBeenCalled()
+    expect(firstRemoveAttribute).not.toHaveBeenCalled()
+    expect(secondRemoveAttribute).not.toHaveBeenCalled()
+    expect(container.appendCount).toBe(appendCount)
+  })
+
   it('maximizes by mutating classes without detaching any surface', () => {
     const container = new FakeElement()
     const elements = fakeFactory()

@@ -159,4 +159,29 @@ describe('SupabaseAdminRepository RPC boundary', () => {
     expect(detail?.devices[0]).not.toHaveProperty('metadata')
     expect(detail?.payments[0]).not.toHaveProperty('provider_payment_id')
   })
+
+  it('includes Founder upgrade in the administrable product query', async () => {
+    const products = [{
+      id: '40000000-0000-4000-8000-000000000001',
+      code: 'FOUNDER_UPGRADE',
+      name: 'Founder Upgrade',
+      price_amount: 75,
+      currency: 'BRL',
+      enabled: true,
+      lifetime: true,
+      updated_at: '2026-08-27T12:00:00.000Z',
+    }]
+    const order = vi.fn(async () => ({ data: products, error: null }))
+    const inFilter = vi.fn(() => ({ order }))
+    const select = vi.fn(() => ({ in: inFilter }))
+    const from = vi.fn(() => ({ select }))
+    const repository = new SupabaseAdminRepository({ from } as unknown as SupabaseClient)
+
+    await expect(repository.getAdminProducts()).resolves.toEqual(products)
+    expect(inFilter).toHaveBeenCalledWith('code', [
+      'PRO_LIFETIME',
+      'FOUNDER_LIFETIME',
+      'FOUNDER_UPGRADE',
+    ])
+  })
 })

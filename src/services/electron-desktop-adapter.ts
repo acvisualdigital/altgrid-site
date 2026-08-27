@@ -2,6 +2,7 @@ import type {
   AltgridDesktopApi,
   SessionBounds,
   SessionEvent,
+  SessionSnapshot,
   UpdateState,
 } from '../../electron/contracts'
 import type { GridLayout } from './grid-layout-service'
@@ -88,7 +89,7 @@ export class ElectronSessionLauncher {
 
   async applyLayout(layout: GridLayout): Promise<void> {
     const sessions = await this.api.getSessions()
-    const availableIds = new Set(sessions.map((session) => session.accountId))
+    const sessionsById = new Map(sessions.map((session) => [session.accountId, session]))
     const visibleIds = new Set(layout.slots
       .map((slot) => slot.sessionId)
       .filter((accountId) => !this.unavailableSessionIds.has(accountId)))
@@ -99,13 +100,16 @@ export class ElectronSessionLauncher {
 
     await Promise.all(layout.slots.flatMap((slot) => {
       if (
-        !availableIds.has(slot.sessionId)
+        !sessionsById.has(slot.sessionId)
         || this.unavailableSessionIds.has(slot.sessionId)
       ) {
         return []
       }
 
-      return [this.positionAndShow(slot.sessionId, integerBounds(slot.bounds))]
+      return [this.positionAndShow(
+        sessionsById.get(slot.sessionId)!,
+        integerBounds(slot.bounds),
+      )]
     }))
   }
 
@@ -167,11 +171,20 @@ export class ElectronSessionLauncher {
   }
 
   private async positionAndShow(
-    accountId: string,
+    session: SessionSnapshot,
     bounds: SessionBounds,
   ): Promise<void> {
-    await this.api.resizeSession(accountId, bounds)
-    await this.api.showSession(accountId)
+    if (
+      session.bounds.x !== bounds.x
+      || session.bounds.y !== bounds.y
+      || session.bounds.width !== bounds.width
+      || session.bounds.height !== bounds.height
+    ) {
+      await this.api.resizeSession(session.accountId, bounds)
+    }
+    if (!session.visible) {
+      await this.api.showSession(session.accountId)
+    }
   }
 }
 

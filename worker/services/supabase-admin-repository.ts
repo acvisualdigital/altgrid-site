@@ -35,7 +35,7 @@ const ADMIN_CONFIG_KEYS = [
   'latest_version',
   'update_channel',
 ]
-const ADMIN_PRODUCT_CODES = ['PRO_LIFETIME', 'FOUNDER_LIFETIME']
+const ADMIN_PRODUCT_CODES = ['PRO_LIFETIME', 'FOUNDER_LIFETIME', 'FOUNDER_UPGRADE']
 
 type ProfileRow = {
   user_id: string

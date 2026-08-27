@@ -806,7 +806,7 @@ export class AdminApp {
 
   private renderProducts(): string {
     const allowed = this.products.filter((product) =>
-      ['PRO_LIFETIME', 'FOUNDER_LIFETIME'].includes(product.code))
+      ['PRO_LIFETIME', 'FOUNDER_LIFETIME', 'FOUNDER_UPGRADE'].includes(product.code))
     return `
       <div class="admin-product-list">
         ${allowed.length > 0

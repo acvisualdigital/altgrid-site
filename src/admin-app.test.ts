@@ -298,6 +298,41 @@ describe('AdminApp', () => {
     app.destroy()
   })
 
+  it('renders Founder upgrade with the other administrable lifetime products', async () => {
+    const root = rootDouble()
+    const product = (code: string, name: string, price: number) => ({
+      id: `product-${code.toLowerCase()}`,
+      code,
+      name,
+      price_amount: price,
+      currency: 'BRL',
+      enabled: true,
+      lifetime: true,
+      updated_at: user.created_at,
+    })
+    const backend = backendDouble({
+      getAdminProducts: vi.fn().mockResolvedValue({
+        products: [
+          product('PRO_LIFETIME', 'PRO Lifetime', 24.99),
+          product('FOUNDER_LIFETIME', 'Founder Lifetime', 99.99),
+          product('FOUNDER_UPGRADE', 'Founder Upgrade', 75),
+        ],
+      }),
+    })
+    const app = new AdminApp(root, authDouble(), backend)
+    const loadTab = (tab: 'products'): Promise<void> =>
+      (app as unknown as { loadTab(next: typeof tab): Promise<void> })
+        .loadTab(tab)
+
+    await app.start()
+    await loadTab('products')
+
+    expect(root.innerHTML).toContain('PRO_LIFETIME')
+    expect(root.innerHTML).toContain('FOUNDER_LIFETIME')
+    expect(root.innerHTML).toContain('FOUNDER_UPGRADE')
+    app.destroy()
+  })
+
   it('saves each configuration value with its expected JSON type', async () => {
     const root = rootDouble()
     const updateAdminConfig = vi.fn().mockResolvedValue({ config: {} })
