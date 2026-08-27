@@ -1785,31 +1785,9 @@ export class AuthApp {
               `).join('')
               : '<p class="notification-empty">Tudo tranquilo por aqui.</p>'}
           </div>
+          <button class="notification-update-action" data-open-update type="button">Verificar atualização</button>
         </section>
       </details>
-    `
-  }
-
-  private renderChatButton(): string {
-    if (!this.chatService) {
-      return ''
-    }
-
-    const state = this.chatService.getState()
-    const unread = Object.values(state.unread).reduce((total, count) => total + count, 0)
-
-    return `
-      <button
-        class="header-icon-button header-chat-button ${state.open ? 'is-active' : ''}"
-        data-open-chat
-        type="button"
-        aria-label="${state.open ? 'Fechar' : 'Abrir'} Chat${unread ? `, ${unread} mensagens não lidas` : ''}"
-        aria-pressed="${state.open}"
-      >
-        ${uiIcon('chat')}
-        <span class="visually-hidden">Chat</span>
-        ${unread ? `<b class="notification-badge">${Math.min(unread, 99)}</b>` : ''}
-      </button>
     `
   }
 
@@ -1841,10 +1819,8 @@ export class AuthApp {
             ${uiIcon('leaf')}
             <span>Eco <small>${this.ecoModeEffective ? 'ON' : 'OFF'}</small></span>
           </button>
-          ${this.renderChatButton()}
           ${this.renderNotificationCenter()}
         </div>
-        ${this.renderUpdateButton()}
       </div>
     `
   }
@@ -2091,6 +2067,7 @@ export class AuthApp {
         </div>
 
         <nav class="sidebar-menu" aria-label="Preferências">
+          ${this.chatService ? `<button data-open-chat type="button" aria-pressed="${this.chatService.getState().open}"><span aria-hidden="true">◉</span> ${this.chatService.getState().open ? 'Fechar chat' : 'Chat'}</button>` : ''}
           <button data-open-dialog="settings" type="button"><span aria-hidden="true">⚙</span> Configurações</button>
           <button data-open-dialog="shortcuts" type="button"><span aria-hidden="true">⌨</span> Atalhos</button>
           <button data-open-dialog="about" type="button"><span aria-hidden="true">ⓘ</span> Sobre o AltGrid</button>

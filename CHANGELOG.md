@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.0-beta.7
+
+- Reduz a poluição da barra superior, movendo Chat e Atualizações para seus painéis próprios.
+
 ## 0.9.0-beta.6
 
 - Adiciona botão direto para ativar e desativar o Eco Mode.

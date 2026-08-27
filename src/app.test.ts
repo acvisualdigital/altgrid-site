@@ -399,7 +399,7 @@ describe('AuthApp session lifecycle', () => {
     app.destroy()
   })
 
-  it('keeps Chat and notifications in the workspace header without duplicate settings', async () => {
+  it('keeps Chat in the sidebar and updates in notifications', async () => {
     installBrowser('https://app.example.com/')
     const root = createRoot()
     const auth = createAuthServiceDouble()
@@ -422,12 +422,9 @@ describe('AuthApp session lifecycle', () => {
 
     await vi.waitFor(() => {
       expect(root.innerHTML.match(/data-open-chat/g)).toHaveLength(1)
-      expect(root.innerHTML).toContain('header-chat-button')
-      expect(root.innerHTML).toContain('header-utility-actions')
+      expect(root.innerHTML).not.toContain('header-chat-button')
+      expect(root.innerHTML).toContain('notification-update-action')
       expect(root.innerHTML.indexOf('data-open-chat')).toBeLessThan(
-        root.innerHTML.indexOf('notification-menu'),
-      )
-      expect(root.innerHTML.indexOf('notification-menu')).toBeLessThan(
         root.innerHTML.indexOf('data-open-dialog="settings"'),
       )
       expect(root.innerHTML).not.toContain('chat-fab')
