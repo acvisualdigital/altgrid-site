@@ -90,14 +90,44 @@ jobs:
           Write-Output "Assinatura Windows opcional habilitada."
 
       - name: Publish Windows release
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.ALTGRID_RELEASES_TOKEN }}
-        run: >-
-          pnpm exec electron-builder --win nsis portable --publish always
-          --config.publish.provider=github
-          --config.publish.owner=acvisualdigital
-          --config.publish.repo=altgrid-releases
-          --config.publish.releaseType=${{ env.ALTGRID_RELEASE_TYPE }}
+        run: |
+          pnpm exec electron-builder --win nsis portable --publish never
+
+          $releaseRepo = "acvisualdigital/altgrid-releases"
+          $releaseTag = $env:RELEASE_TAG
+          $releaseArgs = @(
+            $releaseTag,
+            "--repo", $releaseRepo,
+            "--title", "AltGrid $releaseTag",
+            "--target", "main"
+          )
+          if ($env:ALTGRID_RELEASE_TYPE -eq "prerelease") {
+            $releaseArgs += "--prerelease"
+          }
+
+          gh release view $releaseTag --repo $releaseRepo *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create @releaseArgs
+            if ($LASTEXITCODE -ne 0) {
+              throw "Não foi possível criar a release $releaseTag."
+            }
+          }
+
+          $artifacts = @(
+            "release/AltGrid-Setup-$($env:RELEASE_TAG.Substring(1)).exe",
+            "release/AltGrid-Setup-$($env:RELEASE_TAG.Substring(1)).exe.blockmap",
+            "release/AltGrid-Portable-$($env:RELEASE_TAG.Substring(1)).exe",
+            "release/latest.yml"
+          )
+          foreach ($artifact in $artifacts) {
+            if (-not (Test-Path -LiteralPath $artifact)) {
+              throw "Artefato ausente: $artifact"
+            }
+          }
+          gh release upload $releaseTag @artifacts --repo $releaseRepo --clobber
 
       - name: Remove temporary signing certificate
         if: always()

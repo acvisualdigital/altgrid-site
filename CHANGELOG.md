@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.0-beta.5
+
+- Corrige a publicação dos instaladores Windows no GitHub Releases.
+
 ## 0.9.0-beta.4
 
 - Otimiza sessões Electron ocultas sem perder login, cookies ou contas conectadas.
