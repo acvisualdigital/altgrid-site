@@ -5,6 +5,7 @@ import {
   AuthServiceError,
 } from './auth-service'
 import type {
+  AppMetricsResponse,
   ChatChannelsResponse,
   ChatMessageResponse,
   ChatMessagesResponse,
@@ -16,6 +17,7 @@ import type {
   LicenseSnapshotResponse,
   MeResponse,
   PixPaymentResponse,
+  PresenceHeartbeatResponse,
   PublicAnnouncementsResponse,
   PublicConfigResponse,
   PublicGamesResponse,
@@ -180,6 +182,18 @@ export class BackendApi {
   getAppConfig(): Promise<PublicConfigResponse> {
     return this.deduplicate('public:/v1/app/config', () =>
       this.publicRequest<PublicConfigResponse>('/v1/app/config'))
+  }
+
+  getAppMetrics(): Promise<AppMetricsResponse> {
+    return this.deduplicate('public:/v1/app/metrics', () =>
+      this.publicRequest<AppMetricsResponse>('/v1/app/metrics'))
+  }
+
+  sendPresenceHeartbeat(): Promise<PresenceHeartbeatResponse> {
+    return this.privateRequest<PresenceHeartbeatResponse>(
+      '/v1/presence/heartbeat',
+      { method: 'POST' },
+    )
   }
 
   getAnnouncements(): Promise<PublicAnnouncementsResponse> {

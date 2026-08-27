@@ -1,0 +1,113 @@
+import './styles.css'
+import altgridLogoUrl from './assets/altgrid-mark.png'
+
+import { AdminApp } from './admin-app'
+import { AuthApp } from './app'
+import { createSupabaseClient } from './lib/supabase'
+import { AuthService } from './services/auth-service'
+import { BackendApi } from './services/backend-api'
+import { ChatService } from './services/chat-service'
+import { ConfiguredAccountService } from './services/configured-account-service'
+import { createElectronDesktopIntegration } from './services/electron-desktop-adapter'
+import { DeviceRegistrationService } from './services/device-registration-service'
+import { GamePresetService } from './services/game-preset-service'
+import { createEmbeddedOfflineLicenseService } from './services/license-snapshot-service'
+import { PermissionService } from './services/permission-service'
+import { SupabaseChatRealtimeGateway } from './services/supabase-chat-realtime'
+
+const root = document.querySelector<HTMLElement>('#app')
+
+if (!root) {
+  throw new Error('Application root was not found')
+}
+
+try {
+  const supabase = createSupabaseClient({
+    SUPABASE_ANON_KEY: __SUPABASE_ANON_KEY__,
+    SUPABASE_URL: __SUPABASE_URL__,
+  })
+  const authService = new AuthService(supabase)
+  const backendApi = __API_BASE_URL__.trim()
+    ? new BackendApi({
+        authService,
+        baseUrl: __API_BASE_URL__,
+      })
+    : null
+  const desktop = createElectronDesktopIntegration()
+  const chatService = backendApi
+    ? new ChatService(
+        backendApi,
+        new SupabaseChatRealtimeGateway(supabase),
+      )
+    : null
+  const gamePresetService = new GamePresetService({
+    loader: backendApi
+      ? () => backendApi.getGames()
+      : () => Promise.reject(new Error('Serviços AltGrid indisponíveis.')),
+  })
+  const offlineLicenseService = backendApi && __LICENSE_PUBLIC_KEY__.trim()
+    ? createEmbeddedOfflineLicenseService(backendApi)
+    : null
+  const deviceRegistrationService = backendApi && desktop
+    ? new DeviceRegistrationService(backendApi)
+    : null
+  const unsubscribeFromDeviceRegistration = deviceRegistrationService && desktop
+    ? authService.onAuthStateChange((_event, session) => {
+        if (!session) {
+          return
+        }
+
+        void desktop.getPlatform()
+          .then((platform) => deviceRegistrationService.register({
+            appVersion: __APP_VERSION__,
+            platform,
+          }))
+          .catch(() => undefined)
+      })
+    : null
+  const adminRoute = /^\/admin(?:\/|$)/.test(window.location.pathname)
+  if (adminRoute && !backendApi) {
+    throw new Error('ALTGRID_API_BASE_URL is required for admin')
+  }
+  const app = adminRoute
+    ? new AdminApp(root, authService, backendApi!)
+    : new AuthApp(root, authService, {
+        accountService: new ConfiguredAccountService(),
+        backendApi: backendApi ?? undefined,
+        chatService: chatService ?? undefined,
+        gamePresetService,
+        offlineLicenseService: offlineLicenseService ?? undefined,
+        openExternalUrl: desktop?.openExternalUrl,
+        permissionService: new PermissionService(),
+        sessionLauncher: desktop?.sessionLauncher,
+        updater: desktop?.updater,
+      })
+
+  void app.start()
+  window.addEventListener('beforeunload', () => {
+    unsubscribeFromDeviceRegistration?.()
+    app.destroy()
+    desktop?.dispose()
+  }, { once: true })
+} catch {
+  root.innerHTML = `
+    <div class="app-frame">
+      <header class="topbar">
+        <div class="brand" aria-label="AltGrid">
+          <img class="brand__logo" src="${altgridLogoUrl}" alt="" />
+          <span class="brand__name">AltGrid</span>
+        </div>
+      </header>
+      <main class="auth-stage">
+        <section class="auth-card auth-card--message" aria-labelledby="config-title">
+          <span class="message-icon message-icon--warning" aria-hidden="true">!</span>
+          <p class="eyebrow">Configuração necessária</p>
+          <h1 id="config-title">Conecte o Supabase</h1>
+          <p class="auth-card__subtitle">
+            Configure as credenciais públicas do Supabase e a URL da API.
+          </p>
+        </section>
+      </main>
+    </div>
+  `
+}

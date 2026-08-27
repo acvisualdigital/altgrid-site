@@ -5,6 +5,7 @@ import {
 } from '@supabase/supabase-js'
 
 import type {
+  AppMetricsResponse,
   DeviceResponse,
   FeatureMap,
   PublicGame,
@@ -136,6 +137,21 @@ export class SupabaseRepository implements
   ChatRepository,
   PaymentRepository {
   constructor(private readonly client: SupabaseClient) {}
+
+  async getAppMetrics(): Promise<AppMetricsResponse> {
+    const { data, error } = await this.client.rpc('app_metrics')
+
+    if (error) throwDataError(error)
+    return data as AppMetricsResponse
+  }
+
+  async heartbeatPresence(userId: string): Promise<void> {
+    const { error } = await this.client.rpc('record_presence', {
+      p_user_id: userId,
+    })
+
+    if (error) throwDataError(error)
+  }
 
   async getProfile(userId: string): Promise<SafeProfile | null> {
     const { data, error } = await this.client

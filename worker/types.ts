@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type {
+  AppMetricsResponse,
   DeviceResponse,
   FeatureMap,
   LicenseSnapshotResponse,
@@ -70,6 +71,8 @@ export interface EntitlementRecord {
 }
 
 export interface BackendRepository {
+  getAppMetrics(): Promise<AppMetricsResponse>
+  heartbeatPresence(userId: string): Promise<void>
   getProfile(userId: string): Promise<SafeProfile | null>
   updateProfile?(userId: string, displayName: string): Promise<SafeProfile>
   getPlans(): Promise<PlanRecord[]>

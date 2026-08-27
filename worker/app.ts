@@ -1,9 +1,11 @@
 import type {
+  AppMetricsResponse,
   DeviceResponseEnvelope,
   DevicesResponse,
   MeResponse,
   PublicConfigResponse,
   PublicGamesResponse,
+  PresenceHeartbeatResponse,
 } from '../src/types/backend-api'
 import { ApiError, apiErrorResponse, jsonResponse } from './lib/api-error'
 import { adminAllowedMethods, handleAdminRequest } from './admin-app'
@@ -69,6 +71,7 @@ function allowedMethods(pathname: string): string[] | null {
     || pathname === '/v1/games'
     || pathname === '/v1/config/public'
     || pathname === '/v1/app/config'
+    || pathname === '/v1/app/metrics'
     || pathname === '/v1/app/announcements'
     || pathname === '/v1/products'
     || pathname === '/v1/devices'
@@ -91,6 +94,7 @@ function allowedMethods(pathname: string): string[] | null {
 
   if (
     pathname === '/v1/devices/register'
+    || pathname === '/v1/presence/heartbeat'
     || /^\/v1\/devices\/[^/]+\/revoke$/.test(pathname)
     || pathname === '/v1/payments/pix'
     || pathname === '/v1/webhooks/mercadopago'
@@ -204,6 +208,13 @@ export function createApi(
       })
     }
 
+    if (pathname === '/v1/app/metrics') {
+      const body: AppMetricsResponse = await dependencies.repository.getAppMetrics()
+      return jsonResponse(body, 200, {
+        'Cache-Control': 'public, max-age=30, s-maxage=30',
+      })
+    }
+
     if (pathname === '/v1/app/announcements') {
       const announcements = dependencies.platformRepository
         ? await dependencies.platformRepository.getAnnouncements()
@@ -241,6 +252,12 @@ export function createApi(
         'rate_limited',
         'Muitas tentativas. Aguarde e tente novamente.',
       )
+    }
+
+    if (pathname === '/v1/presence/heartbeat') {
+      await dependencies.repository.heartbeatPresence(user.id)
+      const body: PresenceHeartbeatResponse = { ok: true }
+      return jsonResponse(body)
     }
 
     if (pathname === '/v1/me/profile') {

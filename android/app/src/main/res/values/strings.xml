@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">AltGrid</string>
+    <string name="title_activity_main">AltGrid</string>
+    <string name="package_name">io.altgrid.app</string>
+    <string name="custom_url_scheme">io.altgrid.app</string>
+</resources>

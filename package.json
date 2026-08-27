@@ -1,0 +1,103 @@
+{
+  "name": "altgrid",
+  "version": "0.9.0-beta.3",
+  "description": "Gerenciador desktop multissessão para jogos e sites suportados.",
+  "author": "AltGrid",
+  "private": true,
+  "type": "module",
+  "main": "electron-dist/main.js",
+  "packageManager": "pnpm@11.19.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "pnpm typecheck && vite build && pnpm worker:build",
+    "desktop:compile": "tsc -p tsconfig.electron.json && esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=electron-dist/preload.cjs",
+    "desktop:dev": "pnpm desktop:compile && concurrently --kill-others --success first \"vite --mode desktop\" \"wait-on http://127.0.0.1:3000 && cross-env ALTGRID_DEV_SERVER_URL=http://127.0.0.1:3000 electron .\"",
+    "desktop:build": "pnpm typecheck && vite build --mode desktop && pnpm desktop:compile && node scripts/package-desktop.mjs",
+    "android:sync": "pnpm build:android:web && cap sync android",
+    "build:android:web": "vite build --mode android",
+    "android:open": "cap open android",
+    "android:build": "pnpm android:sync && cd android && gradlew.bat assembleDebug",
+    "release:preflight": "node scripts/release-preflight.mjs",
+    "smoke:staging": "node scripts/staging-smoke.mjs",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit && tsc -p tsconfig.electron.test.json",
+    "worker:dev": "wrangler dev",
+    "worker:build": "wrangler deploy --dry-run --outdir .wrangler/dist",
+    "worker:deploy": "wrangler deploy",
+    "worker:types": "wrangler types worker-configuration.d.ts --include-runtime=false",
+    "worker:types:check": "wrangler types worker-configuration.d.ts --include-runtime=false --check",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset --local",
+    "db:lint": "supabase db lint --local --fail-on error",
+    "db:types": "supabase gen types typescript --local --schema public"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
+    "@supabase/supabase-js": "2.112.4",
+    "electron-updater": "6.8.9"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.0",
+    "@types/node": "26.3.0",
+    "concurrently": "10.0.5",
+    "cross-env": "10.1.0",
+    "electron": "44.0.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "supabase": "2.115.0",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "4.1.11",
+    "wait-on": "9.1.0",
+    "wrangler": "4.125.0"
+  },
+  "build": {
+    "appId": "io.altgrid.desktop",
+    "productName": "AltGrid",
+    "protocols": [
+      {
+        "name": "AltGrid password recovery",
+        "schemes": [
+          "altgrid"
+        ]
+      }
+    ],
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron-dist/**/*",
+      "electron/assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "electron/assets/icon.png",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "artifactName": "AltGrid-Setup-${version}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "AltGrid-Portable-${version}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "acvisualdigital",
+        "repo": "altgrid-releases",
+        "releaseType": "release"
+      }
+    ]
+  }
+}

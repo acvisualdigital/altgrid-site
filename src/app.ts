@@ -44,6 +44,7 @@ import type {
   OfflineLicenseSource,
 } from './services/license-snapshot-service'
 import type {
+  AppMetricsResponse,
   MeResponse,
   PixPayment,
   PublicAnnouncement,
@@ -91,10 +92,12 @@ type ApplicationBackend = Pick<BackendApi, 'getEntitlements' | 'getGames' | 'get
     BackendApi,
     | 'createPixPayment'
     | 'getAppConfig'
+    | 'getAppMetrics'
     | 'getAnnouncements'
     | 'getHealth'
     | 'getPayment'
     | 'getProducts'
+    | 'sendPresenceHeartbeat'
     | 'updateProfile'
   >>
 
@@ -427,6 +430,9 @@ export class AuthApp {
   private me: MeResponse | null = null
   private announcements: PublicAnnouncement[] = []
   private products: PublicProduct[] = []
+  private appMetrics: AppMetricsResponse | null = null
+  private presenceHeartbeatTimer: ReturnType<typeof setInterval> | null = null
+  private presenceUserId: string | null = null
   private pixPayment: PixPayment | null = null
   private paymentLoading = false
   private paymentError: string | null = null
@@ -606,6 +612,7 @@ export class AuthApp {
 
   destroy(): void {
     this.destroyed = true
+    this.stopPresenceTracking()
     void this.releaseTrackedSessions()
     this.sessionSurfaceManager?.clear()
     this.sessionSurfaceManager = null
@@ -927,6 +934,7 @@ export class AuthApp {
       this.gameCatalogError = null
       this.announcements = []
       this.products = []
+      this.appMetrics = null
       this.notificationCenter.setAnnouncements([])
       this.pixPayment = null
       this.paymentError = null
@@ -951,9 +959,11 @@ export class AuthApp {
 
     this.session = session
     this.currentView = 'authenticated'
+    this.startPresenceTracking(session.user.id)
   }
 
   private clearAuthenticatedState(): void {
+    this.stopPresenceTracking()
     this.backendStateRevision += 1
     void this.releaseTrackedSessions()
     this.backendUserId = null
@@ -967,6 +977,7 @@ export class AuthApp {
     this.games = []
     this.announcements = []
     this.products = []
+    this.appMetrics = null
     this.notificationCenter.setAnnouncements([])
     this.pixPayment = null
     this.paymentError = null
@@ -992,6 +1003,64 @@ export class AuthApp {
     this.ecoModeEffective = false
     void this.syncEcoMode()
     this.chatService?.reset()
+  }
+
+  private startPresenceTracking(userId: string): void {
+    if (
+      !this.backendApi?.sendPresenceHeartbeat
+      || !this.backendApi.getAppMetrics
+      || this.destroyed
+    ) {
+      return
+    }
+
+    if (this.presenceUserId === userId && this.presenceHeartbeatTimer !== null) {
+      return
+    }
+
+    this.stopPresenceTracking()
+    this.presenceUserId = userId
+    void this.refreshPresenceAndMetrics(userId)
+    this.presenceHeartbeatTimer = setInterval(() => {
+      void this.refreshPresenceAndMetrics(userId)
+    }, 60_000)
+  }
+
+  private stopPresenceTracking(): void {
+    if (this.presenceHeartbeatTimer !== null) {
+      clearInterval(this.presenceHeartbeatTimer)
+      this.presenceHeartbeatTimer = null
+    }
+    this.presenceUserId = null
+  }
+
+  private async refreshPresenceAndMetrics(userId: string): Promise<void> {
+    const backendApi = this.backendApi
+    if (
+      !backendApi?.sendPresenceHeartbeat
+      || !backendApi.getAppMetrics
+      || this.destroyed
+      || this.session?.user.id !== userId
+      || !navigator.onLine
+    ) {
+      return
+    }
+
+    const [, metricsResult] = await Promise.allSettled([
+      backendApi.sendPresenceHeartbeat(),
+      backendApi.getAppMetrics(),
+    ])
+
+    if (
+      metricsResult.status === 'fulfilled'
+      && !this.destroyed
+      && this.session?.user.id === userId
+    ) {
+      this.appMetrics = metricsResult.value
+      if (this.currentView === 'authenticated') {
+        this.render()
+      }
+    }
   }
 
   private releaseTrackedSessions(): Promise<boolean> {
@@ -2250,12 +2319,16 @@ export class AuthApp {
       return ''
     }
 
+    const communityStats = currentChannel?.type === 'global' && this.appMetrics
+      ? `<span class="chat-community-stats" title="Ativos nos últimos ${Math.round(this.appMetrics.active_window_seconds / 60)} minutos"><strong><i aria-hidden="true"></i>${this.appMetrics.users.active.toLocaleString('pt-BR')} online</strong><span>${this.appMetrics.users.total.toLocaleString('pt-BR')} usuários</span></span>`
+      : ''
+
     return `
       <aside class="chat-panel" aria-label="Chat AltGrid">
         <header class="chat-panel__header">
           <div class="chat-panel__identity">
             <span class="chat-panel__game-icon">${this.renderChatChannelIcon(currentChannel)}</span>
-            <div><strong>Chat</strong><small>${escapeHtml(currentChannel?.name ?? 'AltGrid')}</small></div>
+            <div><strong>Chat</strong><small>${escapeHtml(currentChannel?.name ?? 'AltGrid')}</small>${communityStats}</div>
           </div>
           <button data-close-chat type="button" aria-label="Fechar chat">×</button>
         </header>

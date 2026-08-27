@@ -1,0 +1,124 @@
+name: Release desktop
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      ALTGRID_API_BASE_URL: ${{ vars.ALTGRID_API_BASE_URL }}
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      LICENSE_PUBLIC_KEY: ${{ secrets.LICENSE_PUBLIC_KEY }}
+      LICENSE_KEY_ID: ${{ vars.LICENSE_KEY_ID }}
+      RELEASE_TAG: ${{ github.ref_name }}
+      ALTGRID_RELEASE_TYPE: ${{ contains(github.ref_name, '-') && 'prerelease' || 'release' }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate release configuration
+        run: pnpm release:preflight
+
+      - name: Validate project
+        run: |
+          pnpm typecheck
+          pnpm test:run
+
+      - name: Smoke test staging API
+        env:
+          ALTGRID_STAGING_API_BASE_URL: ${{ vars.ALTGRID_STAGING_API_BASE_URL }}
+          ALTGRID_SMOKE_ORIGIN: ${{ vars.ALTGRID_SMOKE_ORIGIN }}
+        run: pnpm smoke:staging
+
+      - name: Build renderer and Electron
+        run: |
+          pnpm exec vite build --mode desktop
+          pnpm desktop:compile
+
+      - name: Configure optional Windows signing
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)
+          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)
+
+          if ($hasCertificate -ne $hasPassword) {
+            throw "Configure WINDOWS_CERTIFICATE_BASE64 e WINDOWS_CERTIFICATE_PASSWORD juntos."
+          }
+
+          if (-not $hasCertificate) {
+            Write-Output "Assinatura Windows opcional não configurada."
+            exit 0
+          }
+
+          $certificatePath = Join-Path $env:RUNNER_TEMP "altgrid-code-signing.pfx"
+          try {
+            $certificateBytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64)
+            [IO.File]::WriteAllBytes($certificatePath, $certificateBytes)
+          } catch {
+            throw "WINDOWS_CERTIFICATE_BASE64 não contém um certificado base64 válido."
+          }
+
+          "CSC_LINK=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CSC_KEY_PASSWORD=$env:WINDOWS_CERTIFICATE_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Output "Assinatura Windows opcional habilitada."
+
+      - name: Publish Windows release
+        env:
+          GH_TOKEN: ${{ secrets.ALTGRID_RELEASES_TOKEN }}
+        run: >-
+          pnpm exec electron-builder --win nsis portable --publish always
+          --config.publish.provider=github
+          --config.publish.owner=acvisualdigital
+          --config.publish.repo=altgrid-releases
+          --config.publish.releaseType=${{ env.ALTGRID_RELEASE_TYPE }}
+
+      - name: Remove temporary signing certificate
+        if: always()
+        shell: pwsh
+        run: |
+          $temporaryRoot = [IO.Path]::GetFullPath($env:RUNNER_TEMP)
+          $certificatePath = [IO.Path]::GetFullPath(
+            (Join-Path $temporaryRoot "altgrid-code-signing.pfx")
+          )
+          $temporaryPrefix = $temporaryRoot.TrimEnd(
+            [IO.Path]::DirectorySeparatorChar,
+            [IO.Path]::AltDirectorySeparatorChar
+          ) + [IO.Path]::DirectorySeparatorChar
+
+          if (-not $certificatePath.StartsWith(
+            $temporaryPrefix,
+            [StringComparison]::OrdinalIgnoreCase
+          )) {
+            throw "Caminho temporário do certificado inválido."
+          }
+
+          if (Test-Path -LiteralPath $certificatePath) {
+            Remove-Item -LiteralPath $certificatePath -Force
+          }

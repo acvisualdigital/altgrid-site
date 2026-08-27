@@ -3519,6 +3519,32 @@ form {
   min-width: 0;
 }
 
+.chat-community-stats {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 2px;
+  color: var(--text-muted-readable);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.chat-community-stats strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #8df5aa;
+  font-size: inherit;
+}
+
+.chat-community-stats i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px rgba(35, 201, 91, 0.7);
+}
+
 .chat-panel__game-icon,
 .chat-channel__icon,
 .chat-message__avatar {

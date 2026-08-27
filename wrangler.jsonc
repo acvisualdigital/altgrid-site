@@ -1,0 +1,63 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "altgrid-api",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-08-25",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  },
+  "secrets": {
+    "required": [
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "PRIVATE_LICENSE_KEY"
+    ]
+  },
+  "vars": {
+    "ALLOWED_ORIGINS": "altgrid://app,http://127.0.0.1:3000,http://localhost:3000",
+    "LICENSE_KEY_ID": "altgrid-license-v1"
+  },
+  "ratelimits": [
+    {
+      "name": "EDGE_RATE_LIMITER",
+      "namespace_id": "375911",
+      "simple": {
+        "limit": 300,
+        "period": 60
+      }
+    },
+    {
+      "name": "USER_RATE_LIMITER",
+      "namespace_id": "375912",
+      "simple": {
+        "limit": 300,
+        "period": 60
+      }
+    },
+    {
+      "name": "DEVICE_RATE_LIMITER",
+      "namespace_id": "375913",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    },
+    {
+      "name": "CHAT_RATE_LIMITER",
+      "namespace_id": "375914",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    },
+    {
+      "name": "PAYMENT_RATE_LIMITER",
+      "namespace_id": "375915",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    }
+  ]
+}
