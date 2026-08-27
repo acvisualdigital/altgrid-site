@@ -1,0 +1,5270 @@
+import type { AuthChangeEvent, Session } from '@supabase/supabase-js'
+import altgridLogoUrl from './assets/altgrid-mark.png'
+
+import {
+  validateEmail,
+  validatePassword,
+  validatePasswordConfirmation,
+} from './lib/auth-validation'
+import {
+  AuthService,
+  AuthServiceError,
+  type SignUpResult,
+} from './services/auth-service'
+import {
+  BackendApi,
+  BackendApiError,
+} from './services/backend-api'
+import {
+  CUSTOM_GAME_SLUG,
+  ConfiguredAccountService,
+  type ConfiguredAccount,
+} from './services/configured-account-service'
+import {
+  GamePresetService,
+  normalizeSafeGameUrl,
+  validateSafeGameUrl,
+} from './services/game-preset-service'
+import {
+  PermissionService,
+  SAFE_FREE_ENTITLEMENTS,
+  SessionCancellationCleanupError,
+} from './services/permission-service'
+import {
+  GridLayoutService,
+  type ConcreteGridMode,
+  type GridLayout,
+  type GridMode,
+} from './services/grid-layout-service'
+import { SessionSurfaceManager } from './services/session-surface-manager'
+import { ChatService, type ChatState } from './services/chat-service'
+import { NotificationCenterService } from './services/notification-center-service'
+import type {
+  OfflineLicenseService,
+  OfflineLicenseSource,
+} from './services/license-snapshot-service'
+import type {
+  MeResponse,
+  PixPayment,
+  PublicAnnouncement,
+  PublicConfigResponse,
+  PublicGame,
+  PublicProduct,
+  ResolvedEntitlements,
+} from './types/backend-api'
+
+type AuthView =
+  | 'authenticated'
+  | 'checking'
+  | 'confirm-email'
+  | 'forgot'
+  | 'forgot-sent'
+  | 'login'
+  | 'password-updated'
+  | 'reset'
+  | 'signup'
+
+interface FieldErrors {
+  [fieldName: string]: string | null
+}
+
+type ActiveDialog =
+  | 'add-account'
+  | 'about'
+  | 'delete-account'
+  | 'chat-nickname'
+  | 'free-limit'
+  | 'more-games'
+  | 'my-plan'
+  | 'payment'
+  | 'plans'
+  | 'rename-account'
+  | 'settings'
+  | 'shortcuts'
+  | 'update'
+  | null
+type BackendLoadStatus = 'error' | 'idle' | 'loading' | 'ready'
+type ServiceStatus = 'checking' | 'offline' | 'online' | 'unknown'
+type WorkspaceMode = 'account' | 'grid'
+type ApplicationBackend = Pick<BackendApi, 'getEntitlements' | 'getGames' | 'getMe'>
+  & Partial<Pick<
+    BackendApi,
+    | 'createPixPayment'
+    | 'getAppConfig'
+    | 'getAnnouncements'
+    | 'getHealth'
+    | 'getPayment'
+    | 'getProducts'
+    | 'updateProfile'
+  >>
+
+interface SessionReleaseSnapshot {
+  activeAccounts: ConfiguredAccount[]
+  closingOperations: ReadonlyMap<string, Promise<void>>
+  openingOperations: Array<readonly [string, Promise<boolean>]>
+  sessionsNeedingHide: string[]
+}
+
+export interface AccountSessionLauncher {
+  applyLayout(layout: GridLayout): Promise<void> | void
+  clearData(account: ConfiguredAccount): Promise<void> | void
+  close(account: ConfiguredAccount): Promise<void> | void
+  focus(account: ConfiguredAccount): Promise<void> | void
+  open(
+    account: ConfiguredAccount,
+    target: AccountSessionLaunchTarget | null,
+  ): Promise<void> | void
+  registerEscapeHandler(handler: () => void): (() => void) | void
+  registerStatusHandler(
+    handler: (event: AccountSessionStatusEvent) => void,
+  ): (() => void) | void
+  reload(account: ConfiguredAccount): Promise<void> | void
+  setEcoMode(enabled: boolean): Promise<boolean> | boolean
+  setMuted(account: ConfiguredAccount, muted: boolean): Promise<void> | void
+}
+
+export interface AccountSessionStatusEvent {
+  accountId: string
+  detail?: string
+  type: 'crashed' | 'load-failed' | 'loading' | 'ready'
+}
+
+export interface AccountSessionLaunchTarget {
+  kind: 'custom' | 'preset'
+  launchUrl: string
+  game: PublicGame | null
+}
+
+export interface AuthAppOptions {
+  accountService?: ConfiguredAccountService
+  backendApi?: ApplicationBackend
+  chatService?: ChatService
+  gamePresetService?: GamePresetService
+  openExternalUrl?: (url: string) => Promise<void> | void
+  offlineLicenseService?: OfflineLicenseService
+  permissionService?: PermissionService
+  sessionLauncher?: Partial<AccountSessionLauncher>
+  updater?: AppUpdater
+}
+
+export type AppUpdateStatus =
+  | 'available'
+  | 'checking'
+  | 'downloaded'
+  | 'downloading'
+  | 'error'
+  | 'idle'
+  | 'not_available'
+
+export interface AppUpdateState {
+  message?: string
+  percent?: number
+  releaseNotes?: string
+  status: AppUpdateStatus
+  supported: boolean
+  version?: string
+}
+
+export interface AppUpdater {
+  checkForUpdates(): Promise<AppUpdateState>
+  downloadUpdate(): Promise<AppUpdateState>
+  getState(): Promise<AppUpdateState>
+  onStateChange(listener: (state: AppUpdateState) => void): () => void
+  quitAndInstall(): Promise<boolean>
+}
+
+const RECOVERY_QUERY_VALUE = 'recovery'
+const APP_VERSION = __APP_VERSION__
+const ECO_MODE_STORAGE_KEY = 'altgrid.preference.eco-mode.v1'
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'altgrid.preference.sidebar-collapsed.v1'
+
+type UiIconName =
+  | 'add'
+  | 'bell'
+  | 'chat'
+  | 'chevron'
+  | 'globe'
+  | 'grid'
+  | 'refresh'
+  | 'screens'
+  | 'settings'
+
+const UI_ICON_PATHS: Record<UiIconName, string> = {
+  add: '<path d="M12 5v14M5 12h14"/>',
+  bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/>',
+  chat: '<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>',
+  chevron: '<path d="m8 10 4 4 4-4"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+  refresh: '<path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/>',
+  screens: '<rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3"/>',
+  settings: '<path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.97 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.52-1.03H3v-4h.08A1.7 1.7 0 0 0 4.6 8.97a1.7 1.7 0 0 0-.34-1.88l-.06-.06L7.03 4.2l.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 10 3.08V3h4v.08a1.7 1.7 0 0 0 1.03 1.52 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.92 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z"/>',
+}
+
+function uiIcon(name: UiIconName): string {
+  return `<svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${UI_ICON_PATHS[name]}</svg>`
+}
+
+export function passwordRecoveryRedirectUrl(
+  location: Pick<Location, 'origin' | 'protocol'> = window.location,
+): string {
+  if (location.protocol === 'altgrid:') {
+    return `altgrid://app/?auth=${RECOVERY_QUERY_VALUE}`
+  }
+
+  return `${location.origin}/?auth=${RECOVERY_QUERY_VALUE}`
+}
+
+function formatCurrency(amount: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat('pt-BR', {
+      currency,
+      style: 'currency',
+    }).format(amount)
+  } catch {
+    return `${currency} ${amount.toFixed(2)}`
+  }
+}
+
+function formatDate(value: string | null): string {
+  if (!value) {
+    return 'Vitalício'
+  }
+
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium' }).format(parsed)
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(
+    /[&<>'"]/g,
+    (character) =>
+      ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#039;',
+        '"': '&quot;',
+      })[character] ?? character,
+  )
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof AuthServiceError
+    ? error.message
+    : 'Não foi possível concluir a operação. Tente novamente.'
+}
+
+function shouldRetrySessionAfterReconnect(error: unknown): boolean {
+  return error instanceof AuthServiceError
+    && [
+      'connection_failed',
+      'offline',
+      'rate_limited',
+      'service_unavailable',
+    ].includes(error.code)
+}
+
+function backendErrorMessage(error: unknown): string {
+  return error instanceof BackendApiError
+    ? error.message
+    : 'Não foi possível carregar os dados do aplicativo.'
+}
+
+function openExternalBrowserUrl(url: string): void {
+  const opened = window.open?.(url, '_blank', 'noopener,noreferrer')
+
+  if (!opened) {
+    throw new Error('The browser blocked the new window.')
+  }
+
+  try {
+    opened.opener = null
+  } catch {
+    // noopener is already requested; some browser wrappers make opener readonly.
+  }
+}
+
+function entitlementsFromMe(me: MeResponse): ResolvedEntitlements {
+  return {
+    account_limit: me.account_limit,
+    expires_at: me.expires_at,
+    features: me.features,
+    founder_number: me.founder_number,
+    lifetime: me.lifetime,
+    plan: me.plan,
+  }
+}
+
+export function compareVersions(left: string, right: string): number | null {
+  interface ParsedVersion {
+    core: number[]
+    prerelease: string[] | null
+  }
+
+  const parse = (value: string): ParsedVersion | null => {
+    const match = value.trim().match(
+      /^v?(\d+(?:\.\d+){0,3})(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
+    )
+
+    if (!match) {
+      return null
+    }
+
+    const core = match[1]!.split('.').map(Number)
+    if (core.some((part) => !Number.isSafeInteger(part))) {
+      return null
+    }
+
+    return {
+      core,
+      prerelease: match[2]?.split('.') ?? null,
+    }
+  }
+  const leftParts = parse(left)
+  const rightParts = parse(right)
+
+  if (!leftParts || !rightParts) {
+    return null
+  }
+
+  const length = Math.max(leftParts.core.length, rightParts.core.length)
+  for (let index = 0; index < length; index += 1) {
+    const difference = (leftParts.core[index] ?? 0) - (rightParts.core[index] ?? 0)
+    if (difference !== 0) {
+      return Math.sign(difference)
+    }
+  }
+
+  if (leftParts.prerelease === null || rightParts.prerelease === null) {
+    return leftParts.prerelease === rightParts.prerelease
+      ? 0
+      : leftParts.prerelease === null
+        ? 1
+        : -1
+  }
+
+  const prereleaseLength = Math.max(
+    leftParts.prerelease.length,
+    rightParts.prerelease.length,
+  )
+  for (let index = 0; index < prereleaseLength; index += 1) {
+    const leftIdentifier = leftParts.prerelease[index]
+    const rightIdentifier = rightParts.prerelease[index]
+
+    if (leftIdentifier === undefined || rightIdentifier === undefined) {
+      return leftIdentifier === rightIdentifier
+        ? 0
+        : leftIdentifier === undefined
+          ? -1
+          : 1
+    }
+
+    if (leftIdentifier === rightIdentifier) {
+      continue
+    }
+
+    const leftNumeric = /^\d+$/.test(leftIdentifier)
+    const rightNumeric = /^\d+$/.test(rightIdentifier)
+    if (leftNumeric && rightNumeric) {
+      const leftNormalized = leftIdentifier.replace(/^0+(?=\d)/, '')
+      const rightNormalized = rightIdentifier.replace(/^0+(?=\d)/, '')
+      if (leftNormalized.length !== rightNormalized.length) {
+        return leftNormalized.length < rightNormalized.length ? -1 : 1
+      }
+      return leftNormalized < rightNormalized ? -1 : 1
+    }
+    if (leftNumeric !== rightNumeric) {
+      return leftNumeric ? -1 : 1
+    }
+    return leftIdentifier < rightIdentifier ? -1 : 1
+  }
+
+  return 0
+}
+
+export class AuthApp {
+  private currentView: AuthView = 'checking'
+  private session: Session | null = null
+  private unsubscribeFromAuth: (() => void) | null = null
+  private unsubscribeFromSessionEscape: (() => void) | null = null
+  private unsubscribeFromChat: (() => void) | null = null
+  private unsubscribeFromSessionStatus: (() => void) | null = null
+  private destroyed = false
+  private initialAlert: string | null = null
+  private recoveryMode = false
+  private authStateRevision = 0
+  private sessionCheckInFlight = false
+  private sessionCheckError: string | null = null
+  private retrySessionOnReconnect = false
+  private readonly backendApi: ApplicationBackend | null
+  private readonly gamePresetService: GamePresetService | null
+  private readonly chatService: ChatService | null
+  private readonly notificationCenter = new NotificationCenterService()
+  private readonly openExternalUrl: (url: string) => Promise<void> | void
+  private readonly permissionService: PermissionService
+  private readonly offlineLicenseService: OfflineLicenseService | null
+  private readonly accountService: ConfiguredAccountService
+  private readonly sessionLauncher: AccountSessionLauncher
+  private readonly ecoModeSupported: boolean
+  private readonly updater: AppUpdater | null
+  private readonly gridLayoutService: GridLayoutService
+  private activeDialog: ActiveDialog = null
+  private dialogError: string | null = null
+  private backendLoadStatus: BackendLoadStatus = 'idle'
+  private backendLoadError: string | null = null
+  private serviceStatus: ServiceStatus = 'unknown'
+  private appConfig: PublicConfigResponse['config'] = {}
+  private offlineLicenseSource: OfflineLicenseSource | null = null
+  private backendLoadInFlight: Promise<void> | null = null
+  private backendStateRevision = 0
+  private backendUserId: string | null = null
+  private configuredAccounts: ConfiguredAccount[] = []
+  private games: PublicGame[] = []
+  private gameCatalogError: string | null = null
+  private me: MeResponse | null = null
+  private announcements: PublicAnnouncement[] = []
+  private products: PublicProduct[] = []
+  private pixPayment: PixPayment | null = null
+  private paymentLoading = false
+  private paymentError: string | null = null
+  private chatNicknameSaving = false
+  private updateState: AppUpdateState = { status: 'idle', supported: false }
+  private unsubscribeFromUpdater: (() => void) | null = null
+  private gridMode: GridMode = 'auto'
+  private ecoModeRequested = true
+  private ecoModeEffective = false
+  private ecoModeOperation: Promise<void> = Promise.resolve()
+  private workspaceMode: WorkspaceMode = 'account'
+  private gridPageIndex = 0
+  private resolvedGridMode: ConcreteGridMode = '1x1'
+  private previousAutoMode: ConcreteGridMode | undefined
+  private screensOnly = false
+  private sidebarCollapsed = false
+  private maximizedAccountId: string | null = null
+  private dialogAccountId: string | null = null
+  private workspaceResizeObserver: ResizeObserver | null = null
+  private workspaceResizeFrame: number | null = null
+  private lastLayoutSignature = ''
+  private renderedDialogSignature = ''
+  private sessionLayoutQueue: Promise<void> = Promise.resolve()
+  private sessionLayoutSuspended = false
+  private sessionCleanupInFlight: Promise<boolean> | null = null
+  private readonly sessionReleaseInFlight = new Map<string, Promise<void>>()
+  private readonly failedSessionReleaseIds = new Set<string>()
+  private readonly sessionOpeningInFlight = new Map<string, Promise<boolean>>()
+  private readonly sessionIssues = new Map<string, string>()
+  private readonly mutedAccountIds = new Set<string>()
+  private sessionSurfaceManager: SessionSurfaceManager | null = null
+  private focusedAccountId: string | null = null
+  private dialogReturnFocus:
+    | { accountId: string; type: 'account' }
+    | { type: 'add-account' }
+    | null = null
+  constructor(
+    private readonly root: HTMLElement,
+    private readonly authService: AuthService,
+    options: AuthAppOptions = {},
+  ) {
+    this.backendApi = options.backendApi ?? null
+    this.chatService = options.chatService ?? null
+    this.gamePresetService = options.gamePresetService
+      ?? (this.backendApi
+        ? new GamePresetService({
+            loader: () => this.backendApi!.getGames(),
+          })
+        : null)
+    this.openExternalUrl = options.openExternalUrl ?? openExternalBrowserUrl
+    this.permissionService = options.permissionService ?? new PermissionService()
+    this.offlineLicenseService = options.offlineLicenseService ?? null
+    this.accountService = options.accountService ?? new ConfiguredAccountService()
+    this.updater = options.updater ?? null
+    const sessionLauncher = options.sessionLauncher
+    this.ecoModeSupported = typeof sessionLauncher?.setEcoMode === 'function'
+    this.ecoModeRequested = this.readEcoModePreference()
+    try {
+      this.sidebarCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true'
+    } catch {
+      this.sidebarCollapsed = false
+    }
+    this.sessionLauncher = {
+      // Keep calls attached to the supplied launcher. ElectronSessionLauncher
+      // stores its API and listener registries on `this`, so copying bare class
+      // methods here would make every native-session action fail at runtime.
+      applyLayout: (layout) => sessionLauncher?.applyLayout?.(layout),
+      clearData: (account) => sessionLauncher?.clearData?.(account),
+      close: (account) => sessionLauncher?.close?.(account),
+      focus: (account) => sessionLauncher?.focus?.(account),
+      open: (account, target) => sessionLauncher?.open?.(account, target),
+      registerEscapeHandler: (handler) => (
+        sessionLauncher?.registerEscapeHandler?.(handler)
+      ),
+      registerStatusHandler: (handler) => (
+        sessionLauncher?.registerStatusHandler?.(handler)
+      ),
+      reload: (account) => sessionLauncher?.reload?.(account),
+      setEcoMode: (enabled) => sessionLauncher?.setEcoMode?.(enabled) ?? false,
+      setMuted: (account, muted) => sessionLauncher?.setMuted?.(account, muted),
+    }
+    this.gridLayoutService = new GridLayoutService(this.permissionService)
+  }
+
+  async start(): Promise<void> {
+    this.render()
+    this.initializeUpdater()
+    this.unsubscribeFromChat = this.chatService?.subscribe(() => {
+      if (!this.destroyed && this.currentView === 'authenticated') {
+        this.render()
+      }
+    }) ?? null
+    this.unsubscribeFromAuth = this.authService.onAuthStateChange(
+      (event, session) => {
+        this.authStateRevision += 1
+        queueMicrotask(() => {
+          void this.handleAuthStateChange(event, session)
+        })
+      },
+    )
+    window.addEventListener('online', this.handleConnectivityChange)
+    window.addEventListener('offline', this.handleConnectivityChange)
+    window.addEventListener('resize', this.handleWorkspaceResize)
+    window.addEventListener('keydown', this.handleKeyDown)
+    window.addEventListener('pointerdown', this.handleGlobalPointerDown)
+    this.unsubscribeFromSessionEscape =
+      this.sessionLauncher.registerEscapeHandler(this.handleSessionEscape)
+      ?? null
+    this.unsubscribeFromSessionStatus =
+      this.sessionLauncher.registerStatusHandler(this.handleSessionStatus)
+      ?? null
+
+    await this.restoreSession()
+  }
+
+  private async restoreSession(): Promise<void> {
+    if (this.destroyed || this.sessionCheckInFlight) {
+      return
+    }
+
+    this.sessionCheckInFlight = true
+    this.sessionCheckError = null
+    if (!this.session) {
+      this.currentView = 'checking'
+      this.render()
+    }
+    const revisionAtStart = this.authStateRevision
+
+    try {
+      const session = await this.authService.getSession()
+
+      if (
+        this.destroyed
+        || revisionAtStart !== this.authStateRevision
+      ) {
+        return
+      }
+
+      this.retrySessionOnReconnect = false
+      this.sessionCheckError = null
+      if (session && !this.recoveryMode) {
+        this.prepareAuthenticatedSession(session)
+      } else {
+        this.session = session
+        this.currentView = this.recoveryMode ? 'reset' : 'login'
+      }
+    } catch (error) {
+      if (
+        this.destroyed
+        || revisionAtStart !== this.authStateRevision
+      ) {
+        return
+      }
+
+      if (shouldRetrySessionAfterReconnect(error)) {
+        this.retrySessionOnReconnect = !navigator.onLine
+        this.sessionCheckError = errorMessage(error)
+        this.currentView = this.session ? 'authenticated' : 'checking'
+      } else {
+        this.retrySessionOnReconnect = false
+        this.sessionCheckError = null
+        this.currentView = this.recoveryMode ? 'reset' : 'login'
+        this.initialAlert = errorMessage(error)
+      }
+    } finally {
+      this.sessionCheckInFlight = false
+    }
+
+    if (!this.destroyed) {
+      this.render()
+
+      if (this.currentView === 'authenticated' && this.session) {
+        void this.loadApplicationData(this.session)
+      }
+    }
+  }
+
+  destroy(): void {
+    this.destroyed = true
+    void this.releaseTrackedSessions()
+    this.sessionSurfaceManager?.clear()
+    this.sessionSurfaceManager = null
+    this.unsubscribeFromAuth?.()
+    this.unsubscribeFromAuth = null
+    this.unsubscribeFromSessionEscape?.()
+    this.unsubscribeFromSessionEscape = null
+    this.unsubscribeFromSessionStatus?.()
+    this.unsubscribeFromSessionStatus = null
+    this.unsubscribeFromChat?.()
+    this.unsubscribeFromChat = null
+    this.chatService?.reset()
+    this.unsubscribeFromUpdater?.()
+    this.unsubscribeFromUpdater = null
+    window.removeEventListener('online', this.handleConnectivityChange)
+    window.removeEventListener('offline', this.handleConnectivityChange)
+    window.removeEventListener('resize', this.handleWorkspaceResize)
+    window.removeEventListener('keydown', this.handleKeyDown)
+    window.removeEventListener('pointerdown', this.handleGlobalPointerDown)
+    this.disconnectWorkspaceObserver()
+  }
+
+  private initializeUpdater(): void {
+    try {
+      const previousVersion = localStorage.getItem('altgrid.last-run-version')
+      if (previousVersion && previousVersion !== APP_VERSION) {
+        this.notificationCenter.upsertSystemNotification({
+          category: 'update',
+          id: `updated:${APP_VERSION}`,
+          summary: `A versão anterior era ${previousVersion}.`,
+          title: `AltGrid atualizado para ${APP_VERSION}`,
+        })
+      }
+      localStorage.setItem('altgrid.last-run-version', APP_VERSION)
+    } catch {
+      // Version history is a convenience and must not delay the local shell.
+    }
+
+    if (!this.updater) {
+      return
+    }
+
+    this.unsubscribeFromUpdater = this.updater.onStateChange((state) => {
+      this.applyUpdateState(state)
+    })
+    void this.updater.getState()
+      .then((state) => this.applyUpdateState(state))
+      .catch(() => undefined)
+  }
+
+  private applyUpdateState(state: AppUpdateState): void {
+    this.updateState = { ...state }
+
+    if (state.status === 'available' || state.status === 'downloaded') {
+      const version = state.version ?? 'nova versão'
+      this.notificationCenter.upsertSystemNotification({
+        category: 'update',
+        id: `update:${version}`,
+        summary: state.status === 'downloaded'
+          ? 'Pronta para instalar quando você encerrar suas sessões.'
+          : 'Você pode baixar sem interromper suas sessões.',
+        title: state.status === 'downloaded'
+          ? `AltGrid ${version} pronto para instalar`
+          : `AltGrid ${version} disponível`,
+      })
+    }
+
+    if (!this.destroyed && this.currentView === 'authenticated') {
+      this.render()
+    }
+  }
+
+  private async checkForUpdates(openDialog: boolean): Promise<void> {
+    if (!this.updater) {
+      this.updateState = {
+        message: 'Atualizações automáticas estão disponíveis no aplicativo instalado.',
+        status: 'error',
+        supported: false,
+      }
+      if (openDialog) {
+        this.activeDialog = 'update'
+        this.render()
+      }
+      return
+    }
+
+    if (openDialog) {
+      this.activeDialog = 'update'
+      this.render()
+    }
+
+    try {
+      this.applyUpdateState(await this.updater.checkForUpdates())
+    } catch {
+      this.applyUpdateState({
+        message: 'Não foi possível verificar atualizações.',
+        status: 'error',
+        supported: true,
+      })
+    }
+  }
+
+  private readonly handleConnectivityChange = (): void => {
+    this.updateConnectivityBanner()
+
+    if (navigator.onLine && this.retrySessionOnReconnect) {
+      void this.restoreSession()
+    }
+
+    if (
+      navigator.onLine
+      && this.backendLoadStatus === 'error'
+      && this.session
+    ) {
+      void this.loadApplicationData(this.session, true)
+    }
+  }
+
+  private readonly handleWorkspaceResize = (): void => {
+    this.scheduleWorkspaceLayout()
+  }
+
+  private readonly handleGlobalPointerDown = (event: PointerEvent): void => {
+    const target = event.target instanceof Element ? event.target : null
+    const currentMenu = target?.closest<HTMLDetailsElement>(
+      'details[data-session-menu], details[data-toolbar-menu]',
+    ) ?? null
+
+    this.root
+      .querySelectorAll<HTMLDetailsElement>(
+        'details[data-session-menu][open], details[data-toolbar-menu][open]',
+      )
+      .forEach((details) => {
+        if (details !== currentMenu) {
+          details.removeAttribute('open')
+        }
+      })
+  }
+
+  private readonly handleKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape' && this.exitPresentationLayer()) {
+      event.preventDefault()
+      return
+    }
+
+    if (this.currentView !== 'authenticated' || this.activeDialog) {
+      return
+    }
+
+    if (event.ctrlKey && event.shiftKey && event.key.toLocaleLowerCase() === 'c') {
+      event.preventDefault()
+      const state = this.chatService?.getState()
+      if (state?.open) {
+        this.chatService?.close()
+      } else {
+        void this.chatService?.open(this.focusedGameId())
+      }
+      return
+    }
+
+    if (event.ctrlKey && !event.altKey && !event.shiftKey && /^[1-9]$/.test(event.key)) {
+      const account = this.configuredAccounts[Number(event.key) - 1]
+
+      if (!account) {
+        return
+      }
+
+      event.preventDefault()
+      const button = this.root.querySelector<HTMLButtonElement>(
+        `[data-account-tab][data-account-id="${CSS.escape(account.id)}"]`,
+      )
+      button?.click()
+    }
+  }
+
+  private readonly handleSessionEscape = (): void => {
+    this.exitPresentationLayer()
+  }
+
+  private readonly handleSessionStatus = (
+    event: AccountSessionStatusEvent,
+  ): void => {
+    if (this.destroyed) {
+      return
+    }
+
+    if (event.type === 'crashed' || event.type === 'load-failed') {
+      this.sessionIssues.set(
+        event.accountId,
+        event.detail ?? (event.type === 'crashed'
+          ? 'Sessão interrompida.'
+          : 'Não foi possível carregar esta conta.'),
+      )
+    } else {
+      this.sessionIssues.delete(event.accountId)
+    }
+
+    this.lastLayoutSignature = ''
+    if (this.currentView === 'authenticated') {
+      this.render()
+    }
+  }
+
+  private exitPresentationLayer(): boolean {
+    if (this.activeDialog) {
+      this.closeDialog()
+      return true
+    }
+
+    if (this.maximizedAccountId) {
+      this.maximizedAccountId = null
+      this.applyWorkspacePresentation()
+      return true
+    }
+
+    if (this.screensOnly) {
+      this.screensOnly = false
+      this.applyWorkspacePresentation()
+      return true
+    }
+
+    return false
+  }
+
+  private async handleAuthStateChange(
+    event: AuthChangeEvent,
+    session: Session | null,
+  ): Promise<void> {
+    if (this.destroyed) {
+      return
+    }
+
+    if (event === 'PASSWORD_RECOVERY') {
+      const revision = this.authStateRevision
+      if (
+        this.permissionService.getActiveSessionCount() > 0
+        || this.sessionOpeningInFlight.size > 0
+        || this.sessionReleaseInFlight.size > 0
+      ) {
+        await this.releaseTrackedSessions()
+      }
+
+      if (this.destroyed || revision !== this.authStateRevision) {
+        return
+      }
+
+      this.retrySessionOnReconnect = false
+      this.sessionCheckError = null
+      this.clearAuthenticatedState()
+      this.recoveryMode = true
+      this.session = session
+      this.currentView = 'reset'
+      this.render()
+      return
+    }
+
+    if (event === 'SIGNED_OUT') {
+      this.retrySessionOnReconnect = false
+      this.sessionCheckError = null
+      this.recoveryMode = false
+      this.session = null
+      this.clearAuthenticatedState()
+      this.currentView = 'login'
+      this.render()
+      return
+    }
+
+    if (event === 'INITIAL_SESSION' && !session) {
+      this.session = null
+
+      if (!navigator.onLine) {
+        this.retrySessionOnReconnect = true
+        this.sessionCheckError = 'Sem conexão. Verifique sua internet e tente novamente.'
+        this.currentView = 'checking'
+      } else {
+        this.retrySessionOnReconnect = false
+        this.sessionCheckError = null
+        this.currentView = 'login'
+      }
+
+      this.render()
+      return
+    }
+
+    if (
+      session
+      && !this.recoveryMode
+      && [
+        'INITIAL_SESSION',
+        'SIGNED_IN',
+        'TOKEN_REFRESHED',
+        'USER_UPDATED',
+      ].includes(event)
+    ) {
+      this.retrySessionOnReconnect = false
+      this.sessionCheckError = null
+      this.prepareAuthenticatedSession(session)
+      this.render()
+      void this.loadApplicationData(
+        session,
+        event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED',
+      )
+    }
+  }
+
+  private prepareAuthenticatedSession(session: Session): void {
+    if (this.backendUserId !== session.user.id) {
+      this.backendStateRevision += 1
+      void this.releaseTrackedSessions()
+      this.backendUserId = session.user.id
+      this.backendLoadStatus = 'idle'
+      this.backendLoadError = null
+      this.serviceStatus = 'unknown'
+      this.appConfig = {}
+      this.offlineLicenseSource = null
+      this.backendLoadInFlight = null
+      this.me = null
+      this.games = this.gamePresetService?.getCachedGames() ?? []
+      this.gameCatalogError = null
+      this.announcements = []
+      this.products = []
+      this.notificationCenter.setAnnouncements([])
+      this.pixPayment = null
+      this.paymentError = null
+      this.activeDialog = null
+      this.dialogAccountId = null
+      this.dialogReturnFocus = null
+      this.gridMode = 'auto'
+      this.workspaceMode = 'account'
+      this.gridPageIndex = 0
+      this.previousAutoMode = undefined
+      this.screensOnly = false
+      this.maximizedAccountId = null
+      this.focusedAccountId = null
+      this.sessionIssues.clear()
+      this.mutedAccountIds.clear()
+      this.permissionService.updateEntitlements(SAFE_FREE_ENTITLEMENTS)
+      this.ecoModeEffective = false
+      void this.syncEcoMode()
+      this.configuredAccounts = this.accountService.list(session.user.id)
+      void this.chatService?.start()
+    }
+
+    this.session = session
+    this.currentView = 'authenticated'
+  }
+
+  private clearAuthenticatedState(): void {
+    this.backendStateRevision += 1
+    void this.releaseTrackedSessions()
+    this.backendUserId = null
+    this.backendLoadStatus = 'idle'
+    this.backendLoadError = null
+    this.serviceStatus = 'unknown'
+    this.appConfig = {}
+    this.offlineLicenseSource = null
+    this.backendLoadInFlight = null
+    this.me = null
+    this.games = []
+    this.announcements = []
+    this.products = []
+    this.notificationCenter.setAnnouncements([])
+    this.pixPayment = null
+    this.paymentError = null
+    this.paymentLoading = false
+    this.gameCatalogError = null
+    this.configuredAccounts = []
+    this.activeDialog = null
+    this.dialogError = null
+    this.dialogReturnFocus = null
+    this.dialogAccountId = null
+    this.gridMode = 'auto'
+    this.workspaceMode = 'account'
+    this.gridPageIndex = 0
+    this.previousAutoMode = undefined
+    this.screensOnly = false
+    this.maximizedAccountId = null
+    this.focusedAccountId = null
+    this.sessionIssues.clear()
+    this.mutedAccountIds.clear()
+    this.sessionSurfaceManager = null
+    this.disconnectWorkspaceObserver()
+    this.permissionService.updateEntitlements(SAFE_FREE_ENTITLEMENTS)
+    this.ecoModeEffective = false
+    void this.syncEcoMode()
+    this.chatService?.reset()
+  }
+
+  private releaseTrackedSessions(): Promise<boolean> {
+    this.sessionLayoutSuspended = true
+    // Reset the generation and capture the account objects synchronously. The
+    // auth shell may be cleared immediately after this method returns.
+    const snapshot = this.captureTrackedSessionRelease()
+    const previousOperation = this.sessionCleanupInFlight
+    const operation = Promise.resolve(previousOperation ?? true)
+      .then(async (previousSucceeded) => {
+        const currentSucceeded = await this.performTrackedSessionRelease(snapshot)
+        return previousSucceeded && currentSucceeded
+      })
+      .catch(() => false)
+
+    this.sessionCleanupInFlight = operation
+    void operation.then(() => {
+      if (this.sessionCleanupInFlight === operation) {
+        this.sessionCleanupInFlight = null
+        this.sessionLayoutSuspended = false
+        this.lastLayoutSignature = ''
+        if (
+          !this.destroyed
+          && this.currentView === 'authenticated'
+          && this.session
+          && this.permissionService.getActiveSessionCount() > 0
+        ) {
+          this.scheduleWorkspaceLayout()
+        }
+      }
+    })
+
+    return operation
+  }
+
+  private captureTrackedSessionRelease(): SessionReleaseSnapshot {
+    const openingOperations = [...this.sessionOpeningInFlight.entries()]
+    const closingOperations = new Map(
+      this.permissionService.getActiveSessionIds()
+        .map((accountId) => [
+          accountId,
+          this.permissionService.getClosingSessionOperation(accountId),
+        ] as const)
+        .filter((entry): entry is readonly [string, Promise<void>] =>
+          entry[1] !== null),
+    )
+    const sessionsNeedingClose = new Set([
+      ...this.permissionService.resetForRestart(),
+      ...this.failedSessionReleaseIds,
+    ])
+    const sessionsNeedingHide = new Set([
+      ...sessionsNeedingClose,
+      ...openingOperations.map(([accountId]) => accountId),
+      ...this.sessionReleaseInFlight.keys(),
+      ...this.failedSessionReleaseIds,
+    ])
+    const activeAccounts = this.configuredAccounts.filter((account) =>
+      sessionsNeedingClose.has(account.id))
+
+    return {
+      activeAccounts,
+      closingOperations,
+      openingOperations,
+      sessionsNeedingHide: [...sessionsNeedingHide],
+    }
+  }
+
+  private async performTrackedSessionRelease(
+    snapshot: SessionReleaseSnapshot,
+  ): Promise<boolean> {
+    const {
+      activeAccounts,
+      closingOperations,
+      openingOperations,
+      sessionsNeedingHide,
+    } = snapshot
+
+    if (sessionsNeedingHide.length > 0) {
+      const hiddenLayout: GridLayout = {
+        capacity: 1,
+        columns: 1,
+        overflowSessionIds: sessionsNeedingHide,
+        pageCount: 1,
+        pageIndex: 0,
+        requestedMode: 'auto',
+        resolvedMode: '1x1',
+        rows: 1,
+        slots: [],
+      }
+
+      await this.enqueueSessionLayout(hiddenLayout)
+        .catch(() => undefined)
+    }
+
+    const operations = activeAccounts.map((account) => {
+      const existing = this.sessionReleaseInFlight.get(account.id)
+
+      if (existing) {
+        return existing
+      }
+
+      const closeOperation = closingOperations.get(account.id)
+        ?? Promise.resolve().then(() => this.sessionLauncher.close(account))
+      const operation = Promise.resolve(closeOperation)
+        .then(() => {
+          this.failedSessionReleaseIds.delete(account.id)
+        })
+        .catch((error: unknown) => {
+          this.failedSessionReleaseIds.add(account.id)
+          throw error
+        })
+        .finally(() => {
+          if (this.sessionReleaseInFlight.get(account.id) === operation) {
+            this.sessionReleaseInFlight.delete(account.id)
+          }
+        })
+
+      this.sessionReleaseInFlight.set(account.id, operation)
+      return operation
+    })
+
+    const [openingResults, releaseResults] = await Promise.all([
+      Promise.allSettled(openingOperations.map(([, operation]) => operation)),
+      Promise.allSettled([
+      ...this.sessionReleaseInFlight.values(),
+      ...operations,
+      ]),
+    ])
+
+    const failedOpeningIds = openingOperations.flatMap(
+      ([accountId], index) => {
+        const result = openingResults[index]
+        return result?.status === 'fulfilled' && result.value ? [] : [accountId]
+      },
+    )
+    const sessionsNeedingRehide = [
+      ...new Set([
+        ...failedOpeningIds,
+        ...this.failedSessionReleaseIds,
+      ]),
+    ]
+
+    // An opening WebView may be created after the first hide was applied. If
+    // its compensating close fails, hide it again before auth changes screens.
+    if (sessionsNeedingRehide.length > 0) {
+      await this.enqueueSessionLayout({
+        capacity: 1,
+        columns: 1,
+        overflowSessionIds: sessionsNeedingRehide,
+        pageCount: 1,
+        pageIndex: 0,
+        requestedMode: 'auto',
+        resolvedMode: '1x1',
+        rows: 1,
+        slots: [],
+      }).catch(() => undefined)
+    }
+
+    return (
+      openingResults.every(
+        (result) => result.status === 'fulfilled' && result.value,
+      )
+      && releaseResults.every((result) => result.status === 'fulfilled')
+    )
+  }
+
+  private loadApplicationData(
+    session: Session,
+    force = false,
+  ): Promise<void> {
+    const backendApi = this.backendApi
+
+    if (!backendApi || this.destroyed) {
+      return Promise.resolve()
+    }
+
+    if (
+      this.backendUserId !== session.user.id
+      || this.session?.user.id !== session.user.id
+    ) {
+      return Promise.resolve()
+    }
+
+    if (this.backendLoadInFlight) {
+      return this.backendLoadInFlight
+    }
+
+    if (!force && this.backendLoadStatus === 'ready') {
+      return Promise.resolve()
+    }
+
+    const revision = this.backendStateRevision
+    this.backendLoadStatus = 'loading'
+    this.backendLoadError = null
+    if (backendApi.getHealth) {
+      this.serviceStatus = 'checking'
+    }
+    this.render()
+
+    const request = (async (): Promise<void> => {
+      const [
+        meResult,
+        entitlementsResult,
+        gamesResult,
+        announcementsResult,
+        productsResult,
+        healthResult,
+        configResult,
+      ] =
+        await Promise.allSettled([
+          backendApi.getMe(),
+          this.offlineLicenseService
+            ? this.offlineLicenseService.loadEntitlements(session.user.id)
+            : backendApi.getEntitlements().then((entitlements) => ({
+                entitlements,
+                source: 'network' as const,
+              })),
+          this.gamePresetService?.loadGames() ?? Promise.resolve([]),
+          backendApi.getAnnouncements?.()
+            ?? Promise.resolve({ announcements: [] }),
+          backendApi.getProducts?.()
+            ?? Promise.resolve({ products: [] }),
+          backendApi.getHealth?.() ?? Promise.resolve(null),
+          backendApi.getAppConfig?.() ?? Promise.resolve(null),
+        ])
+
+      if (
+        this.destroyed
+        || revision !== this.backendStateRevision
+        || this.session?.user.id !== session.user.id
+      ) {
+        return
+      }
+
+      const failures = [
+        meResult,
+        entitlementsResult,
+        gamesResult,
+        announcementsResult,
+        productsResult,
+        healthResult,
+        configResult,
+      ].filter((result): result is PromiseRejectedResult =>
+        result.status === 'rejected')
+      const unauthorized = failures.find(
+        (result) =>
+          result.reason instanceof BackendApiError
+          && result.reason.status === 401,
+      )
+
+      if (unauthorized) {
+        this.session = null
+        this.clearAuthenticatedState()
+        this.currentView = 'login'
+        this.initialAlert = 'Sua sessão expirou. Entre novamente.'
+        this.render()
+        void this.authService.signOut().catch(() => undefined)
+        return
+      }
+
+      if (meResult.status === 'fulfilled' && meResult.value) {
+        this.me = meResult.value
+      }
+
+      if (
+        entitlementsResult.status === 'fulfilled'
+        && entitlementsResult.value
+      ) {
+        this.permissionService.updateEntitlements(
+          entitlementsResult.value.entitlements,
+        )
+        this.offlineLicenseSource = entitlementsResult.value.source
+      } else if (meResult.status === 'fulfilled' && meResult.value) {
+        this.permissionService.updateEntitlements(
+          entitlementsFromMe(meResult.value),
+        )
+      }
+
+      if (gamesResult.status === 'fulfilled') {
+        this.games = gamesResult.value
+        this.gameCatalogError = null
+      } else {
+        this.gameCatalogError = 'Não foi possível atualizar os jogos agora.'
+      }
+
+      if (announcementsResult.status === 'fulfilled') {
+        this.announcements = announcementsResult.value.announcements
+        this.notificationCenter.setAnnouncements(this.announcements)
+      }
+
+      if (productsResult.status === 'fulfilled') {
+        this.products = productsResult.value.products
+      }
+
+      if (healthResult.status === 'fulfilled' && healthResult.value) {
+        this.serviceStatus = healthResult.value.ok ? 'online' : 'offline'
+      } else if (healthResult.status === 'rejected') {
+        this.serviceStatus = 'offline'
+      }
+
+      if (configResult.status === 'fulfilled' && configResult.value) {
+        this.appConfig = configResult.value.config
+      }
+
+      this.backendLoadStatus =
+        entitlementsResult.status === 'fulfilled'
+        || meResult.status === 'fulfilled'
+          ? 'ready'
+          : 'error'
+      this.backendLoadError = failures.length > 0
+        ? backendErrorMessage(failures[0]?.reason)
+        : null
+      this.render()
+      void this.syncEcoMode()
+        .then(() => {
+          if (!this.destroyed && this.session?.user.id === session.user.id) {
+            this.render()
+          }
+        })
+        .catch(() => undefined)
+    })()
+
+    this.backendLoadInFlight = request
+    void request.finally(() => {
+      if (this.backendLoadInFlight === request) {
+        this.backendLoadInFlight = null
+      }
+    }).catch(() => undefined)
+
+    return request
+  }
+
+  private async refreshGamePresets(): Promise<void> {
+    if (!this.gamePresetService || !this.session || this.destroyed) {
+      return
+    }
+
+    const revision = this.backendStateRevision
+    const userId = this.session.user.id
+
+    try {
+      const games = await this.gamePresetService.loadGames()
+
+      if (
+        this.destroyed
+        || revision !== this.backendStateRevision
+        || this.session?.user.id !== userId
+      ) {
+        return
+      }
+
+      this.games = games
+      this.gameCatalogError = null
+      this.render()
+    } catch {
+      if (
+        this.destroyed
+        || revision !== this.backendStateRevision
+        || this.session?.user.id !== userId
+      ) {
+        return
+      }
+
+      this.gameCatalogError = 'Não foi possível atualizar os jogos agora.'
+      this.render()
+    }
+  }
+
+  private navigate(view: AuthView): void {
+    this.initialAlert = null
+    this.currentView = view
+    this.render()
+  }
+
+  private render(): void {
+    if (
+      this.currentView === 'authenticated'
+      && this.session
+      && this.updateAuthenticatedShell()
+    ) {
+      return
+    }
+
+    this.disconnectWorkspaceObserver()
+    this.sessionSurfaceManager = null
+    const authenticated = this.currentView === 'authenticated'
+    this.root.innerHTML = `
+      <div class="app-frame ${authenticated ? 'app-frame--workspace' : ''} ${this.screensOnly ? 'is-screens-only' : ''}">
+        <header class="topbar ${authenticated ? 'topbar--workspace' : ''}">
+          <div class="brand" aria-label="AltGrid">
+            <img
+              class="${authenticated ? 'brand__mark brand__mark--image' : 'brand__logo'}"
+              src="${altgridLogoUrl}"
+              alt=""
+            />
+            <span class="brand__name">AltGrid</span>
+            ${authenticated ? `<span class="brand__version">${APP_VERSION}</span>` : ''}
+          </div>
+          ${
+             authenticated
+               ? `<div class="topbar__workspace-tools">${this.renderWorkspaceToolbar()}</div>`
+               : `<div class="topbar__public-actions">
+                   <div class="topbar__status" aria-label="Status da conexão">
+                     <span class="status-dot" aria-hidden="true"></span>
+                     <span>${navigator.onLine ? 'Conectado à internet' : 'Sem conexão'}</span>
+                   </div>
+                   ${this.renderUpdateButton()}
+                 </div>`
+          }
+        </header>
+
+        <div
+          class="connectivity-banner ${navigator.onLine ? 'is-hidden' : ''}"
+          id="connectivity-banner"
+          role="status"
+          aria-live="polite"
+        >
+          Sem conexão. Sua sessão e configurações foram mantidas.
+        </div>
+
+        <main class="${
+          this.currentView === 'authenticated' ? 'app-stage' : 'auth-stage'
+        }">
+          ${this.renderView()}
+        </main>
+
+        <div data-overlay-region>${this.renderDialog()}</div>
+
+        ${authenticated ? '' : `<footer class="app-footer">
+          <span>AltGrid</span>
+          <span class="app-footer__health">
+            <span class="status-dot status-dot--small" aria-hidden="true"></span>
+            Autenticação protegida
+          </span>
+        </footer>`}
+      </div>
+    `
+
+    this.bindViewActions()
+    this.updateConnectivityBanner()
+    this.renderedDialogSignature = this.getDialogSignature()
+    this.focusCurrentView()
+
+    if (authenticated) {
+      this.ensureSessionSurfaceManager()
+      this.ensureWorkspaceObserver()
+      this.applyWorkspacePresentation()
+    }
+  }
+
+  private updateAuthenticatedShell(): boolean {
+    const shell = this.root.querySelector<HTMLElement>('[data-authenticated-shell]')
+
+    if (!shell || shell.dataset.userId !== this.session?.user.id) {
+      return false
+    }
+
+    const toolbar = this.root.querySelector<HTMLElement>('.topbar__workspace-tools')
+    const backendRegion = shell.querySelector<HTMLElement>('[data-backend-region]')
+    const sidebarRegion = shell.querySelector<HTMLElement>('[data-sidebar-region]')
+    const gridControlsRegion = shell.querySelector<HTMLElement>('[data-grid-controls-region]')
+    const statusbarRegion = shell.querySelector<HTMLElement>('[data-statusbar-region]')
+    const chatRegion = shell.querySelector<HTMLElement>('[data-chat-region]')
+    const overlayRegion = this.root.querySelector<HTMLElement>('[data-overlay-region]')
+    const previousAccountScroller = toolbar?.querySelector<HTMLElement>(
+      '[data-account-tabs-scroll]',
+    )
+    const previousAccountScrollLeft = previousAccountScroller?.scrollLeft ?? 0
+    const previousFocusedAccountId = toolbar
+      ?.querySelector<HTMLElement>('[data-account-tab].is-active')
+      ?.dataset.accountId
+    let dialogReplaced = false
+
+    shell.classList.toggle(
+      'has-chat-open',
+      Boolean(this.chatService?.getState().open),
+    )
+
+    if (toolbar) {
+      toolbar.innerHTML = this.renderWorkspaceToolbar()
+      const accountScroller = toolbar.querySelector<HTMLElement>('[data-account-tabs-scroll]')
+      if (accountScroller) {
+        accountScroller.scrollLeft = previousAccountScrollLeft
+        if (previousFocusedAccountId !== this.focusedAccountId) {
+          toolbar
+            .querySelector<HTMLElement>('[data-account-tab].is-active')
+            ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+        }
+      }
+    }
+    if (backendRegion) {
+      backendRegion.innerHTML = this.renderBackendStatus()
+    }
+    if (sidebarRegion) {
+      sidebarRegion.outerHTML = this.renderSidebar()
+    }
+    if (gridControlsRegion) {
+      gridControlsRegion.innerHTML = this.renderGridControls()
+    }
+    if (statusbarRegion) {
+      statusbarRegion.innerHTML = this.renderStatusbar()
+    }
+    if (chatRegion) {
+      chatRegion.innerHTML = this.renderChat()
+    }
+    if (overlayRegion) {
+      const signature = this.getDialogSignature()
+
+      if (signature !== this.renderedDialogSignature) {
+        const draft = this.captureDialogDraft(overlayRegion)
+        overlayRegion.innerHTML = this.renderDialog()
+        this.restoreDialogDraft(overlayRegion, draft)
+        this.renderedDialogSignature = signature
+        dialogReplaced = true
+      }
+    }
+
+    this.ensureSessionSurfaceManager()
+    this.reconcileSessionCards(shell)
+    this.bindViewActions()
+    this.updateConnectivityBanner()
+    this.ensureWorkspaceObserver()
+    this.applyWorkspacePresentation()
+    if (dialogReplaced && this.activeDialog) {
+      this.focusCurrentView()
+    }
+    return true
+  }
+
+  private getDialogSignature(): string {
+    const dependency = this.activeDialog === 'add-account'
+      ? [this.games, this.gameCatalogError]
+      : this.activeDialog === 'plans'
+        ? [
+            this.permissionService.getCurrentPlan(),
+            this.permissionService.getAccountLimit(),
+            this.permissionService.canUseFeature('advanced_grids'),
+            this.products,
+          ]
+        : this.activeDialog === 'free-limit'
+          ? (() => {
+              const account = this.configuredAccounts.find(
+                (candidate) => candidate.id === this.dialogAccountId,
+              )
+              return [
+                this.permissionService.getCurrentPlan(),
+                this.permissionService.getAccountLimit(account?.gameSlug),
+                account?.gameSlug,
+              ]
+            })()
+          : this.activeDialog === 'payment'
+            ? [this.paymentLoading, this.paymentError, this.pixPayment]
+            : this.activeDialog === 'update'
+              ? this.updateState
+              : this.activeDialog === 'more-games'
+                ? [this.games, this.gameCatalogError]
+                : this.activeDialog === 'my-plan'
+                  ? this.me
+        : this.configuredAccounts.find(
+            (account) => account.id === this.dialogAccountId,
+          )?.displayName ?? null
+
+    return JSON.stringify([
+      this.activeDialog,
+      this.dialogAccountId,
+      this.dialogError,
+      dependency,
+    ])
+  }
+
+  private captureDialogDraft(container: HTMLElement): Map<string, string> {
+    const draft = new Map<string, string>()
+    container
+      .querySelectorAll<HTMLInputElement | HTMLSelectElement>('input[name], select[name]')
+      .forEach((field) => {
+        if (!field.name) {
+          return
+        }
+
+        if (
+          field instanceof HTMLInputElement
+          && (field.type === 'radio' || field.type === 'checkbox')
+        ) {
+          if (field.checked) {
+            draft.set(field.name, field.value)
+          }
+          return
+        }
+
+        draft.set(field.name, field.value)
+      })
+    return draft
+  }
+
+  private restoreDialogDraft(
+    container: HTMLElement,
+    draft: ReadonlyMap<string, string>,
+  ): void {
+    container
+      .querySelectorAll<HTMLInputElement | HTMLSelectElement>('input[name], select[name]')
+      .forEach((field) => {
+        const value = draft.get(field.name)
+
+        if (
+          field instanceof HTMLInputElement
+          && (field.type === 'radio' || field.type === 'checkbox')
+        ) {
+          if (value !== undefined) {
+            field.checked = field.value === value
+          }
+        } else if (value !== undefined) {
+          field.value = value
+        }
+      })
+  }
+
+  private profileDisplayName(): string {
+    return this.me?.profile.display_name?.trim()
+      || this.session?.user.email?.split('@')[0]
+      || 'Minha conta'
+  }
+
+  private renderPlanName(): string {
+    const plan = this.permissionService.getCurrentPlan()
+
+    return plan === 'FOUNDER' && this.me?.founder_number
+      ? `FOUNDER #${String(this.me.founder_number).padStart(4, '0')}`
+      : plan
+  }
+
+  private renderFounderBadge(): string {
+    if (this.permissionService.getCurrentPlan() !== 'FOUNDER') {
+      return ''
+    }
+
+    return `<small class="founder-badge"><span aria-hidden="true">♛</span>${escapeHtml(this.renderPlanName())}</small>`
+  }
+
+  private renderSessionLimitSummary(activeSessions: number): string {
+    if (this.permissionService.getCurrentPlan() === 'FREE') {
+      return `${activeSessions} ${activeSessions === 1 ? 'aberta' : 'abertas'} · Huntera 3 / demais 2`
+    }
+
+    return `${activeSessions}/${this.permissionService.getAccountLimit()} sessões abertas`
+  }
+
+  private renderAccountGameIcon(account: ConfiguredAccount): string {
+    const game = this.games.find((candidate) => candidate.slug === account.gameSlug)
+
+    if (game) {
+      return this.renderGameIcon(game)
+    }
+
+    return `<span aria-hidden="true">${account.gameSlug === CUSTOM_GAME_SLUG ? 'URL' : escapeHtml(account.gameSlug.slice(0, 2).toUpperCase())}</span>`
+  }
+
+  private renderAccountTabs(): string {
+    return `
+      <div class="account-tabs" data-account-tabs aria-label="Contas">
+        <button class="account-tabs__nav account-tabs__nav--previous" data-scroll-accounts="previous" type="button" aria-label="Contas anteriores" aria-controls="account-tabs-scroll" hidden>‹</button>
+        <div class="account-tabs__scroll" id="account-tabs-scroll" data-account-tabs-scroll role="region" aria-label="Contas configuradas" tabindex="0">
+          ${this.configuredAccounts.map((account) => {
+            const active = this.permissionService.isSessionActive(account.id)
+            const selected = this.workspaceMode === 'account'
+              && active
+              && account.id === this.focusedAccountId
+            return `
+              <div class="account-tab-shell ${selected ? 'is-active' : ''} ${active ? 'is-open' : ''}">
+                <button
+                  class="account-tab ${selected ? 'is-active' : ''} ${active ? 'is-open' : ''}"
+                  data-account-tab
+                  data-account-id="${escapeHtml(account.id)}"
+                  type="button"
+                  ${selected ? 'aria-current="page"' : ''}
+                >
+                  <span class="account-tab__game-icon">${this.renderAccountGameIcon(account)}</span>
+                  <span class="account-tab__copy">
+                    <strong>${escapeHtml(account.displayName)}</strong>
+                    <small><i class="account-tab__indicator ${active ? 'is-online' : ''}" aria-hidden="true"></i>${escapeHtml(this.gameNameFor(account))} · ${active ? 'Conectado' : 'Offline'}</small>
+                  </span>
+                </button>
+                ${active ? `<button class="account-tab__close" data-close-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Fechar sessão ${escapeHtml(account.displayName)}" title="Fechar sessão">×</button>` : ''}
+              </div>
+            `
+          }).join('')}
+        </div>
+        <button class="account-tabs__nav account-tabs__nav--next" data-scroll-accounts="next" type="button" aria-label="Próximas contas" aria-controls="account-tabs-scroll" hidden>›</button>
+        <button class="account-tab account-tab--add" data-add-account type="button">
+          ${uiIcon('add')}
+          <span class="account-tab__copy"><strong>Adicionar</strong><small>Nova conta</small></span>
+        </button>
+      </div>
+    `
+  }
+
+  private renderNotificationCenter(): string {
+    const notifications = this.notificationCenter.list()
+    const unread = this.notificationCenter.getUnreadCount()
+
+    return `
+      <details class="toolbar-menu toolbar-menu--end notification-menu" data-toolbar-menu>
+        <summary class="header-icon-button" aria-label="Notificações${unread ? `, ${unread} não lidas` : ''}">
+          ${uiIcon('bell')}
+          ${unread ? `<b class="notification-badge">${Math.min(unread, 99)}</b>` : ''}
+        </summary>
+        <section class="notification-popover" aria-label="Central de notificações">
+          <header>
+            <div><strong>Notificações</strong><small>Atualizações do AltGrid</small></div>
+            ${unread ? '<button class="text-button" data-read-all-notifications type="button">Marcar lidas</button>' : ''}
+          </header>
+          <div class="notification-list">
+            ${notifications.length > 0
+              ? notifications.map((notification) => `
+                <button class="notification-item ${notification.read ? '' : 'is-unread'}" data-read-notification="${escapeHtml(notification.id)}" type="button">
+                  <span class="notification-item__dot notification-item__dot--${notification.severity}" aria-hidden="true"></span>
+                  <span><strong>${escapeHtml(notification.title)}</strong><small>${escapeHtml(notification.summary)}</small><time>${escapeHtml(formatDate(notification.occurredAt))}</time></span>
+                </button>
+              `).join('')
+              : '<p class="notification-empty">Tudo tranquilo por aqui.</p>'}
+          </div>
+        </section>
+      </details>
+    `
+  }
+
+  private renderChatButton(): string {
+    if (!this.chatService) {
+      return ''
+    }
+
+    const state = this.chatService.getState()
+    const unread = Object.values(state.unread).reduce((total, count) => total + count, 0)
+
+    return `
+      <button
+        class="header-icon-button header-chat-button ${state.open ? 'is-active' : ''}"
+        data-open-chat
+        type="button"
+        aria-label="${state.open ? 'Fechar' : 'Abrir'} Chat${unread ? `, ${unread} mensagens não lidas` : ''}"
+        aria-pressed="${state.open}"
+      >
+        ${uiIcon('chat')}
+        <span class="visually-hidden">Chat</span>
+        ${unread ? `<b class="notification-badge">${Math.min(unread, 99)}</b>` : ''}
+      </button>
+    `
+  }
+
+  private renderWorkspaceToolbar(): string {
+    const active = this.permissionService.getActiveSessionCount()
+
+    return `
+      ${this.renderAccountTabs()}
+      <div class="header-actions">
+        ${this.sidebarCollapsed ? `<button class="header-icon-button sidebar-restore-button" data-toggle-sidebar type="button" aria-label="Mostrar jogos e perfil" title="Mostrar menu lateral">›</button>` : ''}
+        <div class="header-view-actions" role="group" aria-label="Visualização">
+          <button
+            class="header-command-button ${this.workspaceMode === 'grid' ? 'is-active' : ''}"
+            data-toggle-grid
+            type="button"
+            aria-label="Ver contas em grade"
+            aria-pressed="${this.workspaceMode === 'grid'}"
+          >
+            ${uiIcon('grid')}
+            <span class="header-command-button__copy"><strong>Grades</strong><small>${active} ${active === 1 ? 'aberta' : 'abertas'}</small></span>
+          </button>
+          <button class="header-command-button ${this.screensOnly ? 'is-active' : ''}" data-toggle-screens-only type="button" aria-label="Somente telas" aria-pressed="${this.screensOnly}">
+            ${uiIcon('screens')}
+            <span>Somente telas</span>
+          </button>
+        </div>
+        <div class="header-utility-actions" role="group" aria-label="Comunicação e preferências">
+          ${this.renderChatButton()}
+          ${this.renderNotificationCenter()}
+        </div>
+        ${this.renderUpdateButton()}
+      </div>
+    `
+  }
+
+  private renderUpdateButton(): string {
+    const updateReady = ['available', 'downloaded'].includes(this.updateState.status)
+
+    return `
+      <button class="header-icon-button update-button" data-open-update type="button" aria-label="Atualizações">
+        ${uiIcon('refresh')}
+        ${updateReady ? '<i class="update-available-dot" aria-hidden="true"></i>' : ''}
+      </button>
+    `
+  }
+
+  private renderView(): string {
+    switch (this.currentView) {
+      case 'checking':
+        return this.renderChecking()
+      case 'signup':
+        return this.renderSignup()
+      case 'forgot':
+        return this.renderForgotPassword()
+      case 'forgot-sent':
+        return this.renderForgotPasswordSent()
+      case 'confirm-email':
+        return this.renderConfirmEmail()
+      case 'reset':
+        return this.renderResetPassword()
+      case 'password-updated':
+        return this.renderPasswordUpdated()
+      case 'authenticated':
+        return this.renderAuthenticated()
+      case 'login':
+      default:
+        return this.renderLogin()
+    }
+  }
+
+  private renderChecking(): string {
+    const error = this.sessionCheckError
+
+    return `
+      <section class="auth-card auth-card--checking" aria-live="polite">
+        ${
+          error
+            ? '<span class="message-icon message-icon--warning" aria-hidden="true">!</span>'
+            : '<span class="spinner spinner--large" aria-hidden="true"></span>'
+        }
+        <h1>Verificando sua sessão</h1>
+        <p class="auth-card__subtitle">${
+          error ? escapeHtml(error) : 'Só um instante…'
+        }</p>
+        ${
+          error
+            ? '<button class="button button--secondary" data-retry-session type="button">Tentar novamente</button>'
+            : ''
+        }
+      </section>
+    `
+  }
+
+  private renderLogin(): string {
+    return `
+      <section class="auth-card" aria-labelledby="login-title">
+        <div class="auth-card__heading">
+          <p class="eyebrow">Bem-vindo de volta</p>
+          <h1 id="login-title">Entrar na AltGrid</h1>
+          <p class="auth-card__subtitle">Acesse suas sessões e configurações.</p>
+        </div>
+
+        ${this.renderAlertSlot()}
+
+        <form id="login-form" novalidate>
+          ${this.renderEmailField('login-email')}
+          ${this.renderPasswordField('login-password', 'Senha', 'current-password')}
+
+          <button class="button button--primary" data-submit type="submit">
+            Entrar
+          </button>
+        </form>
+
+        <div class="auth-links" aria-label="Outras opções">
+          <button class="text-button text-button--strong" data-view="signup" type="button">
+            Criar conta
+          </button>
+          <span aria-hidden="true">•</span>
+          <button class="text-button" data-view="forgot" type="button">
+            Esqueci minha senha
+          </button>
+        </div>
+      </section>
+    `
+  }
+
+  private renderSignup(): string {
+    return `
+      <section class="auth-card" aria-labelledby="signup-title">
+        <div class="auth-card__heading">
+          <p class="eyebrow">Nova conta</p>
+          <h1 id="signup-title">Criar conta</h1>
+          <p class="auth-card__subtitle">Use seu e-mail para acessar suas contas.</p>
+        </div>
+
+        ${this.renderAlertSlot()}
+
+        <form id="signup-form" novalidate>
+          ${this.renderEmailField('signup-email')}
+          ${this.renderPasswordField('signup-password', 'Senha', 'new-password')}
+          ${this.renderPasswordField(
+            'signup-password-confirmation',
+            'Confirmar senha',
+            'new-password',
+          )}
+
+          <button class="button button--primary" data-submit type="submit">
+            Criar conta
+          </button>
+        </form>
+
+        <div class="auth-links auth-links--single">
+          <button class="text-button" data-view="login" type="button">
+            Já tenho uma conta
+          </button>
+        </div>
+      </section>
+    `
+  }
+
+  private renderForgotPassword(): string {
+    return `
+      <section class="auth-card" aria-labelledby="forgot-title">
+        <button class="back-button" data-view="login" type="button" aria-label="Voltar ao login">
+          <span aria-hidden="true">←</span> Voltar
+        </button>
+        <div class="auth-card__heading">
+          <p class="eyebrow">Acesso à conta</p>
+          <h1 id="forgot-title">Recuperar senha</h1>
+          <p class="auth-card__subtitle">
+            Enviaremos um link para você definir uma nova senha.
+          </p>
+        </div>
+
+        ${this.renderAlertSlot()}
+
+        <form id="forgot-form" novalidate>
+          ${this.renderEmailField('forgot-email')}
+          <button class="button button--primary" data-submit type="submit">
+            Enviar link de recuperação
+          </button>
+        </form>
+      </section>
+    `
+  }
+
+  private renderForgotPasswordSent(): string {
+    return this.renderMessageCard(
+      'E-mail enviado',
+      'Se existir uma conta com esse e-mail, enviaremos as instruções de recuperação.',
+      'Voltar para o login',
+      'login',
+    )
+  }
+
+  private renderConfirmEmail(): string {
+    return this.renderMessageCard(
+      'Verifique seu e-mail',
+      'Sua conta foi criada. Use o link enviado para confirmar o e-mail e entrar.',
+      'Ir para o login',
+      'login',
+    )
+  }
+
+  private renderResetPassword(): string {
+    return `
+      <section class="auth-card" aria-labelledby="reset-title">
+        <div class="auth-card__heading">
+          <p class="eyebrow">Recuperação de conta</p>
+          <h1 id="reset-title">Definir nova senha</h1>
+          <p class="auth-card__subtitle">Escolha uma nova senha para sua conta.</p>
+        </div>
+
+        ${this.renderAlertSlot()}
+
+        <form id="reset-form" novalidate>
+          ${this.renderPasswordField('reset-password', 'Nova senha', 'new-password')}
+          ${this.renderPasswordField(
+            'reset-password-confirmation',
+            'Confirmar nova senha',
+            'new-password',
+          )}
+          <button class="button button--primary" data-submit type="submit">
+            Salvar nova senha
+          </button>
+        </form>
+      </section>
+    `
+  }
+
+  private renderPasswordUpdated(): string {
+    return this.renderMessageCard(
+      'Senha atualizada',
+      'Sua nova senha já está ativa. Você pode continuar com segurança.',
+      'Continuar',
+      this.session ? 'authenticated' : 'login',
+    )
+  }
+
+  private renderGameIcon(game: PublicGame): string {
+    const iconUrl = normalizeSafeGameUrl(game.icon_url)
+
+    return iconUrl
+      ? `<img src="${escapeHtml(iconUrl)}" alt="" loading="lazy" />`
+      : `<span aria-hidden="true">${escapeHtml(game.name.slice(0, 2).toUpperCase())}</span>`
+  }
+
+  private renderSidebar(): string {
+    const activeAccount = this.configuredAccounts.find(
+      (account) => account.id === this.focusedAccountId,
+    )
+    const selectedSlug = activeAccount?.gameSlug ?? this.games[0]?.slug
+    const visibleGames = this.games.slice(0, 6)
+    const activeSessions = this.permissionService.getActiveSessionCount()
+
+    return `
+      <aside class="game-sidebar" data-sidebar-region aria-label="Navegação principal">
+        <div class="game-sidebar__catalog">
+          <div class="sidebar-heading">
+            <p class="sidebar-label">Jogos suportados</p>
+            <button class="sidebar-collapse-button" data-toggle-sidebar type="button" aria-label="Ocultar menu lateral" title="Ocultar menu lateral">‹</button>
+          </div>
+          <nav class="game-list" aria-label="Jogos suportados">
+            ${visibleGames.length > 0
+              ? visibleGames.map((game) => `
+                <button class="game-list__item ${game.slug === selectedSlug ? 'is-selected' : ''}" data-select-game="${escapeHtml(game.slug)}" type="button">
+                  <span class="game-list__icon">${this.renderGameIcon(game)}</span>
+                  <span>${escapeHtml(game.name)}</span>
+                  <i aria-label="${game.slug === selectedSlug ? 'Selecionado' : 'Disponível'}"></i>
+                </button>
+              `).join('')
+              : '<p class="sidebar-empty">O catálogo será carregado quando os serviços estiverem disponíveis.</p>'}
+          </nav>
+          <button class="sidebar-more" data-open-dialog="more-games" type="button"><span aria-hidden="true">▦</span> Ver mais jogos</button>
+        </div>
+
+        <nav class="sidebar-menu" aria-label="Preferências">
+          <button data-open-dialog="settings" type="button"><span aria-hidden="true">⚙</span> Configurações</button>
+          <button data-open-dialog="shortcuts" type="button"><span aria-hidden="true">⌨</span> Atalhos</button>
+          <button data-open-dialog="about" type="button"><span aria-hidden="true">ⓘ</span> Sobre o AltGrid</button>
+        </nav>
+
+        <details class="toolbar-menu sidebar-profile-menu" data-toolbar-menu>
+          <summary class="sidebar-profile" aria-label="Abrir perfil">
+            <span class="profile-avatar">${escapeHtml(this.profileDisplayName().slice(0, 1).toUpperCase())}</span>
+            <span><strong>${escapeHtml(this.profileDisplayName())}</strong>${this.renderFounderBadge() || '<small>Minha conta</small>'}</span>
+            ${uiIcon('chevron')}
+          </summary>
+          <div class="menu-popover menu-popover--up sidebar-profile-popover" aria-label="Conta e plano">
+            <div class="sidebar-profile-popover__plan">
+              <small>Plano atual</small>
+              <div><strong>${escapeHtml(this.renderPlanName())}</strong><span>${escapeHtml(this.renderSessionLimitSummary(activeSessions))}</span></div>
+            </div>
+            <button class="menu-item" data-open-dialog="my-plan" type="button">Meu plano</button>
+            <button class="menu-item" data-open-dialog="about" type="button">Minha conta</button>
+            <button class="menu-item" data-open-dialog="settings" type="button">Configurações</button>
+            <a class="menu-item" href="/admin">Painel administrativo</a>
+            <button class="menu-item menu-item--danger" id="logout-button" type="button">Sair</button>
+          </div>
+        </details>
+      </aside>
+    `
+  }
+
+  private renderGridControls(): string {
+    if (this.workspaceMode !== 'grid') {
+      return ''
+    }
+
+    const modes = this.gridLayoutService.listModes().map((item) => {
+      const selected = item.mode === this.gridMode
+      return `<button
+        class="menu-item ${selected ? 'is-selected' : ''}"
+        data-grid-mode="${item.mode}"
+        type="button"
+        role="menuitemradio"
+        aria-checked="${selected}"
+        ${item.available ? '' : 'data-grid-locked="true"'}
+      >
+        <span>${item.mode === 'auto' ? 'Auto' : item.mode}</span>
+        ${item.available ? (selected ? '<span aria-hidden="true">✓</span>' : '') : '<span class="menu-lock">PRO</span>'}
+      </button>`
+    }).join('')
+
+    return `
+      <div class="workspace-modebar">
+        <span><b aria-hidden="true">▦</b> Organizar telas</span>
+        <details class="toolbar-menu" data-toolbar-menu>
+          <summary class="tool-button" aria-label="Escolher layout">Layout <small data-grid-mode-label>${this.gridMode === 'auto' ? 'Auto' : this.gridMode}</small></summary>
+          <div class="menu-popover menu-popover--grid" role="menu" aria-label="Layouts de sessão">${modes}</div>
+        </details>
+      </div>
+    `
+  }
+
+  private configFlag(key: string): boolean {
+    const value = this.appConfig[key]
+    return value === true || value === 'true'
+  }
+
+  private configText(key: string): string | null {
+    const value = this.appConfig[key]
+    return typeof value === 'string' && value.trim() ? value.trim() : null
+  }
+
+  private readEcoModePreference(): boolean {
+    try {
+      return localStorage.getItem(ECO_MODE_STORAGE_KEY) !== 'false'
+    } catch {
+      return true
+    }
+  }
+
+  private storeEcoModePreference(enabled: boolean): void {
+    try {
+      localStorage.setItem(ECO_MODE_STORAGE_KEY, String(enabled))
+    } catch {
+      // The native state remains authoritative if local storage is unavailable.
+    }
+  }
+
+  private syncEcoMode(): Promise<void> {
+    const target = this.ecoModeSupported
+      && this.ecoModeRequested
+      && this.permissionService.canUseFeature('eco_mode')
+    const operation = this.ecoModeOperation
+      .catch(() => undefined)
+      .then(async () => {
+        if (!this.ecoModeSupported) {
+          this.ecoModeEffective = false
+          return
+        }
+
+        const confirmed = await this.sessionLauncher.setEcoMode(target)
+        this.ecoModeEffective = confirmed === target
+      })
+
+    this.ecoModeOperation = operation.catch(() => {
+      this.ecoModeEffective = false
+    })
+    return operation
+  }
+
+  private async updateEcoModePreference(
+    enabled: boolean,
+    input: HTMLInputElement,
+  ): Promise<void> {
+    const previous = this.ecoModeRequested
+    this.ecoModeRequested = enabled
+    this.storeEcoModePreference(enabled)
+    input.disabled = true
+
+    try {
+      await this.syncEcoMode()
+      if (this.ecoModeEffective !== enabled) {
+        throw new Error('Eco Mode indisponível')
+      }
+      this.showSessionAlert('')
+    } catch {
+      this.ecoModeRequested = previous
+      this.storeEcoModePreference(previous)
+      await this.syncEcoMode().catch(() => undefined)
+      this.showSessionAlert('Não foi possível alterar o Eco Mode.')
+    }
+
+    this.render()
+  }
+
+  private requiresMinimumVersion(): boolean {
+    const minimumVersion = this.configText('minimum_version')
+    return minimumVersion !== null
+      && compareVersions(APP_VERSION, minimumVersion) === -1
+  }
+
+  private serviceStatusLabel(): string {
+    switch (this.serviceStatus) {
+      case 'online':
+        return 'Online'
+      case 'offline':
+        return 'Indisponível'
+      case 'checking':
+        return 'Verificando'
+      default:
+        return 'Não verificado'
+    }
+  }
+
+  private serviceStatusDotClass(): string {
+    return this.serviceStatus === 'offline' ? 'is-offline' : ''
+  }
+
+  private renderStatusbar(): string {
+    const active = this.permissionService.getActiveSessionCount()
+    return `
+      <footer class="workspace-statusbar">
+        <span>${active} ${active === 1 ? 'sessão ativa' : 'sessões ativas'}</span>
+        <span class="workspace-statusbar__right">
+          ${this.ecoModeEffective ? '<span class="eco-mode-status"><i class="status-dot status-dot--small" aria-hidden="true"></i><strong>Eco Mode ON</strong></span>' : ''}
+          <span>Tela <strong>Original</strong></span>
+          <span><i class="status-dot status-dot--small ${this.serviceStatusDotClass()}" aria-hidden="true"></i> ${this.serviceStatusLabel()}</span>
+        </span>
+      </footer>
+    `
+  }
+
+  private gameForChatChannel(
+    channel: ChatState['channels'][number] | undefined,
+  ): PublicGame | null {
+    if (!channel?.game_id) {
+      return null
+    }
+
+    return this.games.find((game) => game.id === channel.game_id) ?? null
+  }
+
+  private renderChatChannelIcon(
+    channel: ChatState['channels'][number] | undefined,
+  ): string {
+    if (channel?.type === 'global') {
+      return uiIcon('globe')
+    }
+
+    const game = this.gameForChatChannel(channel)
+    return game ? this.renderGameIcon(game) : uiIcon('chat')
+  }
+
+  private renderChatMessage(
+    message: ChatState['messages'][number],
+    channel: ChatState['channels'][number] | undefined,
+  ): string {
+    const own = message.user_id === this.session?.user.id
+    const badge = message.plan === 'FOUNDER'
+      ? `<span class="chat-plan-badge chat-plan-badge--founder"><span class="chat-plan-badge__crest" aria-hidden="true">✦</span><span>FOUNDER</span>${message.founder_number ? `<small>#${String(message.founder_number).padStart(4, '0')}</small>` : ''}</span>`
+      : message.plan === 'PRO'
+        ? '<span class="chat-plan-badge chat-plan-badge--pro">PRO</span>'
+        : ''
+
+    return `
+      <article class="chat-message ${own ? 'is-own' : ''}" data-chat-message-channel="${escapeHtml(message.channel_id)}">
+        <span class="chat-message__avatar" title="${escapeHtml(channel?.name ?? 'Chat AltGrid')}">${this.renderChatChannelIcon(channel)}</span>
+        <div class="chat-message__bubble">
+          <header>
+            <strong>${escapeHtml(message.display_name || 'Jogador')}</strong>
+            ${badge}
+            <time>${escapeHtml(new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(new Date(message.created_at)))}</time>
+            ${own ? '' : `<details class="chat-message__menu">
+              <summary aria-label="Opções da mensagem">•••</summary>
+              <div>
+                <button data-report-chat-message="${escapeHtml(message.id)}" type="button">Denunciar</button>
+                <button data-block-chat-user="${escapeHtml(message.user_id)}" type="button">Bloquear localmente</button>
+              </div>
+            </details>`}
+          </header>
+          <p>${escapeHtml(message.message)}</p>
+        </div>
+      </article>
+    `
+  }
+
+  private renderChat(): string {
+    if (!this.chatService) {
+      return ''
+    }
+
+    const state = this.chatService.getState()
+    const currentChannel = state.channels.find(
+      (channel) => channel.id === state.selectedChannelId,
+    )
+
+    if (!state.open) {
+      return ''
+    }
+
+    return `
+      <aside class="chat-panel" aria-label="Chat AltGrid">
+        <header class="chat-panel__header">
+          <div class="chat-panel__identity">
+            <span class="chat-panel__game-icon">${this.renderChatChannelIcon(currentChannel)}</span>
+            <div><strong>Chat</strong><small>${escapeHtml(currentChannel?.name ?? 'AltGrid')}</small></div>
+          </div>
+          <button data-close-chat type="button" aria-label="Fechar chat">×</button>
+        </header>
+        <nav class="chat-channels" aria-label="Canais do chat">
+          ${state.channels.map((channel) => {
+            const unread = state.unread[channel.id] ?? 0
+            return `
+              <button class="${channel.id === state.selectedChannelId ? 'is-active' : ''}" data-chat-channel="${escapeHtml(channel.id)}" data-chat-channel-type="${escapeHtml(channel.type)}" type="button">
+                <span class="chat-channel__icon">${this.renderChatChannelIcon(channel)}</span>
+                <span>${escapeHtml(channel.name)}</span>
+                ${unread ? `<b class="chat-channel__badge">${Math.min(unread, 99)}</b>` : ''}
+              </button>
+            `
+          }).join('')}
+        </nav>
+        <div class="chat-messages" data-chat-messages aria-live="polite">
+          ${state.hasMore ? `<button class="chat-load-more" data-chat-load-more type="button" ${state.loadingMore ? 'disabled' : ''}>${state.loadingMore ? 'Carregando…' : 'Mensagens anteriores'}</button>` : ''}
+          ${state.loading
+            ? '<span class="chat-loading"><i class="spinner spinner--green"></i> Carregando conversa…</span>'
+            : state.messages.length > 0
+              ? state.messages.map((message) => this.renderChatMessage(message, currentChannel)).join('')
+              : '<p class="chat-empty">Seja a primeira pessoa a conversar por aqui.</p>'}
+        </div>
+        ${state.banned || state.mutedUntil
+          ? `<p class="chat-moderation">${state.banned ? 'Seu acesso ao chat está bloqueado.' : `Silenciado até ${escapeHtml(formatDate(state.mutedUntil))}.`} ${escapeHtml(state.moderationReason ?? '')}</p>`
+          : ''}
+        ${state.error ? `<p class="chat-error" role="alert">${escapeHtml(state.error)}</p>` : ''}
+        <form class="chat-composer" id="chat-form">
+          <textarea name="message" maxlength="500" rows="2" placeholder="Escreva uma mensagem…" aria-label="Mensagem" ${state.banned ? 'disabled' : ''}></textarea>
+          <button type="submit" aria-label="Enviar mensagem" ${state.sending || state.banned ? 'disabled' : ''}>➤</button>
+        </form>
+      </aside>
+    `
+  }
+
+  private async saveChatNickname(form: HTMLFormElement): Promise<void> {
+    if (!this.backendApi?.updateProfile) return
+    const field = form.elements.namedItem('display_name')
+    if (!(field instanceof HTMLInputElement)) return
+
+    this.chatNicknameSaving = true
+    this.dialogError = null
+    this.render()
+    try {
+      const response = await this.backendApi.updateProfile({ display_name: field.value })
+      if (this.me) this.me = { ...this.me, profile: response.profile }
+      this.activeDialog = null
+      await this.chatService?.open(this.focusedGameId())
+    } catch (error) {
+      this.dialogError = error instanceof Error ? error.message : 'Não foi possível salvar o nick.'
+    } finally {
+      this.chatNicknameSaving = false
+      this.render()
+    }
+  }
+
+  private renderAuthenticated(): string {
+    const userId = escapeHtml(this.session?.user.id ?? '')
+    const activeAccounts = this.getActiveAccounts()
+    const chatOpen = Boolean(this.chatService?.getState().open)
+
+    return `
+      <section class="session-shell ${chatOpen ? 'has-chat-open' : ''} ${this.sidebarCollapsed ? 'is-sidebar-collapsed' : ''}" data-authenticated-shell data-user-id="${userId}" aria-labelledby="accounts-title">
+        <h1 class="visually-hidden" id="accounts-title">Minhas contas e sessões</h1>
+        ${this.renderSidebar()}
+        <div class="workspace-column">
+          <div class="backend-region" data-backend-region>${this.renderBackendStatus()}</div>
+          <div data-grid-controls-region>${this.renderGridControls()}</div>
+          <div class="session-workspace" data-session-workspace>
+            <div class="session-grid" data-session-grid aria-live="polite">
+              ${activeAccounts.map((account) => this.renderSessionCard(account)).join('')}
+            </div>
+            <nav class="session-pagination" data-session-pagination aria-label="Páginas da grade" hidden>
+              <button data-grid-page="previous" type="button" aria-label="Página anterior">‹</button>
+              <span data-grid-page-status aria-live="polite">1/1</span>
+              <button data-grid-page="next" type="button" aria-label="Próxima página">›</button>
+            </nav>
+            <div class="session-empty" data-session-empty ${activeAccounts.length > 0 ? 'hidden' : ''}>
+              <span aria-hidden="true">▦</span>
+              <p><strong>Nenhuma conta aberta</strong><small>Adicione uma conta para começar.</small></p>
+              <button class="button button--primary" data-add-account type="button">＋ Adicionar conta</button>
+            </div>
+          </div>
+          <div data-statusbar-region>${this.renderStatusbar()}</div>
+        </div>
+        <div data-chat-region>${this.renderChat()}</div>
+        <div class="form-alert" id="session-alert" role="alert" aria-live="polite"></div>
+        <button class="screens-only-exit" data-exit-screens-only type="button">Sair</button>
+      </section>
+    `
+  }
+
+  private focusedGameId(): string | null {
+    const account = this.configuredAccounts.find(
+      (candidate) => candidate.id === this.focusedAccountId,
+    )
+
+    if (!account || account.gameSlug === CUSTOM_GAME_SLUG) {
+      return null
+    }
+
+    return this.games.find((game) => game.slug === account.gameSlug)?.id ?? null
+  }
+
+  private getActiveAccounts(): ConfiguredAccount[] {
+    const activeIds = new Set(this.permissionService.getActiveSessionIds())
+    return this.configuredAccounts.filter((account) => activeIds.has(account.id))
+  }
+
+  private gameNameFor(account: ConfiguredAccount): string {
+    if (account.gameSlug === CUSTOM_GAME_SLUG) {
+      return 'URL personalizada'
+    }
+
+    return this.games.find((game) => game.slug === account.gameSlug)?.name
+      ?? account.gameSlug
+  }
+
+  private renderBackendStatus(): string {
+    if (this.backendLoadStatus === 'loading') {
+      return `
+        <div class="data-notice" role="status" aria-live="polite">
+          <span class="spinner spinner--green" aria-hidden="true"></span>
+          Carregando plano e jogos…
+        </div>
+      `
+    }
+
+    const notices: string[] = []
+    const minimumVersion = this.configText('minimum_version')
+
+    if (this.configFlag('maintenance')) {
+      notices.push(
+        '<div class="data-notice data-notice--warning" role="status">Serviços em manutenção. Alguns recursos online podem ficar temporariamente indisponíveis.</div>',
+      )
+    }
+
+    if (minimumVersion && this.requiresMinimumVersion()) {
+      notices.push(
+        `<div class="data-notice data-notice--warning" role="status">Atualização necessária: instale a versão ${escapeHtml(minimumVersion)} ou superior.</div>`,
+      )
+    }
+
+    if (this.backendLoadError) {
+      notices.push(`
+        <div class="data-notice data-notice--warning" role="status">
+          <span>${escapeHtml(this.backendLoadError)}</span>
+          <button class="text-button text-button--strong" data-retry-backend type="button">
+            Tentar novamente
+          </button>
+        </div>
+      `)
+      return notices.join('')
+    }
+
+    if (this.serviceStatus === 'offline') {
+      notices.push(`
+        <div class="data-notice data-notice--warning" role="status">
+          <span>Serviço AltGrid indisponível no momento.</span>
+          <button class="text-button text-button--strong" data-retry-backend type="button">Tentar novamente</button>
+        </div>
+      `)
+    }
+
+    if (this.offlineLicenseSource === 'cache') {
+      notices.push('<div class="data-notice" role="status">Modo offline · licença assinada válida.</div>')
+    } else if (this.offlineLicenseSource === 'safe_free') {
+      notices.push('<div class="data-notice data-notice--warning" role="status">Não foi possível verificar sua licença. Conecte-se à internet para atualizar.</div>')
+    }
+
+    return notices.join('')
+  }
+
+  private renderSessionCard(account: ConfiguredAccount): string {
+    const muted = this.mutedAccountIds.has(account.id)
+
+    return `
+      <article class="session-card" data-session-card data-account-id="${escapeHtml(account.id)}">
+        <header class="session-card__header">
+          <div class="session-card__identity">
+            <strong data-session-name>${escapeHtml(account.displayName)}</strong>
+            <span data-session-game>${escapeHtml(this.gameNameFor(account))}</span>
+          </div>
+          <details class="session-menu" data-session-menu>
+            <summary class="session-menu__trigger" aria-label="Opções de ${escapeHtml(account.displayName)}">⋯</summary>
+            <div class="menu-popover" role="menu">
+              <button class="menu-item" data-rename-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Renomear</button>
+              <button class="menu-item" data-reload-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Recarregar</button>
+              <button class="menu-item" data-maximize-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Maximizar</button>
+              <button class="menu-item" data-toggle-session-mute data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">${muted ? 'Ativar som' : 'Silenciar'}</button>
+              <button class="menu-item" data-close-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Fechar</button>
+              <button class="menu-item menu-item--danger" data-clear-session-data data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Limpar dados</button>
+              <button class="menu-item menu-item--danger" data-delete-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Excluir configuração</button>
+            </div>
+          </details>
+        </header>
+        <div class="session-surface" data-session-surface-id="${escapeHtml(account.id)}" data-focus-account data-account-id="${escapeHtml(account.id)}" tabindex="0">
+          ${this.renderSessionSurfaceContent(account)}
+        </div>
+      </article>
+    `
+  }
+
+  private renderSavedAccounts(): string {
+    const inactiveAccounts = this.configuredAccounts.filter(
+      (account) => !this.permissionService.isSessionActive(account.id),
+    )
+
+    if (inactiveAccounts.length === 0) {
+      return ''
+    }
+
+    return `
+      <div class="saved-accounts">
+        <span class="saved-accounts__label">Contas salvas</span>
+        <div class="saved-accounts__list">
+          ${inactiveAccounts.map((account) => `
+            <div class="saved-account" data-saved-account data-account-id="${escapeHtml(account.id)}">
+              <span class="saved-account__name" title="${escapeHtml(account.displayName)} · ${escapeHtml(this.gameNameFor(account))}">
+                ${escapeHtml(account.displayName)}
+                <small>${escapeHtml(this.gameNameFor(account))}</small>
+              </span>
+              <button class="saved-account__open" data-open-account data-account-id="${escapeHtml(account.id)}" type="button">Abrir</button>
+              <details class="saved-account__menu" data-session-menu>
+                <summary aria-label="Opções de ${escapeHtml(account.displayName)}">⋯</summary>
+                <div class="menu-popover menu-popover--up" role="menu">
+                  <button class="menu-item" data-rename-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Renomear</button>
+                  <button class="menu-item menu-item--danger" data-clear-session-data data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Limpar dados</button>
+                  <button class="menu-item menu-item--danger" data-delete-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Excluir configuração</button>
+                </div>
+              </details>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `
+  }
+
+  private renderSessionSurfaceContent(account: ConfiguredAccount): string {
+    const issue = this.sessionIssues.get(account.id)
+
+    if (issue) {
+      return `
+        <div class="session-surface__issue" role="status">
+          <span aria-hidden="true">!</span>
+          <strong>${escapeHtml(issue)}</strong>
+          <button class="button button--secondary" data-reload-account data-account-id="${escapeHtml(account.id)}" type="button">Recarregar</button>
+        </div>
+      `
+    }
+
+    return `
+      <div class="session-surface__placeholder" aria-hidden="true">
+        <span>▦</span>
+        <small>Tela ativa</small>
+      </div>
+    `
+  }
+
+  private ensureSessionSurfaceManager(): void {
+    if (this.sessionSurfaceManager) {
+      return
+    }
+
+    const grid = this.root.querySelector<HTMLElement>('[data-session-grid]')
+
+    if (!grid) {
+      return
+    }
+
+    const manager = new SessionSurfaceManager(grid)
+    grid.querySelectorAll<HTMLElement>('[data-session-card]').forEach((card) => {
+      const accountId = card.dataset.accountId
+      const surface = card.querySelector<HTMLElement>('[data-session-surface-id]')
+
+      if (accountId && surface) {
+        manager.adopt(accountId, { card, surface })
+      }
+    })
+    this.sessionSurfaceManager = manager
+  }
+
+  private reconcileSessionCards(shell: HTMLElement): void {
+    const grid = shell.querySelector<HTMLElement>('[data-session-grid]')
+
+    if (!grid) {
+      return
+    }
+
+    const activeAccounts = this.getActiveAccounts()
+    const activeIds = new Set(activeAccounts.map((account) => account.id))
+
+    this.sessionSurfaceManager?.list().forEach((record) => {
+      if (!activeIds.has(record.accountId)) {
+        this.sessionSurfaceManager?.remove(record.accountId)
+      }
+    })
+
+    activeAccounts.forEach((account) => {
+      let card = [...grid.querySelectorAll<HTMLElement>('[data-session-card]')]
+        .find((candidate) => candidate.dataset.accountId === account.id)
+
+      if (!card) {
+        const template = document.createElement('template')
+        template.innerHTML = this.renderSessionCard(account).trim()
+        card = template.content.firstElementChild as HTMLElement | null ?? undefined
+
+        if (card) {
+          const surface = card.querySelector<HTMLElement>('[data-session-surface-id]')
+
+          if (surface) {
+            this.sessionSurfaceManager?.adopt(account.id, { card, surface })
+          } else {
+            grid.append(card)
+          }
+        }
+      }
+
+      if (card) {
+        const name = card.querySelector<HTMLElement>('[data-session-name]')
+        const game = card.querySelector<HTMLElement>('[data-session-game]')
+        const surface = card.querySelector<HTMLElement>('[data-session-surface-id]')
+        const muteButton = card.querySelector<HTMLButtonElement>('[data-toggle-session-mute]')
+
+        if (name) {
+          name.textContent = account.displayName
+        }
+        if (game) {
+          game.textContent = this.gameNameFor(account)
+        }
+        if (surface) {
+          surface.innerHTML = this.renderSessionSurfaceContent(account)
+          surface.classList.toggle('has-session-issue', this.sessionIssues.has(account.id))
+        }
+        if (muteButton) {
+          muteButton.textContent = this.mutedAccountIds.has(account.id)
+            ? 'Ativar som'
+            : 'Silenciar'
+        }
+        const menuTrigger = card.querySelector<HTMLElement>('.session-menu__trigger')
+        menuTrigger?.setAttribute('aria-label', `Opções de ${account.displayName}`)
+      }
+    })
+
+    const empty = shell.querySelector<HTMLElement>('[data-session-empty]')
+    empty?.toggleAttribute('hidden', activeAccounts.length > 0)
+
+    if (
+      this.maximizedAccountId
+      && !activeIds.has(this.maximizedAccountId)
+    ) {
+      this.maximizedAccountId = null
+    }
+  }
+
+  private ensureWorkspaceObserver(): void {
+    if (this.workspaceResizeObserver || typeof ResizeObserver === 'undefined') {
+      return
+    }
+
+    const workspace = this.root.querySelector<HTMLElement>('[data-session-workspace]')
+
+    if (!workspace) {
+      return
+    }
+
+    this.workspaceResizeObserver = new ResizeObserver(() => {
+      this.scheduleWorkspaceLayout()
+    })
+    this.workspaceResizeObserver.observe(workspace)
+  }
+
+  private disconnectWorkspaceObserver(): void {
+    this.workspaceResizeObserver?.disconnect()
+    this.workspaceResizeObserver = null
+
+    if (this.workspaceResizeFrame !== null) {
+      if (typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(this.workspaceResizeFrame)
+      }
+      this.workspaceResizeFrame = null
+    }
+
+    this.lastLayoutSignature = ''
+  }
+
+  private scheduleWorkspaceLayout(): void {
+    if (this.workspaceResizeFrame !== null || this.currentView !== 'authenticated') {
+      return
+    }
+
+    if (typeof requestAnimationFrame === 'function') {
+      this.workspaceResizeFrame = requestAnimationFrame(() => {
+        this.workspaceResizeFrame = null
+        this.applyWorkspacePresentation()
+      })
+      return
+    }
+
+    queueMicrotask(() => this.applyWorkspacePresentation())
+  }
+
+  private enqueueSessionLayout(layout: GridLayout): Promise<void> {
+    // Native layout calls may be asynchronous. Serializing them prevents an
+    // older resize from completing after a newer one and restoring stale bounds.
+    const operation = this.sessionLayoutQueue
+      .catch(() => undefined)
+      .then(() => Promise.resolve().then(() => this.sessionLauncher.applyLayout(layout)))
+
+    this.sessionLayoutQueue = operation.catch(() => undefined)
+    return operation
+  }
+
+  private applyWorkspacePresentation(): void {
+    if (this.sessionLayoutSuspended) {
+      return
+    }
+
+    const frame = this.root.querySelector<HTMLElement>('.app-frame')
+    const shell = this.root.querySelector<HTMLElement>('[data-authenticated-shell]')
+    const workspace = shell?.querySelector<HTMLElement>('[data-session-workspace]')
+    const grid = shell?.querySelector<HTMLElement>('[data-session-grid]')
+
+    if (!frame || !shell || !workspace || !grid) {
+      return
+    }
+
+    frame.classList.toggle('is-screens-only', this.screensOnly)
+    shell.classList.toggle('is-screens-only', this.screensOnly)
+    shell.classList.toggle('is-sidebar-collapsed', this.sidebarCollapsed)
+    shell.classList.toggle('has-maximized-session', Boolean(this.maximizedAccountId))
+    shell.classList.toggle(
+      'is-grid-mode',
+      this.workspaceMode === 'grid' && !this.maximizedAccountId,
+    )
+    shell.dataset.requestedGrid = this.gridMode
+
+    const activeIds = this.getActiveAccounts().map((account) => account.id)
+    const overlayMenuOpen = Boolean(this.root.querySelector(
+      'details[data-session-menu][open], details[data-toolbar-menu][open]',
+    ))
+    const suppressNativeSessions = this.activeDialog !== null || overlayMenuOpen
+    const focusedActiveId = this.focusedAccountId
+      && activeIds.includes(this.focusedAccountId)
+        ? this.focusedAccountId
+        : activeIds[0] ?? null
+    const layoutIds = this.maximizedAccountId
+      ? [this.maximizedAccountId]
+      : this.workspaceMode === 'account'
+        ? focusedActiveId ? [focusedActiveId] : []
+        : activeIds
+    const rectangle = workspace.getBoundingClientRect()
+    const width = rectangle.width > 0 ? rectangle.width : 1280
+    const height = rectangle.height > 0 ? rectangle.height : 720
+    let resolution = this.gridLayoutService.resolve({
+      area: { height, width, x: rectangle.x, y: rectangle.y },
+      gap: this.screensOnly ? 4 : 10,
+      mode: this.maximizedAccountId || this.workspaceMode === 'account'
+        ? '1x1'
+        : this.gridMode,
+      pageIndex: this.maximizedAccountId ? 0 : this.gridPageIndex,
+      previousAutoMode: this.previousAutoMode,
+      sessionIds: layoutIds,
+    })
+
+    if (!resolution.ok) {
+      this.gridMode = 'auto'
+      resolution = this.gridLayoutService.resolve({
+        area: { height, width, x: rectangle.x, y: rectangle.y },
+        gap: this.screensOnly ? 4 : 10,
+        mode: this.maximizedAccountId || this.workspaceMode === 'account'
+          ? '1x1'
+          : 'auto',
+        pageIndex: this.maximizedAccountId ? 0 : this.gridPageIndex,
+        previousAutoMode: this.previousAutoMode,
+        sessionIds: layoutIds,
+      })
+    }
+
+    if (!resolution.ok) {
+      return
+    }
+
+    let layout = resolution.layout
+    const viewportRows = layout.rows
+    const scrollingGrid = this.workspaceMode === 'grid' && !this.maximizedAccountId
+
+    if (scrollingGrid && layout.pageCount > 1) {
+      const rows = Math.max(viewportRows, Math.ceil(layoutIds.length / layout.columns))
+      const fallbackBounds = layout.slots[0]?.bounds ?? {
+        height: 1,
+        width: 1,
+        x: rectangle.x,
+        y: rectangle.y,
+      }
+      layout = {
+        ...layout,
+        capacity: layout.columns * rows,
+        overflowSessionIds: [],
+        pageCount: 1,
+        pageIndex: 0,
+        rows,
+        slots: layoutIds.map((sessionId, index) => ({
+          bounds: fallbackBounds,
+          column: index % layout.columns,
+          index,
+          row: Math.floor(index / layout.columns),
+          sessionId,
+        })),
+      }
+    }
+
+    this.gridPageIndex = layout.pageIndex
+    this.resolvedGridMode = layout.resolvedMode
+    if (this.gridMode === 'auto' && !this.maximizedAccountId) {
+      this.previousAutoMode = layout.resolvedMode
+    }
+
+    const rows = layout.rows
+    const visibleIds = layout.slots.map((slot) => slot.sessionId)
+    grid.style.setProperty('--grid-columns', String(layout.columns))
+    grid.style.setProperty('--grid-rows', String(rows))
+    if (scrollingGrid) {
+      const tileWidth = Math.max(
+        1,
+        (width - (layout.columns - 1) * (this.screensOnly ? 4 : 10)) / layout.columns,
+      )
+      const preferredRowHeight = Math.round(tileWidth * 9 / 16)
+        + (this.screensOnly ? 0 : 36)
+      const rowHeight = rows === 1
+        ? Math.max(1, height - (this.screensOnly ? 0 : 20))
+        : Math.min(height, Math.max(260, preferredRowHeight))
+      grid.style.setProperty('--grid-row-height', `${rowHeight}px`)
+    } else {
+      grid.style.setProperty('--grid-row-height', '')
+    }
+    grid.dataset.resolvedGrid = layout.resolvedMode
+    this.sessionSurfaceManager?.applyPresentation({
+      layout: `grid-${layout.resolvedMode}`,
+      maximizedAccountId: this.maximizedAccountId,
+      screensOnly: this.screensOnly,
+      visibleAccountIds: visibleIds,
+    })
+
+    const pagination = shell.querySelector<HTMLElement>('[data-session-pagination]')
+    const pageStatus = pagination?.querySelector<HTMLElement>('[data-grid-page-status]')
+    const previousPage = pagination?.querySelector<HTMLButtonElement>('[data-grid-page="previous"]')
+    const nextPage = pagination?.querySelector<HTMLButtonElement>('[data-grid-page="next"]')
+    const paginationVisible = !this.maximizedAccountId
+      && !this.screensOnly
+      && layout.pageCount > 1
+
+    pagination?.toggleAttribute('hidden', !paginationVisible)
+    if (pageStatus) {
+      pageStatus.textContent = `${layout.pageIndex + 1}/${layout.pageCount}`
+    }
+    if (previousPage) {
+      previousPage.disabled = layout.pageIndex === 0
+    }
+    if (nextPage) {
+      nextPage.disabled = layout.pageIndex >= layout.pageCount - 1
+    }
+
+    this.root.querySelectorAll<HTMLButtonElement>('button[data-grid-mode]').forEach((button) => {
+      const selected = button.dataset.gridMode === this.gridMode
+      button.classList.toggle('is-selected', selected)
+      button.setAttribute('aria-checked', String(selected))
+    })
+    const layoutLabel = this.root.querySelector<HTMLElement>('[data-grid-mode-label]')
+    if (layoutLabel) {
+      layoutLabel.textContent = this.gridMode === 'auto' ? 'Auto' : this.gridMode
+    }
+
+    const screensOnlyButton = this.root.querySelector<HTMLButtonElement>(
+      '[data-toggle-screens-only]',
+    )
+    screensOnlyButton?.classList.toggle('is-active', this.screensOnly)
+    screensOnlyButton?.setAttribute('aria-pressed', String(this.screensOnly))
+
+    // Measure the actual surface rectangles after CSS layout. Native WebViews
+    // receive content bounds—not the card bounds—so headers and gaps stay clear.
+    const slots = (suppressNativeSessions ? [] : layout.slots).flatMap((slot) => {
+      const surface = this.sessionSurfaceManager?.get(slot.sessionId)?.surface
+
+      if (!surface) {
+        return []
+      }
+
+      const bounds = surface.getBoundingClientRect()
+      if (scrollingGrid) {
+        const fullyInsideViewport = bounds.x >= rectangle.x - 1
+          && bounds.y >= rectangle.y - 1
+          && bounds.x + bounds.width <= rectangle.x + rectangle.width + 1
+          && bounds.y + bounds.height <= rectangle.y + rectangle.height + 1
+
+        // Native WebContentsViews are direct window children and cannot be
+        // clipped by DOM overflow. Keep offscreen rows hidden, then reuse and
+        // reposition the same views as their cards enter the scroll viewport.
+        if (!fullyInsideViewport) {
+          return []
+        }
+      }
+      return [{
+        bounds: {
+          height: bounds.height,
+          width: bounds.width,
+          x: bounds.x,
+          y: bounds.y,
+        },
+        column: slot.column,
+        index: slot.index,
+        row: slot.row,
+        sessionId: slot.sessionId,
+      }]
+    })
+    const nativeVisibleIds = slots.map((slot) => slot.sessionId)
+    const surfaceLayout: GridLayout = {
+      ...layout,
+      overflowSessionIds: suppressNativeSessions
+        ? activeIds
+        : activeIds.filter((accountId) => !nativeVisibleIds.includes(accountId)),
+      rows,
+      slots,
+    }
+
+    const signature = JSON.stringify({
+      bounds: surfaceLayout.slots.map((slot) => slot.bounds),
+      ids: suppressNativeSessions ? [] : nativeVisibleIds,
+      page: layout.pageIndex,
+      overflow: surfaceLayout.overflowSessionIds,
+      maximized: this.maximizedAccountId,
+      resolved: layout.resolvedMode,
+      screensOnly: this.screensOnly,
+      suppressedByOverlay: suppressNativeSessions,
+    })
+
+    if (activeIds.length === 0) {
+      // There are no native views to position. Session close/cleanup owns its
+      // explicit hide operation, so an empty workspace must not issue IPC.
+      this.lastLayoutSignature = signature
+      return
+    }
+
+    if (signature !== this.lastLayoutSignature && rectangle.width > 0 && rectangle.height > 0) {
+      this.lastLayoutSignature = signature
+      void this.enqueueSessionLayout(surfaceLayout)
+        .catch(() => {
+          if (this.lastLayoutSignature === signature) {
+            this.lastLayoutSignature = ''
+          }
+          this.showSessionAlert('Não foi possível reorganizar as telas.')
+        })
+    }
+  }
+
+  private renderDialog(): string {
+    if (!this.activeDialog) {
+      return ''
+    }
+
+    if (this.activeDialog === 'chat-nickname') {
+      return `
+        <dialog class="modal modal--chat-nickname" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="modal__header">
+            <p class="eyebrow">Primeiro acesso ao chat</p>
+            <h2 id="dialog-title">Como quer ser chamado?</h2>
+            <p>Escolha um nick para aparecer nas suas mensagens.</p>
+          </div>
+          <form class="chat-nickname-form" data-chat-nickname-form>
+            <label for="chat-nickname">Nick</label>
+            <input id="chat-nickname" name="display_name" minlength="2" maxlength="24" autocomplete="nickname" placeholder="Seu nick" required />
+            <small>Use de 2 a 24 caracteres.</small>
+            <div class="modal__actions">
+              <button class="button button--primary" type="submit" ${this.chatNicknameSaving ? 'disabled' : ''}>${this.chatNicknameSaving ? 'Salvando…' : 'Entrar no chat'}</button>
+            </div>
+          </form>
+        </dialog>
+      `
+    }
+
+    const utilityDialog = this.renderUtilityDialog()
+
+    if (utilityDialog !== null) {
+      return utilityDialog
+    }
+
+    if (this.activeDialog === 'add-account') {
+      const availableGames = this.games.filter(
+        (game) => game.slug !== CUSTOM_GAME_SLUG,
+      )
+      const gameChoices = availableGames.map((game, index) => {
+        const iconUrl = normalizeSafeGameUrl(game.icon_url)
+
+        return `
+          <label class="game-choice">
+            <input
+              name="gameSlug"
+              type="radio"
+              value="${escapeHtml(game.slug)}"
+              ${index === 0 ? 'checked' : ''}
+            />
+            <span class="game-choice__icon" aria-hidden="true">
+              ${iconUrl
+                ? `<img src="${escapeHtml(iconUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+                : escapeHtml(game.name.slice(0, 1).toLocaleUpperCase())}
+            </span>
+            <span>${escapeHtml(game.name)}</span>
+          </label>
+        `
+      }).join('')
+      const referralActions = availableGames.flatMap((game, index) => {
+        const referralUrl = normalizeSafeGameUrl(game.developer_referral_url)
+
+        if (!referralUrl) {
+          return []
+        }
+
+        return [`
+          <aside
+            class="game-referral"
+            data-game-referral="${escapeHtml(game.slug)}"
+            ${index === 0 ? '' : 'hidden'}
+          >
+            <div>
+              <strong>Ainda não possui conta?</strong>
+              <small>Link de indicação do desenvolvedor</small>
+            </div>
+            <button
+              class="button button--secondary button--compact"
+              data-open-developer-referral
+              data-game-slug="${escapeHtml(game.slug)}"
+              type="button"
+            >Criar conta</button>
+          </aside>
+        `]
+      }).join('')
+
+      return `
+        <dialog class="modal modal--game-picker" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="modal__header">
+            <p class="eyebrow">Adicionar conta</p>
+            <h2 id="dialog-title">Escolha um jogo</h2>
+          </div>
+          ${this.renderDialogError()}
+          <form id="add-account-form" method="dialog">
+            <div class="field">
+              <label for="account-name">Nome da conta</label>
+              <input id="account-name" name="displayName" maxlength="80" required />
+            </div>
+            <fieldset class="game-picker">
+              <legend>Jogo</legend>
+              <div class="game-choice-list">
+                ${gameChoices}
+                <label class="game-choice game-choice--custom">
+                  <input
+                    name="gameSlug"
+                    type="radio"
+                    value="${CUSTOM_GAME_SLUG}"
+                    ${availableGames.length === 0 ? 'checked' : ''}
+                  />
+                  <span class="game-choice__icon" aria-hidden="true">↗</span>
+                  <span>URL personalizada</span>
+                </label>
+              </div>
+            </fieldset>
+            ${availableGames.length === 0
+              ? `<p class="modal__note">${escapeHtml(
+                  this.gameCatalogError
+                    ? 'Os jogos remotos estão indisponíveis. A URL personalizada continua disponível.'
+                    : 'Nenhum jogo remoto está disponível. Você ainda pode usar uma URL personalizada.',
+                )}</p>`
+              : ''}
+            <div
+              class="field custom-game-url"
+              data-custom-game-url
+              ${availableGames.length > 0 ? 'hidden' : ''}
+            >
+              <label for="custom-launch-url">URL do jogo</label>
+              <input
+                id="custom-launch-url"
+                name="customLaunchUrl"
+                type="url"
+                inputmode="url"
+                autocomplete="url"
+                maxlength="2048"
+                placeholder="https://jogo.exemplo.com"
+                ${availableGames.length === 0 ? 'required' : ''}
+              />
+              <small>Use HTTPS. HTTP é aceito somente em localhost.</small>
+            </div>
+            <div data-game-referral-region>${referralActions}</div>
+            <div class="modal__actions">
+              <button class="button button--secondary" data-close-dialog type="button">Cancelar</button>
+              <button class="button button--primary" type="submit">
+                Salvar conta
+              </button>
+            </div>
+          </form>
+        </dialog>
+      `
+    }
+
+    if (this.activeDialog === 'rename-account') {
+      const account = this.configuredAccounts.find(
+        (candidate) => candidate.id === this.dialogAccountId,
+      )
+
+      if (!account) {
+        return ''
+      }
+
+      return `
+        <dialog class="modal" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="modal__header">
+            <p class="eyebrow">Conta salva</p>
+            <h2 id="dialog-title">Renomear conta</h2>
+          </div>
+          ${this.renderDialogError()}
+          <form id="rename-account-form" method="dialog">
+            <div class="field">
+              <label for="rename-account-name">Nome da conta</label>
+              <input id="rename-account-name" name="displayName" maxlength="80" value="${escapeHtml(account.displayName)}" required />
+            </div>
+            <div class="modal__actions">
+              <button class="button button--secondary" data-close-dialog type="button">Cancelar</button>
+              <button class="button button--primary" type="submit">Salvar</button>
+            </div>
+          </form>
+        </dialog>
+      `
+    }
+
+    if (this.activeDialog === 'delete-account') {
+      const account = this.configuredAccounts.find(
+        (candidate) => candidate.id === this.dialogAccountId,
+      )
+
+      if (!account) {
+        return ''
+      }
+
+      return `
+        <dialog class="modal" id="app-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-description">
+          <div class="modal__icon modal__icon--danger" aria-hidden="true">!</div>
+          <div class="modal__header">
+            <h2 id="dialog-title">Excluir configuração?</h2>
+            <p id="dialog-description">A configuração “${escapeHtml(account.displayName)}” será removida deste dispositivo.</p>
+            <p>O plano nunca exclui contas automaticamente.</p>
+          </div>
+          ${this.renderDialogError()}
+          <div class="modal__actions">
+            <button class="button button--secondary" data-close-dialog type="button">Cancelar</button>
+            <button class="button button--danger" data-confirm-delete-account type="button">Excluir</button>
+          </div>
+        </dialog>
+      `
+    }
+
+    if (this.activeDialog === 'free-limit') {
+      const plan = this.permissionService.getCurrentPlan()
+      const account = this.configuredAccounts.find(
+        (candidate) => candidate.id === this.dialogAccountId,
+      )
+      const limit = this.permissionService.getAccountLimit(account?.gameSlug)
+      const free = plan === 'FREE'
+      const huntera = free && account?.gameSlug.toLocaleLowerCase() === 'huntera'
+
+      return `
+        <dialog class="modal" id="app-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-description">
+          <div class="modal__icon" aria-hidden="true">!</div>
+          <div class="modal__header">
+            <h2 id="dialog-title">${free ? 'Limite da versão gratuita' : 'Limite de sessões simultâneas'}</h2>
+            <p id="dialog-description">
+              ${free
+                ? huntera
+                  ? `O plano FREE permite até ${limit} contas simultâneas ao abrir Huntera.`
+                  : `O plano FREE permite até ${limit} contas simultâneas nos demais jogos.`
+                : `O plano ${plan} permite até ${limit} contas simultâneas.`}
+            </p>
+            <p>Suas contas e configurações continuam salvas.</p>
+          </div>
+          <div class="modal__actions">
+            ${
+              free
+                ? '<button class="button button--primary" data-show-plans type="button">Conhecer PRO</button>'
+                : ''
+            }
+            <button class="button button--secondary" data-close-dialog type="button">Agora não</button>
+          </div>
+        </dialog>
+      `
+    }
+
+    const currentPlan = this.permissionService.getCurrentPlan()
+    const currentLimit = this.permissionService.getAccountLimit()
+    const productFor = (plan: 'FOUNDER' | 'PRO'): PublicProduct | null =>
+      this.products.find((product) => product.code === `${plan}_LIFETIME`) ?? null
+
+    return `
+      <dialog class="modal modal--plans" id="app-dialog" aria-labelledby="dialog-title">
+        <div class="modal__header">
+          <p class="eyebrow">Escolha seu plano</p>
+          <h2 id="dialog-title">Planos AltGrid</h2>
+          <p>Mais sessões, a mesma privacidade local.</p>
+        </div>
+        <div class="plan-list">
+          ${this.renderPlanOption('FREE', 'Huntera: 3 · demais jogos: 2', currentPlan, null)}
+          ${this.renderPlanOption(
+            'PRO',
+            currentPlan === 'PRO' ? `Até ${currentLimit} contas` : 'Até o limite configurado',
+            currentPlan,
+            productFor('PRO'),
+          )}
+          ${this.renderPlanOption(
+            'FOUNDER',
+            currentPlan === 'FOUNDER'
+              ? `Até ${currentLimit} contas · benefícios especiais`
+              : 'Benefícios especiais',
+            currentPlan,
+            productFor('FOUNDER'),
+          )}
+        </div>
+        ${this.products.length === 0 ? '<p class="modal__note">Os preços estarão disponíveis quando os serviços AltGrid reconectarem.</p>' : ''}
+        <div class="modal__actions modal__actions--end">
+          <button class="button button--secondary" data-close-dialog type="button">Fechar</button>
+        </div>
+      </dialog>
+    `
+  }
+
+  private renderUtilityDialog(): string | null {
+    if (this.activeDialog === 'update') {
+      const state = this.updateState
+      const version = state.version
+        ? `AltGrid ${escapeHtml(state.version)}`
+        : 'AltGrid'
+      const notes = state.releaseNotes?.split(/\r?\n/)
+        .map((line) => line.replace(/^[-*•]\s*/, '').trim())
+        .filter(Boolean)
+        .slice(0, 8)
+        .map((line) => `<li>${escapeHtml(line)}</li>`)
+        .join('') ?? ''
+      const progress = Math.max(0, Math.min(100, state.percent ?? 0))
+      let content = '<p class="modal__note">Use “Verificar agora” para buscar uma nova versão.</p>'
+      let actions = '<button class="button button--primary" data-check-update type="button">Verificar agora</button>'
+
+      if (state.status === 'checking') {
+        content = '<p class="update-state"><i class="spinner spinner--green"></i> Verificando atualizações…</p>'
+        actions = ''
+      } else if (state.status === 'available') {
+        content = `<div class="update-summary"><strong>Nova versão disponível</strong><span>${version}</span>${notes ? `<ul>${notes}</ul>` : ''}</div>`
+        actions = '<button class="button button--primary" data-download-update type="button">Atualizar</button>'
+      } else if (state.status === 'downloading') {
+        content = `<div class="update-summary"><strong>Baixando atualização</strong><span>Você pode continuar usando o AltGrid.</span><progress max="100" value="${progress}">${progress}%</progress><small>${Math.round(progress)}%</small></div>`
+        actions = ''
+      } else if (state.status === 'downloaded') {
+        content = `<div class="update-summary"><strong>Atualização pronta</strong><span>${version}</span>${notes ? `<ul>${notes}</ul>` : ''}<small>Reinicie agora ou escolha instalar depois; nesse caso, a atualização será aplicada quando o AltGrid for fechado normalmente.</small></div>`
+        actions = '<button class="button button--primary" data-install-update type="button">Reiniciar e instalar</button>'
+      } else if (state.status === 'not_available') {
+        if (!state.supported && state.message) {
+          content = `<p class="modal__note">${escapeHtml(state.message)}</p>`
+          actions = ''
+        } else {
+          content = '<p class="modal__note">Você já está usando a versão mais recente.</p>'
+          actions = '<button class="button button--secondary" data-check-update type="button">Verificar novamente</button>'
+        }
+      } else if (state.status === 'error') {
+        content = `<div class="form-alert is-visible" role="alert">${escapeHtml(state.message ?? 'Não foi possível verificar atualizações.')}</div>`
+        actions = '<button class="button button--primary" data-check-update type="button">Tentar novamente</button>'
+      }
+
+      return `
+        <dialog class="modal modal--update" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="modal__header"><p class="eyebrow">Atualizações</p><h2 id="dialog-title">${version}</h2></div>
+          ${content}
+          <div class="modal__actions">${actions}<button class="button button--secondary" data-close-dialog type="button">${state.status === 'downloaded' ? 'Instalar depois' : 'Fechar'}</button></div>
+        </dialog>
+      `
+    }
+
+    if (this.activeDialog === 'more-games') {
+      return `
+        <dialog class="modal modal--game-catalog" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="modal__header"><p class="eyebrow">Catálogo</p><h2 id="dialog-title">Jogos suportados</h2></div>
+          <div class="field"><label class="visually-hidden" for="game-search">Buscar jogo</label><input id="game-search" data-game-search type="search" placeholder="Buscar jogo…" autocomplete="off" /></div>
+          <div class="catalog-modal-list" data-game-search-results>
+            ${this.games.map((game) => `<button data-select-game="${escapeHtml(game.slug)}" data-game-search-item="${escapeHtml(game.name.toLocaleLowerCase())}" type="button"><span class="game-list__icon">${this.renderGameIcon(game)}</span><span><strong>${escapeHtml(game.name)}</strong><small>${escapeHtml(game.slug)}</small></span><i class="status-dot status-dot--small" aria-hidden="true"></i></button>`).join('') || '<p class="notification-empty">Nenhum jogo disponível no momento.</p>'}
+          </div>
+          <div class="modal__actions modal__actions--end"><button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
+        </dialog>
+      `
+    }
+
+    if (this.activeDialog === 'settings') {
+      const restore = localStorage.getItem('altgrid.preference.restore-session') !== 'false'
+      const confirmClose = localStorage.getItem('altgrid.preference.confirm-close') !== 'false'
+      const notifications = localStorage.getItem('altgrid.preference.notifications') !== 'false'
+      const ecoModeAvailable = this.ecoModeSupported
+        && this.permissionService.canUseFeature('eco_mode')
+      const ecoModeNote = !this.permissionService.canUseFeature('eco_mode')
+        ? 'Disponível nos planos PRO e FOUNDER.'
+        : this.ecoModeSupported
+          ? 'Reduz atividade de telas em segundo plano sem recarregar o jogo.'
+          : 'Disponível no aplicativo instalado.'
+      const updateChannel = this.configText('update_channel') === 'beta' ? 'Beta' : 'Estável'
+      return `
+        <dialog class="modal modal--settings" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="modal__header"><p class="eyebrow">Preferências</p><h2 id="dialog-title">Configurações</h2></div>
+          <div class="settings-layout">
+            <nav aria-label="Categorias das configurações">
+              <button class="is-active" data-settings-tab="general" type="button">Geral</button><button data-settings-tab="accounts" type="button">Contas</button><button data-settings-tab="visual" type="button">Visual</button><button data-settings-tab="updates" type="button">Atualizações</button><button data-settings-tab="notifications" type="button">Notificações</button><button data-settings-tab="about" type="button">Sobre</button>
+            </nav>
+            <div class="settings-content">
+              <section data-settings-panel="general"><h3>Geral</h3><label class="setting-toggle"><span><strong>Eco Mode</strong><small>${ecoModeNote}</small></span><input data-preference="eco-mode" type="checkbox" ${this.ecoModeRequested ? 'checked' : ''} ${ecoModeAvailable ? '' : 'disabled'} /></label><label class="setting-toggle"><span><strong>Restaurar última sessão</strong><small>Reabre as contas usadas na inicialização anterior.</small></span><input data-preference="restore-session" type="checkbox" ${restore ? 'checked' : ''} /></label><label class="setting-toggle"><span><strong>Confirmar antes de fechar</strong><small>Evita encerrar sessões por acidente.</small></span><input data-preference="confirm-close" type="checkbox" ${confirmClose ? 'checked' : ''} /></label></section>
+              <section data-settings-panel="accounts" hidden><h3>Contas</h3><p>Cookies e credenciais dos jogos ficam somente neste dispositivo, isolados por conta.</p></section>
+              <section data-settings-panel="visual" hidden><h3>Visual</h3><p>O tema escuro premium acompanha automaticamente o AltGrid.</p></section>
+              <section data-settings-panel="updates" hidden><h3>Atualizações</h3><p>Canal atual: <strong>${updateChannel}</strong> · instalada ${APP_VERSION}${this.configText('latest_version') ? ` · disponível ${escapeHtml(this.configText('latest_version')!)}` : ''}</p><button class="button button--secondary" data-check-update type="button">Verificar atualização</button></section>
+              <section data-settings-panel="notifications" hidden><h3>Notificações</h3><label class="setting-toggle"><span><strong>Avisos do AltGrid</strong><small>Atualizações, anúncios e alertas do sistema.</small></span><input data-preference="notifications" type="checkbox" ${notifications ? 'checked' : ''} /></label></section>
+              <section data-settings-panel="about" hidden><h3>Sobre</h3><p>AltGrid ${APP_VERSION}</p><p class="service-line"><i class="status-dot status-dot--small ${this.serviceStatusDotClass()}"></i> Serviços AltGrid: ${this.serviceStatusLabel()}</p></section>
+            </div>
+          </div>
+          <div class="modal__actions modal__actions--end"><button class="button button--primary" data-close-dialog type="button">Concluir</button></div>
+        </dialog>
+      `
+    }
+
+    if (this.activeDialog === 'shortcuts') {
+      return `
+        <dialog class="modal" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="modal__header"><p class="eyebrow">Produtividade</p><h2 id="dialog-title">Atalhos</h2><p>Atalhos ativos no AltGrid.</p></div>
+          <dl class="shortcut-list"><div><dt>Trocar para a conta 1–9</dt><dd><kbd>Ctrl</kbd> + <kbd>1…9</kbd></dd></div><div><dt>Sair de maximizado ou Somente telas</dt><dd><kbd>Esc</kbd></dd></div><div><dt>Abrir ou fechar chat</dt><dd><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd></dd></div></dl>
+          <div class="modal__actions modal__actions--end"><button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
+        </dialog>
+      `
+    }
+
+    if (this.activeDialog === 'about') {
+      return `
+        <dialog class="modal" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="about-brand"><img src="${altgridLogoUrl}" alt="" /><div><p class="eyebrow">ALTGRID</p><h2 id="dialog-title">Gerencie suas sessões</h2></div></div>
+          <p class="modal__note">Gerenciador multissessão para jogos e sites suportados. O AltGrid não automatiza gameplay e não envia credenciais dos jogos ao servidor.</p>
+          <dl class="about-facts"><div><dt>Versão</dt><dd>${APP_VERSION}${this.configText('latest_version') ? ` · atual ${escapeHtml(this.configText('latest_version')!)}` : ''}</dd></div><div><dt>Serviços AltGrid</dt><dd><i class="status-dot status-dot--small ${this.serviceStatusDotClass()}"></i> ${this.serviceStatusLabel()}</dd></div><div><dt>Conta</dt><dd>${escapeHtml(this.session?.user.email ?? '—')}</dd></div></dl>
+          <div class="modal__actions modal__actions--end"><button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
+        </dialog>
+      `
+    }
+
+    if (this.activeDialog === 'my-plan') {
+      const validity = this.me?.lifetime
+        ? 'Vitalício'
+        : this.me?.expires_at ? `Ativo até ${formatDate(this.me.expires_at)}` : 'Sem vencimento'
+      return `
+        <dialog class="modal modal--plan-summary" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="modal__header"><p class="eyebrow">Assinatura</p><h2 id="dialog-title">Meu plano</h2><p>Benefícios vinculados à sua conta AltGrid.</p></div>
+          <div class="current-plan-card"><span>${escapeHtml(this.renderPlanName())}</span><strong>${this.permissionService.getCurrentPlan() === 'FREE' ? 'Huntera: 3 · demais jogos: 2' : `${this.permissionService.getAccountLimit()} contas simultâneas`}</strong><small>${escapeHtml(validity)}</small></div>
+          <div class="modal__actions">${this.permissionService.getCurrentPlan() === 'FREE' ? '<button class="button button--primary" data-show-plans type="button">Conhecer PRO</button>' : ''}<button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
+        </dialog>
+      `
+    }
+
+    if (this.activeDialog === 'payment') {
+      const payment = this.pixPayment
+      const qrImage = payment?.qr_code_base64?.match(/^[A-Za-z0-9+/=\r\n]+$/)
+        ? payment.qr_code_base64.replace(/\s/g, '')
+        : null
+      const approved = Boolean(payment && ['approved', 'paid', 'fulfilled'].includes(payment.status))
+      return `
+        <dialog class="modal modal--payment" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="modal__header"><p class="eyebrow">Pagamento seguro</p><h2 id="dialog-title">${approved ? 'Pagamento confirmado' : 'Ativar com PIX'}</h2></div>
+          ${this.paymentError ? `<div class="form-alert is-visible" role="alert">${escapeHtml(this.paymentError)}</div>` : ''}
+          ${payment
+            ? `<div class="payment-summary"><strong>${escapeHtml(formatCurrency(payment.amount, payment.currency))}</strong><small>${escapeHtml(payment.product_code)}</small></div>${approved ? '<div class="payment-approved"><span aria-hidden="true">✓</span><strong>Seu plano está sendo ativado.</strong></div>' : `${qrImage ? `<img class="pix-qr" src="data:image/png;base64,${qrImage}" alt="QR Code PIX" />` : ''}<label class="field pix-copy"><span>Pix Copia e Cola</span><textarea readonly rows="3" data-pix-code>${escapeHtml(payment.qr_code ?? '')}</textarea></label><button class="button button--secondary" data-copy-pix type="button">Copiar código PIX</button><p class="payment-waiting"><i class="spinner spinner--green"></i> Aguardando pagamento…</p>`}`
+            : '<div class="payment-waiting"><i class="spinner spinner--green"></i> Preparando seu PIX…</div>'}
+          <div class="modal__actions">${payment && !approved ? `<button class="button button--primary" data-refresh-payment type="button" ${this.paymentLoading ? 'disabled' : ''}>${this.paymentLoading ? 'Atualizando…' : 'Atualizar status'}</button>` : ''}<button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
+        </dialog>
+      `
+    }
+
+    return null
+  }
+
+  private renderPlanOption(
+    plan: string,
+    description: string,
+    currentPlan: string,
+    product: PublicProduct | null,
+  ): string {
+    const current = plan === currentPlan
+
+    return `
+      <div class="plan-option ${current ? 'plan-option--current' : ''}">
+        <div>
+          <strong>${plan}</strong>
+          <span>${escapeHtml(description)}</span>
+          ${product ? `<b>${escapeHtml(formatCurrency(product.price_amount, product.currency))}</b>` : ''}
+        </div>
+        ${current
+          ? '<span class="plan-option__badge">Plano atual</span>'
+          : product
+            ? `<button class="button button--primary button--compact" data-buy-product="${escapeHtml(product.code)}" type="button">Ativar com PIX</button>`
+            : '<span class="plan-option__badge">Indisponível</span>'}
+      </div>
+    `
+  }
+
+  private renderDialogError(): string {
+    return this.dialogError
+      ? `<div class="form-alert is-visible" role="alert">${escapeHtml(this.dialogError)}</div>`
+      : ''
+  }
+
+  private renderMessageCard(
+    title: string,
+    message: string,
+    buttonLabel: string,
+    destination: AuthView,
+  ): string {
+    return `
+      <section class="auth-card auth-card--message" aria-labelledby="message-title">
+        <span class="message-icon" aria-hidden="true">✓</span>
+        <p class="eyebrow">Tudo certo</p>
+        <h1 id="message-title">${title}</h1>
+        <p class="auth-card__subtitle">${message}</p>
+        <button class="button button--secondary" data-view="${destination}" type="button">
+          ${buttonLabel}
+        </button>
+      </section>
+    `
+  }
+
+  private renderEmailField(id: string): string {
+    return `
+      <div class="field">
+        <label for="${id}">E-mail</label>
+        <input
+          id="${id}"
+          name="email"
+          type="email"
+          inputmode="email"
+          autocomplete="email"
+          placeholder="voce@exemplo.com"
+          required
+          aria-describedby="${id}-error"
+        />
+        <span class="field__error" id="${id}-error"></span>
+      </div>
+    `
+  }
+
+  private renderPasswordField(
+    id: string,
+    label: string,
+    autocomplete: 'current-password' | 'new-password',
+  ): string {
+    return `
+      <div class="field">
+        <label for="${id}">${label}</label>
+        <input
+          id="${id}"
+          name="${id.includes('confirmation') ? 'passwordConfirmation' : 'password'}"
+          type="password"
+          autocomplete="${autocomplete}"
+          required
+          aria-describedby="${id}-error"
+        />
+        <span class="field__error" id="${id}-error"></span>
+      </div>
+    `
+  }
+
+  private renderAlertSlot(): string {
+    const message = this.initialAlert
+    this.initialAlert = null
+
+    return `
+      <div
+        class="form-alert ${message ? 'is-visible' : ''}"
+        id="form-alert"
+        role="alert"
+        aria-live="polite"
+      >${message ? escapeHtml(message) : ''}</div>
+    `
+  }
+
+  private bindViewActions(): void {
+    this.root.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const destination = button.dataset.view as AuthView | undefined
+
+        if (destination) {
+          this.navigate(destination)
+        }
+      })
+    })
+
+    this.root
+      .querySelector<HTMLButtonElement>('[data-retry-session]')
+      ?.addEventListener('click', () => {
+        void this.restoreSession()
+      })
+
+    this.bindLoginForm()
+    this.bindSignupForm()
+    this.bindForgotPasswordForm()
+    this.bindResetPasswordForm()
+    this.bindAuthenticatedActions()
+    this.bindDialogActions()
+    this.bindLogoutButton()
+  }
+
+  private bindAuthenticatedActions(): void {
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-open-dialog]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const dialog = button.dataset.openDialog as ActiveDialog | undefined
+
+          if (!dialog) {
+            return
+          }
+
+          button.closest('details')?.removeAttribute('open')
+          this.activeDialog = dialog
+          this.dialogError = null
+          this.render()
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-account-tab]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const accountId = button.dataset.accountId
+          const account = this.configuredAccounts.find(
+            (candidate) => candidate.id === accountId,
+          )
+
+          if (!account) {
+            return
+          }
+
+          this.workspaceMode = 'account'
+          this.maximizedAccountId = null
+
+          if (this.permissionService.isSessionActive(account.id)) {
+            this.focusedAccountId = account.id
+            this.render()
+            void Promise.resolve(this.sessionLauncher.focus(account)).catch(() => undefined)
+            return
+          }
+
+          void this.openConfiguredAccount(account.id, button)
+        })
+      })
+
+    const accountScroller = this.root.querySelector<HTMLElement>('[data-account-tabs-scroll]')
+    if (accountScroller && accountScroller.dataset.scrollBound !== 'true') {
+      accountScroller.dataset.scrollBound = 'true'
+      const previous = this.root.querySelector<HTMLButtonElement>(
+        '[data-scroll-accounts="previous"]',
+      )
+      const next = this.root.querySelector<HTMLButtonElement>(
+        '[data-scroll-accounts="next"]',
+      )
+      const updateNavigation = (): void => {
+        const overflow = accountScroller.scrollWidth > accountScroller.clientWidth + 2
+        if (previous) {
+          previous.hidden = !overflow
+          previous.disabled = accountScroller.scrollLeft <= 1
+        }
+        if (next) {
+          next.hidden = !overflow
+          next.disabled = accountScroller.scrollLeft + accountScroller.clientWidth
+            >= accountScroller.scrollWidth - 1
+        }
+      }
+      const scrollAccounts = (direction: -1 | 1): void => {
+        accountScroller.scrollBy({
+          behavior: 'smooth',
+          left: direction * Math.max(150, accountScroller.clientWidth * 0.75),
+        })
+      }
+
+      previous?.addEventListener('click', () => scrollAccounts(-1))
+      next?.addEventListener('click', () => scrollAccounts(1))
+      accountScroller.addEventListener('scroll', updateNavigation, { passive: true })
+      accountScroller.addEventListener('wheel', (event) => {
+        if (
+          Math.abs(event.deltaY) <= Math.abs(event.deltaX)
+          || accountScroller.scrollWidth <= accountScroller.clientWidth
+        ) {
+          return
+        }
+        const before = accountScroller.scrollLeft
+        accountScroller.scrollLeft += event.deltaY
+        if (accountScroller.scrollLeft !== before) {
+          event.preventDefault()
+        }
+      }, { passive: false })
+      accountScroller.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+          event.preventDefault()
+          scrollAccounts(event.key === 'ArrowLeft' ? -1 : 1)
+        } else if (event.key === 'Home' || event.key === 'End') {
+          event.preventDefault()
+          accountScroller.scrollTo({
+            behavior: 'smooth',
+            left: event.key === 'Home' ? 0 : accountScroller.scrollWidth,
+          })
+        }
+      })
+      queueMicrotask(updateNavigation)
+    }
+
+    const sessionWorkspace = this.root.querySelector<HTMLElement>('[data-session-workspace]')
+    if (sessionWorkspace && sessionWorkspace.dataset.scrollLayoutBound !== 'true') {
+      sessionWorkspace.dataset.scrollLayoutBound = 'true'
+      sessionWorkspace.addEventListener('scroll', () => {
+        this.scheduleWorkspaceLayout()
+      }, { passive: true })
+    }
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-toggle-grid]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          if (this.permissionService.getActiveSessionCount() === 0) {
+            this.showSessionAlert(
+              this.sessionOpeningInFlight.size > 0
+                ? 'Aguarde as contas terminarem de abrir.'
+                : 'Abra pelo menos uma conta para usar Grades.',
+            )
+            return
+          }
+
+          this.showSessionAlert('')
+          this.workspaceMode = this.workspaceMode === 'grid' ? 'account' : 'grid'
+          this.maximizedAccountId = null
+          this.gridPageIndex = 0
+          this.render()
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('.game-sidebar [data-select-game]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const gameSlug = button.dataset.selectGame
+          const account = this.configuredAccounts.find(
+            (candidate) => candidate.gameSlug === gameSlug,
+          )
+
+          if (account) {
+            const tab = [...this.root.querySelectorAll<HTMLButtonElement>('[data-account-tab]')]
+              .find((candidate) => candidate.dataset.accountId === account.id)
+
+            if (tab) {
+              tab.click()
+              return
+            }
+          }
+
+          this.activeDialog = 'add-account'
+          this.dialogError = null
+          this.render()
+          queueMicrotask(() => {
+            const form = this.root.querySelector<HTMLFormElement>('#add-account-form')
+            const choice = [...(form?.querySelectorAll<HTMLInputElement>('input[name="gameSlug"]') ?? [])]
+              .find((input) => input.value === gameSlug)
+            if (form && choice) {
+              choice.checked = true
+              this.syncGamePicker(form)
+            }
+          })
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-read-notification]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const notificationId = button.dataset.readNotification
+          if (notificationId) {
+            this.notificationCenter.markRead(notificationId)
+            this.render()
+          }
+        })
+      })
+
+    const markAllNotifications = this.root.querySelector<HTMLButtonElement>(
+      '[data-read-all-notifications]',
+    )
+    if (markAllNotifications) {
+      this.bindButtonOnce(markAllNotifications, () => {
+        this.notificationCenter.markAllRead()
+        this.render()
+      })
+    }
+
+    const openUpdate = this.root.querySelector<HTMLButtonElement>('[data-open-update]')
+    if (openUpdate) {
+      this.bindButtonOnce(openUpdate, () => {
+        this.activeDialog = 'update'
+        this.render()
+        if (this.updateState.status === 'idle') {
+          void this.checkForUpdates(false)
+        }
+      })
+    }
+
+    const openChat = this.root.querySelector<HTMLButtonElement>('[data-open-chat]')
+    if (openChat) {
+      this.bindButtonOnce(openChat, () => {
+        if (this.chatService?.getState().open) {
+          this.chatService.close()
+        } else if (!this.me?.profile.display_name?.trim()) {
+          this.activeDialog = 'chat-nickname'
+          this.render()
+        } else {
+          void this.chatService?.open(this.focusedGameId())
+        }
+      })
+    }
+
+    const nicknameForm = this.root.querySelector<HTMLFormElement>('[data-chat-nickname-form]')
+    if (nicknameForm && nicknameForm.dataset.actionBound !== 'true') {
+      nicknameForm.dataset.actionBound = 'true'
+      nicknameForm.addEventListener('submit', (event) => {
+        event.preventDefault()
+        void this.saveChatNickname(nicknameForm)
+      })
+    }
+
+    const closeChat = this.root.querySelector<HTMLButtonElement>('[data-close-chat]')
+    if (closeChat) {
+      this.bindButtonOnce(closeChat, () => this.chatService?.close())
+    }
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-chat-channel]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const channelId = button.dataset.chatChannel
+          if (channelId) {
+            void this.chatService?.selectChannel(channelId)
+          }
+        })
+      })
+
+    const loadOlderMessages = this.root.querySelector<HTMLButtonElement>(
+      '[data-chat-load-more]',
+    )
+    if (loadOlderMessages) {
+      this.bindButtonOnce(loadOlderMessages, () => {
+        void this.chatService?.loadMore()
+      })
+    }
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-block-chat-user]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const userId = button.dataset.blockChatUser
+          if (userId) {
+            this.chatService?.blockUser(userId)
+          }
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-report-chat-message]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const messageId = button.dataset.reportChatMessage
+          const reason = window.prompt('Motivo da denúncia:', 'Conteúdo inadequado')?.trim()
+          if (messageId && reason) {
+            void this.chatService?.report(messageId, reason)
+              .then(() => this.showSessionAlert('Denúncia enviada para moderação.'))
+              .catch(() => this.showSessionAlert('Não foi possível enviar a denúncia.'))
+          }
+        })
+      })
+
+    const chatForm = this.root.querySelector<HTMLFormElement>('#chat-form')
+    if (chatForm && chatForm.dataset.actionBound !== 'true') {
+      chatForm.dataset.actionBound = 'true'
+      chatForm.addEventListener('submit', (event) => {
+        event.preventDefault()
+        const channelId = this.chatService?.getState().selectedChannelId
+        const field = chatForm.elements.namedItem('message')
+        if (!channelId || !(field instanceof HTMLTextAreaElement)) {
+          return
+        }
+        void this.chatService?.send(field.value)
+          .then(() => {
+            field.value = ''
+          })
+          .catch((error) => this.showSessionAlert(
+            error instanceof Error ? error.message : 'Não foi possível enviar a mensagem.',
+          ))
+      })
+    }
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-add-account]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          this.dialogError = null
+          this.dialogReturnFocus = { type: 'add-account' }
+          this.activeDialog = 'add-account'
+          this.render()
+          void this.refreshGamePresets()
+        })
+      })
+
+    this.root
+      .querySelector<HTMLButtonElement>('[data-retry-backend]')
+      && this.bindButtonOnce(
+        this.root.querySelector<HTMLButtonElement>('[data-retry-backend]')!,
+        () => {
+        if (this.session) {
+          void this.loadApplicationData(this.session, true)
+        }
+        },
+      )
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-open-account]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const accountId = button.dataset.accountId
+
+          if (accountId) {
+            void this.openConfiguredAccount(accountId, button)
+          }
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-close-account]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const accountId = button.dataset.accountId
+
+          if (accountId) {
+            button.closest('details')?.removeAttribute('open')
+            void this.closeConfiguredAccount(accountId, button)
+          }
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('button[data-grid-mode]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const mode = button.dataset.gridMode as GridMode | undefined
+
+          if (!mode || !this.gridLayoutService.listModes().some((item) => item.mode === mode)) {
+            return
+          }
+
+          button.closest('details')?.removeAttribute('open')
+          if (!this.gridLayoutService.isModeAvailable(mode)) {
+            this.activeDialog = 'plans'
+            this.render()
+            return
+          }
+
+          this.gridMode = mode
+          this.gridPageIndex = 0
+          this.maximizedAccountId = null
+          this.applyWorkspacePresentation()
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-grid-page]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const direction = button.dataset.gridPage
+          this.gridPageIndex += direction === 'previous' ? -1 : 1
+          this.applyWorkspacePresentation()
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-toggle-screens-only]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          this.screensOnly = !this.screensOnly
+          this.applyWorkspacePresentation()
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-toggle-sidebar]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          this.sidebarCollapsed = !this.sidebarCollapsed
+          try {
+            localStorage.setItem(
+              SIDEBAR_COLLAPSED_STORAGE_KEY,
+              String(this.sidebarCollapsed),
+            )
+          } catch {
+            // The HUD remains usable when persistent storage is unavailable.
+          }
+          this.lastLayoutSignature = ''
+          this.render()
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-exit-screens-only]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          this.screensOnly = false
+          this.applyWorkspacePresentation()
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-maximize-account]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const accountId = button.dataset.accountId
+
+          if (!accountId || !this.permissionService.isSessionActive(accountId)) {
+            return
+          }
+
+          button.closest('details')?.removeAttribute('open')
+          this.maximizedAccountId = accountId
+          this.applyWorkspacePresentation()
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-reload-account]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const account = this.accountFromAction(button)
+
+          if (!account) {
+            return
+          }
+
+          button.closest('details')?.removeAttribute('open')
+          button.disabled = true
+          this.sessionIssues.delete(account.id)
+          this.lastLayoutSignature = ''
+          this.render()
+          void Promise.resolve()
+            .then(() => this.sessionLauncher.reload(account))
+            .catch(() => {
+              this.sessionIssues.set(account.id, 'Não foi possível carregar esta conta.')
+              this.render()
+              this.showSessionAlert('Não foi possível recarregar esta conta.')
+            })
+            .finally(() => {
+              if (button.isConnected) {
+                button.disabled = false
+              }
+            })
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-toggle-session-mute]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const account = this.accountFromAction(button)
+
+          if (!account) {
+            return
+          }
+
+          button.closest('details')?.removeAttribute('open')
+          const muted = !this.mutedAccountIds.has(account.id)
+          button.disabled = true
+          void Promise.resolve()
+            .then(() => this.sessionLauncher.setMuted(account, muted))
+            .then(() => {
+              if (muted) {
+                this.mutedAccountIds.add(account.id)
+              } else {
+                this.mutedAccountIds.delete(account.id)
+              }
+              this.render()
+            })
+            .catch(() => this.showSessionAlert('Não foi possível alterar o áudio desta conta.'))
+            .finally(() => {
+              if (button.isConnected) {
+                button.disabled = false
+              }
+            })
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-clear-session-data]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const account = this.accountFromAction(button)
+
+          if (!account) {
+            return
+          }
+
+          button.closest('details')?.removeAttribute('open')
+          if (!window.confirm(
+            `Limpar cookies e dados locais de ${account.displayName}? Você precisará entrar novamente no jogo.`,
+          )) {
+            return
+          }
+
+          void this.clearConfiguredAccountData(account, button)
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-rename-account]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const account = this.accountFromAction(button)
+
+          if (!account) {
+            return
+          }
+
+          button.closest('details')?.removeAttribute('open')
+          this.dialogAccountId = account.id
+          this.dialogReturnFocus = { accountId: account.id, type: 'account' }
+          this.activeDialog = 'rename-account'
+          this.dialogError = null
+          this.render()
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-delete-account]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const account = this.accountFromAction(button)
+
+          if (!account) {
+            return
+          }
+
+          button.closest('details')?.removeAttribute('open')
+          this.dialogAccountId = account.id
+          this.dialogReturnFocus = { accountId: account.id, type: 'account' }
+          this.activeDialog = 'delete-account'
+          this.dialogError = null
+          this.render()
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-focus-account]')
+      .forEach((surface) => {
+        if (surface.dataset.actionBound === 'true') {
+          return
+        }
+
+        surface.dataset.actionBound = 'true'
+        surface.addEventListener('pointerdown', () => {
+          const accountId = surface.dataset.accountId
+          const account = this.configuredAccounts.find((item) => item.id === accountId)
+          if (account) {
+            this.focusedAccountId = account.id
+            this.updateWorkspaceContext(account)
+            void Promise.resolve()
+              .then(() => this.sessionLauncher.focus(account))
+              .catch(() => undefined)
+          }
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-session-card]')
+      .forEach((card) => {
+        if (card.dataset.doubleClickBound === 'true') {
+          return
+        }
+        card.dataset.doubleClickBound = 'true'
+        card.addEventListener('dblclick', () => {
+          const accountId = card.dataset.accountId
+          if (accountId && this.permissionService.isSessionActive(accountId)) {
+            this.maximizedAccountId = accountId
+            this.applyWorkspacePresentation()
+          }
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLDetailsElement>(
+        'details[data-session-menu], details[data-toolbar-menu]',
+      )
+      .forEach((details) => {
+        if (details.dataset.menuBound === 'true') {
+          return
+        }
+
+        details.dataset.menuBound = 'true'
+        details.addEventListener('toggle', () => {
+          if (details.open) {
+            this.root
+              .querySelectorAll<HTMLDetailsElement>(
+                'details[data-session-menu][open], details[data-toolbar-menu][open]',
+              )
+              .forEach((other) => {
+                if (other !== details) {
+                  other.removeAttribute('open')
+                }
+              })
+
+            if (details.matches('[data-session-menu]')) {
+              this.positionAccountMenu(details)
+            }
+          }
+
+          // Native WebContentsViews always sit above renderer HTML. Parking
+          // them while a menu is open keeps notifications, Layout and ⋯ usable.
+          this.applyWorkspacePresentation()
+        })
+      })
+  }
+
+  private positionAccountMenu(details: HTMLDetailsElement): void {
+    const trigger = details.querySelector<HTMLElement>('summary')
+    const menu = details.querySelector<HTMLElement>('.menu-popover')
+
+    if (!trigger || !menu) {
+      return
+    }
+
+    requestAnimationFrame(() => {
+      if (!details.open) {
+        return
+      }
+
+      const triggerRect = trigger.getBoundingClientRect()
+      const menuRect = menu.getBoundingClientRect()
+      const margin = 8
+      const left = Math.min(
+        window.innerWidth - menuRect.width - margin,
+        Math.max(margin, triggerRect.right - menuRect.width),
+      )
+      const below = triggerRect.bottom + 6
+      const top = below + menuRect.height <= window.innerHeight - margin
+        ? below
+        : Math.max(margin, triggerRect.top - menuRect.height - 6)
+
+      menu.style.left = `${left}px`
+      menu.style.right = 'auto'
+      menu.style.top = `${top}px`
+      menu.style.bottom = 'auto'
+    })
+  }
+
+  private updateWorkspaceContext(account: ConfiguredAccount): void {
+    const context = this.root.querySelector<HTMLElement>('[data-workspace-context]')
+
+    if (!context) {
+      return
+    }
+
+    const gameName = this.gameNameFor(account)
+    context.title = `${account.displayName} · ${gameName}`
+    context.replaceChildren(
+      document.createTextNode(gameName),
+      Object.assign(document.createElement('span'), {
+        ariaHidden: 'true',
+        textContent: '·',
+      }),
+      document.createTextNode(account.displayName),
+    )
+  }
+
+  private bindButtonOnce(button: HTMLButtonElement, listener: () => void): void {
+    if (button.dataset.actionBound === 'true') {
+      return
+    }
+
+    button.dataset.actionBound = 'true'
+    button.addEventListener('click', listener)
+  }
+
+  private accountFromAction(button: HTMLButtonElement): ConfiguredAccount | null {
+    const accountId = button.dataset.accountId
+    return this.configuredAccounts.find((account) => account.id === accountId) ?? null
+  }
+
+  private closeDialog(): void {
+    const returnFocus = this.dialogReturnFocus
+    this.activeDialog = null
+    this.dialogError = null
+    this.dialogAccountId = null
+    this.render()
+
+    queueMicrotask(() => {
+      let target: HTMLButtonElement | null = null
+
+      if (returnFocus?.type === 'add-account') {
+        target = this.root.querySelector<HTMLButtonElement>(
+          '[data-add-account]',
+        )
+      } else if (returnFocus?.type === 'account') {
+        this.root
+          .querySelectorAll<HTMLButtonElement>('[data-account-id]')
+          .forEach((button) => {
+            if (button.dataset.accountId === returnFocus.accountId) {
+              target = button
+            }
+          })
+      }
+
+      target?.focus()
+      this.dialogReturnFocus = null
+    })
+  }
+
+  private completeAddedAccount(account: ConfiguredAccount): void {
+    if (!this.session) {
+      return
+    }
+
+    this.configuredAccounts = this.accountService.list(this.session.user.id)
+
+    // Keep native game views hidden while transitioning directly from the
+    // picker to the limit warning. This avoids a transient 1x1 view covering
+    // the warning when the desktop layout queue is busy.
+    if (!this.permissionService.canOpenAnotherSession(account.gameSlug)) {
+      this.dialogReturnFocus = { accountId: account.id, type: 'account' }
+      this.dialogAccountId = account.id
+      this.activeDialog = 'free-limit'
+      this.dialogError = null
+      this.render()
+      return
+    }
+
+    this.closeDialog()
+    void this.openConfiguredAccount(account.id, document.createElement('button'))
+  }
+
+  private syncGamePicker(form: HTMLFormElement): void {
+    const selected = form.querySelector<HTMLInputElement>(
+      'input[name="gameSlug"]:checked',
+    )?.value
+    const customFields = form.querySelector<HTMLElement>(
+      '[data-custom-game-url]',
+    )
+    const customInput = form.elements.namedItem('customLaunchUrl')
+    const customSelected = selected === CUSTOM_GAME_SLUG
+
+    if (customFields) {
+      customFields.hidden = !customSelected
+    }
+
+    if (customInput instanceof HTMLInputElement) {
+      customInput.required = customSelected
+    }
+
+    form.querySelectorAll<HTMLElement>('[data-game-referral]')
+      .forEach((referral) => {
+        referral.hidden = referral.dataset.gameReferral !== selected
+      })
+  }
+
+  private async openDeveloperReferral(
+    gameSlug: string,
+    button: HTMLButtonElement,
+  ): Promise<void> {
+    const game = this.games.find((candidate) => candidate.slug === gameSlug)
+    const referralUrl = normalizeSafeGameUrl(game?.developer_referral_url)
+
+    if (!referralUrl) {
+      this.dialogError = 'Este link de criação de conta não está disponível.'
+      this.render()
+      return
+    }
+
+    button.disabled = true
+
+    try {
+      await this.openExternalUrl(referralUrl)
+    } catch {
+      this.dialogError = 'Não foi possível abrir o link de criação de conta.'
+      this.render()
+    } finally {
+      if (button.isConnected) {
+        button.disabled = false
+      }
+    }
+  }
+
+  private async createPixPayment(
+    productCode: string,
+    button: HTMLButtonElement,
+  ): Promise<void> {
+    if (!this.backendApi?.createPixPayment) {
+      this.dialogError = 'O pagamento PIX está indisponível no momento.'
+      this.render()
+      return
+    }
+
+    this.activeDialog = 'payment'
+    this.pixPayment = null
+    this.paymentError = null
+    this.paymentLoading = true
+    button.disabled = true
+    this.render()
+
+    try {
+      const response = await this.backendApi.createPixPayment(productCode)
+      this.pixPayment = response.payment
+    } catch (error) {
+      this.paymentError = backendErrorMessage(error)
+    } finally {
+      this.paymentLoading = false
+      this.render()
+    }
+  }
+
+  private async refreshPixPayment(button: HTMLButtonElement): Promise<void> {
+    if (!this.backendApi?.getPayment || !this.pixPayment) {
+      return
+    }
+
+    this.paymentLoading = true
+    this.paymentError = null
+    button.disabled = true
+
+    try {
+      const response = await this.backendApi.getPayment(this.pixPayment.id)
+      this.pixPayment = response.payment
+      if (
+        this.session
+        && ['approved', 'fulfilled', 'paid'].includes(response.payment.status)
+      ) {
+        void this.loadApplicationData(this.session, true)
+      }
+    } catch (error) {
+      this.paymentError = backendErrorMessage(error)
+    } finally {
+      this.paymentLoading = false
+      this.render()
+    }
+  }
+
+  private bindDialogActions(): void {
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-close-dialog]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          this.closeDialog()
+        })
+      })
+
+    const showPlansButton =
+      this.root.querySelector<HTMLButtonElement>('[data-show-plans]')
+    if (showPlansButton) {
+      this.bindButtonOnce(showPlansButton, () => {
+        this.activeDialog = 'plans'
+        this.dialogError = null
+        this.render()
+      })
+    }
+
+    const gameSearch = this.root.querySelector<HTMLInputElement>('[data-game-search]')
+    if (gameSearch && gameSearch.dataset.actionBound !== 'true') {
+      gameSearch.dataset.actionBound = 'true'
+      gameSearch.addEventListener('input', () => {
+        const query = gameSearch.value.trim().toLocaleLowerCase()
+        this.root.querySelectorAll<HTMLElement>('[data-game-search-item]')
+          .forEach((item) => {
+            item.toggleAttribute(
+              'hidden',
+              Boolean(query) && !(item.dataset.gameSearchItem ?? '').includes(query),
+            )
+          })
+      })
+    }
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('#app-dialog [data-select-game]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const gameSlug = button.dataset.selectGame
+          this.activeDialog = 'add-account'
+          this.dialogError = null
+          this.render()
+          queueMicrotask(() => {
+            const form = this.root.querySelector<HTMLFormElement>('#add-account-form')
+            const choice = [...(form?.querySelectorAll<HTMLInputElement>('input[name="gameSlug"]') ?? [])]
+              .find((input) => input.value === gameSlug)
+            if (form && choice) {
+              choice.checked = true
+              this.syncGamePicker(form)
+              form.elements.namedItem('displayName') instanceof HTMLInputElement
+                && (form.elements.namedItem('displayName') as HTMLInputElement).focus()
+            }
+          })
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-settings-tab]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const selected = button.dataset.settingsTab
+          this.root.querySelectorAll<HTMLButtonElement>('[data-settings-tab]')
+            .forEach((candidate) => candidate.classList.toggle(
+              'is-active',
+              candidate.dataset.settingsTab === selected,
+            ))
+          this.root.querySelectorAll<HTMLElement>('[data-settings-panel]')
+            .forEach((panel) => panel.toggleAttribute(
+              'hidden',
+              panel.dataset.settingsPanel !== selected,
+            ))
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLInputElement>('[data-preference]')
+      .forEach((input) => {
+        if (input.dataset.actionBound === 'true') {
+          return
+        }
+        input.dataset.actionBound = 'true'
+        input.addEventListener('change', () => {
+          const key = input.dataset.preference
+          if (key === 'eco-mode') {
+            void this.updateEcoModePreference(input.checked, input)
+            return
+          }
+          if (key) {
+            localStorage.setItem(`altgrid.preference.${key}`, String(input.checked))
+          }
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-buy-product]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const productCode = button.dataset.buyProduct
+          if (productCode) {
+            void this.createPixPayment(productCode, button)
+          }
+        })
+      })
+
+    const refreshPayment = this.root.querySelector<HTMLButtonElement>(
+      '[data-refresh-payment]',
+    )
+    if (refreshPayment) {
+      this.bindButtonOnce(refreshPayment, () => {
+        void this.refreshPixPayment(refreshPayment)
+      })
+    }
+
+    const copyPix = this.root.querySelector<HTMLButtonElement>('[data-copy-pix]')
+    if (copyPix) {
+      this.bindButtonOnce(copyPix, () => {
+        const code = this.root.querySelector<HTMLTextAreaElement>('[data-pix-code]')?.value
+        if (!code) {
+          return
+        }
+        void navigator.clipboard.writeText(code)
+          .then(() => {
+            copyPix.textContent = 'Código copiado'
+          })
+          .catch(() => this.showSessionAlert('Não foi possível copiar o código PIX.'))
+      })
+    }
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-check-update]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          this.activeDialog = 'update'
+          void this.checkForUpdates(true)
+        })
+      })
+
+    const downloadUpdate = this.root.querySelector<HTMLButtonElement>(
+      '[data-download-update]',
+    )
+    if (downloadUpdate) {
+      this.bindButtonOnce(downloadUpdate, () => {
+        if (!this.updater) {
+          return
+        }
+        downloadUpdate.disabled = true
+        void this.updater.downloadUpdate()
+          .then((state) => this.applyUpdateState(state))
+          .catch(() => this.applyUpdateState({
+            message: 'Não foi possível baixar a atualização.',
+            status: 'error',
+            supported: true,
+          }))
+      })
+    }
+
+    const installUpdate = this.root.querySelector<HTMLButtonElement>(
+      '[data-install-update]',
+    )
+    if (installUpdate) {
+      this.bindButtonOnce(installUpdate, () => {
+        if (!this.updater) {
+          return
+        }
+        const active = this.permissionService.getActiveSessionCount()
+        if (
+          active > 0
+          && !window.confirm(
+            `${active} ${active === 1 ? 'sessão será encerrada' : 'sessões serão encerradas'} para instalar agora. Continuar?`,
+          )
+        ) {
+          return
+        }
+        installUpdate.disabled = true
+        void this.updater.quitAndInstall()
+          .then((started) => {
+            if (!started) {
+              this.applyUpdateState({
+                message: 'Não foi possível iniciar a instalação.',
+                status: 'error',
+                supported: true,
+              })
+            }
+          })
+          .catch(() => this.applyUpdateState({
+            message: 'Não foi possível iniciar a instalação.',
+            status: 'error',
+            supported: true,
+          }))
+      })
+    }
+
+    const addAccountForm =
+      this.root.querySelector<HTMLFormElement>('#add-account-form')
+
+    if (addAccountForm && addAccountForm.dataset.actionBound !== 'true') {
+      addAccountForm.dataset.actionBound = 'true'
+      addAccountForm
+        .querySelectorAll<HTMLInputElement>('input[name="gameSlug"]')
+        .forEach((input) => {
+          input.addEventListener('change', () => {
+            this.dialogError = null
+            this.syncGamePicker(addAccountForm)
+          })
+        })
+      this.syncGamePicker(addAccountForm)
+      addAccountForm.addEventListener('submit', (event) => {
+      event.preventDefault()
+
+      if (!this.session) {
+        return
+      }
+
+      const displayName = this.valueOf(addAccountForm, 'displayName').trim()
+      const gameSlug = this.valueOf(addAccountForm, 'gameSlug')
+      const customLaunchUrl = this.valueOf(
+        addAccountForm,
+        'customLaunchUrl',
+      )
+
+      if (!displayName) {
+        this.dialogError = 'Digite um nome para a conta.'
+        this.render()
+        return
+      }
+
+      if (gameSlug === CUSTOM_GAME_SLUG) {
+        const validation = validateSafeGameUrl(customLaunchUrl)
+
+        if (!validation.ok) {
+          this.dialogError = validation.message
+          this.render()
+          return
+        }
+
+        const account = this.accountService.add(this.session.user.id, {
+          customLaunchUrl: validation.url,
+          displayName,
+          gameSlug: CUSTOM_GAME_SLUG,
+        })
+        this.completeAddedAccount(account)
+        return
+      }
+
+      const game = this.games.find((candidate) => candidate.slug === gameSlug)
+
+      if (!game || !normalizeSafeGameUrl(game.launch_url)) {
+        this.dialogError = 'Selecione um jogo disponível.'
+        this.render()
+        return
+      }
+
+      const account = this.accountService.add(this.session.user.id, {
+        displayName,
+        gameSlug,
+      })
+      this.completeAddedAccount(account)
+      })
+    }
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-open-developer-referral]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const gameSlug = button.dataset.gameSlug
+
+          if (gameSlug) {
+            void this.openDeveloperReferral(gameSlug, button)
+          }
+        })
+      })
+
+    const renameAccountForm =
+      this.root.querySelector<HTMLFormElement>('#rename-account-form')
+
+    if (renameAccountForm && renameAccountForm.dataset.actionBound !== 'true') {
+      renameAccountForm.dataset.actionBound = 'true'
+      renameAccountForm.addEventListener('submit', (event) => {
+      event.preventDefault()
+
+      if (!this.session || !this.dialogAccountId) {
+        return
+      }
+
+      const displayName = this.valueOf(renameAccountForm, 'displayName').trim()
+
+      if (!displayName) {
+        this.dialogError = 'Digite um nome para a conta.'
+        this.render()
+        return
+      }
+
+      const renamed = this.accountService.rename(
+        this.session.user.id,
+        this.dialogAccountId,
+        displayName,
+      )
+
+      if (!renamed) {
+        this.dialogError = 'Não foi possível renomear esta conta.'
+        this.render()
+        return
+      }
+
+      this.configuredAccounts = this.accountService.list(this.session.user.id)
+      this.closeDialog()
+      })
+    }
+
+    const deleteButton = this.root.querySelector<HTMLButtonElement>(
+      '[data-confirm-delete-account]',
+    )
+    if (deleteButton) {
+      this.bindButtonOnce(deleteButton, () => {
+        void this.deleteConfiguredAccount(deleteButton)
+      })
+    }
+
+    const dialog = this.root.querySelector<HTMLDialogElement>('#app-dialog')
+
+    if (dialog && dialog.dataset.cancelBound !== 'true') {
+      dialog.dataset.cancelBound = 'true'
+      dialog.addEventListener('cancel', (event) => {
+        event.preventDefault()
+        this.closeDialog()
+      })
+    }
+
+    if (dialog && typeof dialog.showModal === 'function' && !dialog.open) {
+      dialog.showModal()
+    }
+  }
+
+  private async deleteConfiguredAccount(button: HTMLButtonElement): Promise<void> {
+    if (!this.session || !this.dialogAccountId) {
+      return
+    }
+
+    const userId = this.session.user.id
+    const accountId = this.dialogAccountId
+    const account = this.configuredAccounts.find((item) => item.id === accountId)
+
+    if (!account) {
+      return
+    }
+
+    button.disabled = true
+    button.textContent = 'Excluindo…'
+
+    try {
+      await this.sessionOpeningInFlight.get(accountId)
+
+      if (this.destroyed || this.session?.user.id !== userId) {
+        return
+      }
+
+      if (this.permissionService.isSessionActive(accountId)) {
+        await this.permissionService.closeSession(
+          accountId,
+          () => this.sessionLauncher.close(account),
+        )
+      }
+
+      if (this.destroyed || this.session?.user.id !== userId) {
+        return
+      }
+
+      this.accountService.remove(userId, accountId)
+      this.configuredAccounts = this.accountService.list(userId)
+      this.mutedAccountIds.delete(accountId)
+      this.sessionIssues.delete(accountId)
+      this.maximizedAccountId = this.maximizedAccountId === accountId
+        ? null
+        : this.maximizedAccountId
+      this.closeDialog()
+    } catch {
+      if (this.destroyed || this.session?.user.id !== userId) {
+        return
+      }
+
+      this.dialogError = 'Não foi possível excluir esta configuração.'
+      this.render()
+    }
+  }
+
+  private resolveSessionLaunchTarget(
+    account: ConfiguredAccount,
+  ): AccountSessionLaunchTarget | null {
+    if (account.gameSlug === CUSTOM_GAME_SLUG) {
+      const launchUrl = normalizeSafeGameUrl(account.customLaunchUrl)
+
+      return launchUrl
+        ? { game: null, kind: 'custom', launchUrl }
+        : null
+    }
+
+    const game = this.games.find(
+      (candidate) => candidate.slug === account.gameSlug,
+    )
+    const launchUrl = normalizeSafeGameUrl(game?.launch_url)
+
+    return game && launchUrl
+      ? { game, kind: 'preset', launchUrl }
+      : null
+  }
+
+  private async openConfiguredAccount(
+    accountId: string,
+    button: HTMLButtonElement,
+  ): Promise<void> {
+    const account = this.configuredAccounts.find(
+      (candidate) => candidate.id === accountId,
+    )
+
+    if (!account) {
+      return
+    }
+
+    const launchTarget = this.resolveSessionLaunchTarget(account)
+
+    if (
+      !launchTarget
+      && (this.gamePresetService || account.gameSlug === CUSTOM_GAME_SLUG)
+    ) {
+      this.showSessionAlert(
+        account.gameSlug === CUSTOM_GAME_SLUG
+          ? 'A URL personalizada desta conta é inválida.'
+          : 'Este jogo não está disponível no catálogo atual.',
+      )
+      return
+    }
+
+    const existingOpening = this.sessionOpeningInFlight.get(accountId)
+
+    if (existingOpening) {
+      button.disabled = true
+      await existingOpening
+      if (button.isConnected) {
+        button.disabled = false
+      }
+      return
+    }
+
+    let finishOpening!: (succeeded: boolean) => void
+    const openingTracker = new Promise<boolean>((resolve) => {
+      finishOpening = resolve
+    })
+    this.sessionOpeningInFlight.set(accountId, openingTracker)
+
+    const revision = this.backendStateRevision
+    const userId = this.session?.user.id ?? null
+    let openingSucceeded = true
+    button.disabled = true
+    button.textContent = 'Abrindo…'
+
+    try {
+      const pendingRelease = this.sessionReleaseInFlight.get(account.id)
+
+      if (pendingRelease) {
+        await pendingRelease
+      }
+
+      if (this.failedSessionReleaseIds.has(account.id)) {
+        await Promise.resolve().then(() => this.sessionLauncher.close(account))
+        this.failedSessionReleaseIds.delete(account.id)
+      }
+
+      if (
+        this.destroyed
+        || revision !== this.backendStateRevision
+        || this.session?.user.id !== userId
+      ) {
+        return
+      }
+
+      const result = await this.permissionService.openSession(
+        account.id,
+        // A null target is retained only for headless/legacy integrations that
+        // construct AuthApp without a backend. The shipped app always supplies
+        // a validated remote preset or custom URL here.
+        () => this.sessionLauncher.open(account, launchTarget),
+        () => this.sessionLauncher.focus(account),
+        () => this.sessionLauncher.close(account),
+        account.gameSlug,
+      )
+
+      if (
+        this.destroyed
+        || revision !== this.backendStateRevision
+        || this.session?.user.id !== userId
+      ) {
+        return
+      }
+
+      if (result === 'limit_reached') {
+        this.dialogReturnFocus = { accountId, type: 'account' }
+        this.dialogAccountId = accountId
+        this.activeDialog = 'free-limit'
+      } else if (result === 'opened' || result === 'already_open') {
+        this.focusedAccountId = accountId
+        this.showSessionAlert('')
+      }
+
+      this.render()
+    } catch (error) {
+      if (error instanceof SessionCancellationCleanupError) {
+        this.failedSessionReleaseIds.add(accountId)
+      }
+      openingSucceeded = false
+      if (
+        this.destroyed
+        || revision !== this.backendStateRevision
+        || this.session?.user.id !== userId
+      ) {
+        return
+      }
+
+      const alert = this.root.querySelector<HTMLElement>('#session-alert')
+
+      if (alert) {
+        alert.textContent = 'Não foi possível abrir esta conta.'
+        alert.classList.add('is-visible')
+      }
+
+      button.disabled = false
+      button.textContent = 'Abrir'
+    } finally {
+      finishOpening(openingSucceeded)
+      if (this.sessionOpeningInFlight.get(accountId) === openingTracker) {
+        this.sessionOpeningInFlight.delete(accountId)
+      }
+    }
+  }
+
+  private async closeConfiguredAccount(
+    accountId: string,
+    button: HTMLButtonElement,
+  ): Promise<void> {
+    const account = this.configuredAccounts.find(
+      (candidate) => candidate.id === accountId,
+    )
+
+    if (!account) {
+      return
+    }
+
+    const revision = this.backendStateRevision
+    const userId = this.session?.user.id ?? null
+    button.disabled = true
+    button.textContent = 'Encerrando…'
+
+    try {
+      await this.permissionService.closeSession(
+        account.id,
+        () => this.sessionLauncher.close(account),
+      )
+      this.mutedAccountIds.delete(account.id)
+      this.sessionIssues.delete(account.id)
+
+      if (this.focusedAccountId === accountId) {
+        this.focusedAccountId = this.getActiveAccounts()[0]?.id ?? null
+      }
+
+      if (this.workspaceMode === 'grid' && this.getActiveAccounts().length <= 1) {
+        this.workspaceMode = 'account'
+        this.gridPageIndex = 0
+      }
+
+      if (
+        this.destroyed
+        || revision !== this.backendStateRevision
+        || this.session?.user.id !== userId
+      ) {
+        return
+      }
+
+      this.render()
+    } catch {
+      if (
+        this.destroyed
+        || revision !== this.backendStateRevision
+        || this.session?.user.id !== userId
+      ) {
+        return
+      }
+
+      const alert = this.root.querySelector<HTMLElement>('#session-alert')
+
+      if (alert) {
+        alert.textContent = 'Não foi possível encerrar esta conta.'
+        alert.classList.add('is-visible')
+      }
+
+      button.disabled = false
+      button.textContent = 'Encerrar'
+    }
+  }
+
+  private async clearConfiguredAccountData(
+    account: ConfiguredAccount,
+    button: HTMLButtonElement,
+  ): Promise<void> {
+    const revision = this.backendStateRevision
+    const userId = this.session?.user.id ?? null
+    button.disabled = true
+    button.textContent = 'Limpando…'
+
+    try {
+      await this.sessionOpeningInFlight.get(account.id)
+
+      if (this.permissionService.isSessionActive(account.id)) {
+        await this.permissionService.closeSession(
+          account.id,
+          () => this.sessionLauncher.clearData(account),
+        )
+      } else {
+        await Promise.resolve().then(() => this.sessionLauncher.clearData(account))
+      }
+
+      this.mutedAccountIds.delete(account.id)
+      this.sessionIssues.delete(account.id)
+      if (this.focusedAccountId === account.id) {
+        this.focusedAccountId = this.getActiveAccounts()[0]?.id ?? null
+      }
+      if (this.workspaceMode === 'grid' && this.getActiveAccounts().length <= 1) {
+        this.workspaceMode = 'account'
+        this.gridPageIndex = 0
+      }
+
+      if (
+        this.destroyed
+        || revision !== this.backendStateRevision
+        || this.session?.user.id !== userId
+      ) {
+        return
+      }
+
+      this.render()
+      this.showSessionAlert('Dados locais da conta removidos.')
+    } catch {
+      if (
+        this.destroyed
+        || revision !== this.backendStateRevision
+        || this.session?.user.id !== userId
+      ) {
+        return
+      }
+
+      this.showSessionAlert('Não foi possível limpar os dados desta conta.')
+      if (button.isConnected) {
+        button.disabled = false
+        button.textContent = 'Limpar dados'
+      }
+    }
+  }
+
+  private bindLoginForm(): void {
+    const form = this.root.querySelector<HTMLFormElement>('#login-form')
+
+    form?.addEventListener('submit', async (event) => {
+      event.preventDefault()
+      this.clearFormFeedback(form)
+      const email = this.valueOf(form, 'email')
+      const password = this.valueOf(form, 'password')
+      const errors: FieldErrors = {
+        email: validateEmail(email),
+        password: password ? null : 'Digite sua senha.',
+      }
+
+      if (!this.applyFieldErrors(form, errors)) {
+        return
+      }
+
+      this.setFormBusy(form, true, 'Entrando…')
+
+      try {
+        const session = await this.authService.signIn(email, password)
+        this.prepareAuthenticatedSession(session)
+        this.render()
+        void this.loadApplicationData(session)
+      } catch (error) {
+        this.showFormAlert(form, errorMessage(error))
+      } finally {
+        this.setFormBusy(form, false)
+      }
+    })
+  }
+
+  private bindSignupForm(): void {
+    const form = this.root.querySelector<HTMLFormElement>('#signup-form')
+
+    form?.addEventListener('submit', async (event) => {
+      event.preventDefault()
+      this.clearFormFeedback(form)
+      const email = this.valueOf(form, 'email')
+      const password = this.valueOf(form, 'password')
+      const confirmation = this.valueOf(form, 'passwordConfirmation')
+      const errors: FieldErrors = {
+        email: validateEmail(email),
+        password: validatePassword(password),
+        passwordConfirmation: validatePasswordConfirmation(
+          password,
+          confirmation,
+        ),
+      }
+
+      if (!this.applyFieldErrors(form, errors)) {
+        return
+      }
+
+      this.setFormBusy(form, true, 'Criando…')
+
+      try {
+        const result: SignUpResult = await this.authService.signUp(
+          email,
+          password,
+        )
+
+        if (result.session && !result.needsEmailConfirmation) {
+          this.prepareAuthenticatedSession(result.session)
+        } else {
+          this.session = result.session
+          this.currentView = 'confirm-email'
+        }
+        this.render()
+
+        if (result.session && !result.needsEmailConfirmation) {
+          void this.loadApplicationData(result.session)
+        }
+      } catch (error) {
+        this.showFormAlert(form, errorMessage(error))
+      } finally {
+        this.setFormBusy(form, false)
+      }
+    })
+  }
+
+  private bindForgotPasswordForm(): void {
+    const form = this.root.querySelector<HTMLFormElement>('#forgot-form')
+
+    form?.addEventListener('submit', async (event) => {
+      event.preventDefault()
+      this.clearFormFeedback(form)
+      const email = this.valueOf(form, 'email')
+
+      if (!this.applyFieldErrors(form, { email: validateEmail(email) })) {
+        return
+      }
+
+      this.setFormBusy(form, true, 'Enviando…')
+
+      try {
+        await this.authService.resetPassword(
+          email,
+          passwordRecoveryRedirectUrl(),
+        )
+        this.currentView = 'forgot-sent'
+        this.render()
+      } catch (error) {
+        this.showFormAlert(form, errorMessage(error))
+      } finally {
+        this.setFormBusy(form, false)
+      }
+    })
+  }
+
+  private bindResetPasswordForm(): void {
+    const form = this.root.querySelector<HTMLFormElement>('#reset-form')
+
+    form?.addEventListener('submit', async (event) => {
+      event.preventDefault()
+      this.clearFormFeedback(form)
+      const password = this.valueOf(form, 'password')
+      const confirmation = this.valueOf(form, 'passwordConfirmation')
+      const errors: FieldErrors = {
+        password: validatePassword(password),
+        passwordConfirmation: validatePasswordConfirmation(
+          password,
+          confirmation,
+        ),
+      }
+
+      if (!this.applyFieldErrors(form, errors)) {
+        return
+      }
+
+      this.setFormBusy(form, true, 'Salvando…')
+
+      try {
+        await this.authService.updatePassword(password)
+        this.recoveryMode = false
+        this.currentView = 'password-updated'
+        window.history.replaceState({}, '', window.location.pathname)
+        this.render()
+      } catch (error) {
+        this.showFormAlert(form, errorMessage(error))
+      } finally {
+        this.setFormBusy(form, false)
+      }
+    })
+  }
+
+  private bindLogoutButton(): void {
+    const button = this.root.querySelector<HTMLButtonElement>('#logout-button')
+
+    if (!button) {
+      return
+    }
+
+    this.bindButtonOnce(button, async () => {
+      button.disabled = true
+      button.textContent = 'Saindo…'
+
+      try {
+        await this.authService.signOut()
+        const sessionsReleased = await this.releaseTrackedSessions()
+        this.session = null
+        this.clearAuthenticatedState()
+        this.currentView = 'login'
+        if (!sessionsReleased) {
+          this.initialAlert = 'Algumas telas não puderam ser encerradas. Reinicie o aplicativo antes de abri-las novamente.'
+        }
+        this.render()
+      } catch (error) {
+        const alert = this.root.querySelector<HTMLElement>('#session-alert')
+
+        if (alert) {
+          alert.textContent = errorMessage(error)
+          alert.classList.add('is-visible')
+        }
+
+        button.disabled = false
+        button.textContent = 'Sair da conta'
+      }
+    })
+  }
+
+  private valueOf(form: HTMLFormElement, fieldName: string): string {
+    return String(new FormData(form).get(fieldName) ?? '')
+  }
+
+  private clearFormFeedback(form: HTMLFormElement): void {
+    form.querySelectorAll<HTMLInputElement>('input').forEach((input) => {
+      input.removeAttribute('aria-invalid')
+    })
+    form.querySelectorAll<HTMLElement>('.field__error').forEach((element) => {
+      element.textContent = ''
+    })
+    this.showFormAlert(form, '')
+  }
+
+  private applyFieldErrors(
+    form: HTMLFormElement,
+    errors: FieldErrors,
+  ): boolean {
+    let isValid = true
+
+    Object.entries(errors).forEach(([fieldName, message]) => {
+      if (!message) {
+        return
+      }
+
+      isValid = false
+      const input = form.elements.namedItem(fieldName)
+
+      if (input instanceof HTMLInputElement) {
+        input.setAttribute('aria-invalid', 'true')
+        const errorElement = document.querySelector<HTMLElement>(
+          `#${input.id}-error`,
+        )
+
+        if (errorElement) {
+          errorElement.textContent = message
+        }
+      }
+    })
+
+    if (!isValid) {
+      form.querySelector<HTMLInputElement>('[aria-invalid="true"]')?.focus()
+    }
+
+    return isValid
+  }
+
+  private showFormAlert(form: HTMLFormElement, message: string): void {
+    const alert = form.parentElement?.querySelector<HTMLElement>('#form-alert')
+
+    if (!alert) {
+      return
+    }
+
+    alert.textContent = message
+    alert.classList.toggle('is-visible', Boolean(message))
+  }
+
+  private setFormBusy(
+    form: HTMLFormElement,
+    isBusy: boolean,
+    busyLabel?: string,
+  ): void {
+    if (!form.isConnected) {
+      return
+    }
+
+    form.setAttribute('aria-busy', String(isBusy))
+    form.querySelectorAll<HTMLInputElement>('input').forEach((input) => {
+      input.readOnly = isBusy
+    })
+    const button = form.querySelector<HTMLButtonElement>('[data-submit]')
+
+    if (!button) {
+      return
+    }
+
+    if (isBusy) {
+      button.dataset.idleLabel = button.textContent?.trim() ?? ''
+      button.disabled = true
+      button.innerHTML = `<span class="spinner" aria-hidden="true"></span>${escapeHtml(
+        busyLabel ?? 'Aguarde…',
+      )}`
+    } else {
+      button.disabled = false
+      button.textContent = button.dataset.idleLabel ?? button.textContent
+    }
+  }
+
+  private updateConnectivityBanner(): void {
+    const banner = this.root.querySelector<HTMLElement>('#connectivity-banner')
+    const topbarStatus = this.root.querySelector<HTMLElement>('.topbar__status span:last-child')
+
+    banner?.classList.toggle('is-hidden', navigator.onLine)
+
+    if (topbarStatus) {
+      topbarStatus.textContent = navigator.onLine ? 'Conectado à internet' : 'Sem conexão'
+    }
+  }
+
+  private showSessionAlert(message: string): void {
+    const alert = this.root.querySelector<HTMLElement>('#session-alert')
+
+    if (!alert) {
+      return
+    }
+
+    alert.textContent = message
+    alert.classList.toggle('is-visible', Boolean(message))
+  }
+
+  private focusCurrentView(): void {
+    queueMicrotask(() => {
+      const heading = this.activeDialog
+        ? this.root.querySelector<HTMLElement>('#dialog-title')
+        : this.root.querySelector<HTMLElement>('h1')
+
+      if (heading) {
+        heading.tabIndex = -1
+        heading.focus()
+      }
+    })
+  }
+}
