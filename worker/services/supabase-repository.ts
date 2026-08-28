@@ -467,6 +467,43 @@ export class SupabaseRepository implements
     return data as PaymentRecord | null
   }
 
+  async getPaymentById(paymentId: string): Promise<PaymentRecord | null> {
+    const { data, error } = await this.client
+      .from('payments')
+      .select([
+        'id', 'user_id', 'provider', 'provider_payment_id',
+        'provider_external_reference', 'product_code', 'amount', 'currency',
+        'status', 'raw_status', 'fulfilled_at', 'paid_at',
+        'provider_expires_at', 'failure_reason', 'metadata',
+        'created_at', 'updated_at',
+      ].join(','))
+      .eq('id', paymentId)
+      .maybeSingle()
+    if (error) throwDataError(error)
+    return data as PaymentRecord | null
+  }
+
+  async listPendingMercadoPagoPayments(limit: number): Promise<PaymentRecord[]> {
+    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1_000).toISOString()
+    const { data, error } = await this.client
+      .from('payments')
+      .select([
+        'id', 'user_id', 'provider', 'provider_payment_id',
+        'provider_external_reference', 'product_code', 'amount', 'currency',
+        'status', 'raw_status', 'fulfilled_at', 'paid_at',
+        'provider_expires_at', 'failure_reason', 'metadata',
+        'created_at', 'updated_at',
+      ].join(','))
+      .eq('provider', 'mercadopago')
+      .in('status', ['pending', 'in_process'])
+      .not('provider_payment_id', 'is', null)
+      .gte('created_at', cutoff)
+      .order('updated_at', { ascending: true })
+      .limit(Math.max(1, Math.min(limit, 100)))
+    if (error) throwDataError(error)
+    return (data ?? []) as unknown as PaymentRecord[]
+  }
+
   async processMercadoPagoPayment(
     snapshot: MercadoPagoSnapshot,
     eventId: string,

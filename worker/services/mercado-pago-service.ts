@@ -364,29 +364,74 @@ export class MercadoPagoPaymentService implements PaymentService {
     let payment = await this.repository.getUserPayment(userId, paymentId)
     if (!payment) return null
 
-    if (
-      payment.provider_payment_id
-      && ['pending', 'in_process'].includes(payment.status)
-    ) {
-      const snapshot = await this.getProviderPayment(payment.provider_payment_id)
-      if (snapshot.external_reference !== payment.id) {
-        throw new ApiError(502, 'payment_provider_error', 'Referência de pagamento inválida.')
-      }
-      const eventId = `refresh:${snapshot.id}:${snapshot.date_last_updated ?? snapshot.status}`
-      await this.repository.processMercadoPagoPayment(
-        snapshot,
-        eventId,
-        await this.payloadHash(JSON.stringify(snapshot)),
-        {
-          source: 'status_refresh',
-          provider_status: snapshot.status,
-        },
-      )
+    if (this.shouldReconcile(payment)) {
+      await this.reconcileRecord(payment, 'status_refresh')
       payment = await this.repository.getUserPayment(userId, paymentId)
       if (!payment) return null
     }
 
     return { payment: basePaymentResponse(payment) }
+  }
+
+  private shouldReconcile(payment: PaymentRecord): payment is PaymentRecord & {
+    provider_payment_id: string
+  } {
+    return Boolean(
+      payment.provider_payment_id
+      && ['pending', 'in_process'].includes(payment.status),
+    )
+  }
+
+  private async reconcileRecord(
+    payment: PaymentRecord & { provider_payment_id: string },
+    source: 'admin_refresh' | 'scheduled_refresh' | 'status_refresh',
+  ): Promise<void> {
+    const snapshot = await this.getProviderPayment(payment.provider_payment_id)
+    if (snapshot.external_reference !== payment.id) {
+      throw new ApiError(502, 'payment_provider_error', 'Referência de pagamento inválida.')
+    }
+    const eventId = `${source}:${snapshot.id}:${snapshot.date_last_updated ?? snapshot.status}`
+    await this.repository.processMercadoPagoPayment(
+      snapshot,
+      eventId,
+      await this.payloadHash(JSON.stringify(snapshot)),
+      { source, provider_status: snapshot.status },
+    )
+  }
+
+  async reconcilePayment(paymentId: string): Promise<Record<string, unknown> | null> {
+    let payment = await this.repository.getPaymentById(paymentId)
+    if (!payment) return null
+    if (this.shouldReconcile(payment)) {
+      await this.reconcileRecord(payment, 'admin_refresh')
+      payment = await this.repository.getPaymentById(paymentId)
+      if (!payment) return null
+    }
+    return { payment: basePaymentResponse(payment) }
+  }
+
+  async reconcilePendingPayments(limit = 25): Promise<{
+    checked: number
+    failed: number
+    updated: number
+  }> {
+    const payments = await this.repository.listPendingMercadoPagoPayments(limit)
+    let failed = 0
+    let updated = 0
+    for (const payment of payments) {
+      if (!this.shouldReconcile(payment)) continue
+      try {
+        await this.reconcileRecord(payment, 'scheduled_refresh')
+        updated += 1
+      } catch (error) {
+        failed += 1
+        console.error('Scheduled Mercado Pago reconciliation failed', {
+          paymentId: payment.id,
+          error: error instanceof ApiError ? error.code : 'unexpected_error',
+        })
+      }
+    }
+    return { checked: payments.length, failed, updated }
   }
 
   private async payloadHash(payload: string): Promise<string> {

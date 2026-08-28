@@ -86,6 +86,17 @@ class FakePaymentRepository implements PaymentRepository {
     return userId === USER_ID && paymentId === PAYMENT_ID ? this.current : null
   }
 
+  async getPaymentById(paymentId: string): Promise<PaymentRecord | null> {
+    return paymentId === PAYMENT_ID ? this.current : null
+  }
+
+  async listPendingMercadoPagoPayments(): Promise<PaymentRecord[]> {
+    return this.current.provider_payment_id
+      && ['pending', 'in_process'].includes(this.current.status)
+      ? [this.current]
+      : []
+  }
+
   async processMercadoPagoPayment(
     snapshot: MercadoPagoSnapshot,
     eventId: string,
@@ -300,6 +311,36 @@ describe('MercadoPagoPaymentService', () => {
       },
     })
     expect(repository.events.size).toBe(1)
+    expect(repository.current.fulfilled_at).not.toBeNull()
+  })
+
+  it('reconciles pending payments automatically without user interaction', async () => {
+    repository.current = payment({
+      provider_payment_id: '987654321',
+      status: 'pending',
+      raw_status: 'pending',
+    })
+    const fetchImplementation = vi.fn(
+      async () => Response.json(providerPayment('approved')),
+    ) as unknown as typeof fetch
+    const service = new MercadoPagoPaymentService(repository, {
+      accessToken: 'TEST-ACCESS-TOKEN',
+      fetchImplementation,
+    })
+
+    await expect(service.reconcilePendingPayments()).resolves.toEqual({
+      checked: 1,
+      failed: 0,
+      updated: 1,
+    })
+    expect(repository.processCalls[0]).toMatchObject({
+      snapshot: { status: 'approved' },
+      providerData: {
+        source: 'scheduled_refresh',
+        provider_status: 'approved',
+      },
+    })
+    expect(repository.current.status).toBe('approved')
     expect(repository.current.fulfilled_at).not.toBeNull()
   })
 

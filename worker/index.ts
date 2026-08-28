@@ -56,4 +56,22 @@ export default {
       return apiErrorResponse(error)
     }
   },
+  async scheduled(
+    _controller: { cron: string; scheduledTime: number },
+    environment: WorkerEnvironment,
+    context: { waitUntil(promise: Promise<unknown>): void },
+  ): Promise<void> {
+    const clients = createSupabaseClients(environment)
+    const repository = new SupabaseRepository(clients.data)
+    const paymentService = new MercadoPagoPaymentService(repository, {
+      accessToken: environment.MERCADOPAGO_ACCESS_TOKEN,
+      webhookSecret: environment.MERCADOPAGO_WEBHOOK_SECRET,
+      webhookUrl: environment.MERCADOPAGO_WEBHOOK_URL,
+    })
+    context.waitUntil(
+      paymentService.reconcilePendingPayments(25).then((result) => {
+        console.log('Mercado Pago reconciliation completed', result)
+      }),
+    )
+  },
 }

@@ -287,6 +287,7 @@ export function createApi(
         pathname,
         user.id,
         dependencies.adminRepository,
+        dependencies.paymentService,
       )
     }
 

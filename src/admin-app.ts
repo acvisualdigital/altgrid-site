@@ -52,6 +52,7 @@ type AdminBackend = Pick<
   | 'getAdminUser'
   | 'grantAdminProDays'
   | 'resetAdminDevice'
+  | 'reconcileAdminPayment'
   | 'reviewAdminChatReport'
   | 'revokeAdminDevice'
   | 'revokeAdminLicense'
@@ -1017,7 +1018,7 @@ export class AdminApp {
       <div class="admin-list-column">
         <div class="admin-table-wrap">
           <table class="admin-table">
-            <thead><tr><th>Quando</th><th>Usuário</th><th>Produto</th><th>Valor</th><th>Status</th><th>Pago em</th><th>Ativado em</th><th>Falha</th></tr></thead>
+            <thead><tr><th>Quando</th><th>Usuário</th><th>Produto</th><th>Valor</th><th>Status</th><th>Pago em</th><th>Ativado em</th><th>Falha</th><th>Ação</th></tr></thead>
             <tbody>
               ${this.paymentLogs.length > 0
                 ? this.paymentLogs.map((payment) => `
@@ -1030,9 +1031,12 @@ export class AdminApp {
                       <td>${payment.paid_at ? escapeHtml(formatDate(payment.paid_at)) : '—'}</td>
                       <td>${payment.fulfilled_at ? escapeHtml(formatDate(payment.fulfilled_at)) : '—'}</td>
                       <td>${escapeHtml(payment.failure_reason ?? '—')}</td>
+                      <td>${payment.provider_payment_id && ['pending', 'in_process'].includes(payment.status)
+                        ? `<button class="text-button" data-reconcile-payment="${escapeHtml(payment.id)}" type="button">Consultar Mercado Pago</button>`
+                        : '—'}</td>
                     </tr>
                   `).join('')
-                : '<tr><td colspan="8" class="admin-empty">Nenhum pagamento registrado.</td></tr>'}
+                : '<tr><td colspan="9" class="admin-empty">Nenhum pagamento registrado.</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -1181,6 +1185,13 @@ export class AdminApp {
     this.bindMutationButtons('[data-reset-device]', async (button) => {
       await this.backend.resetAdminDevice(button.dataset.resetDevice!)
       await this.refreshSelectedUser('Device resetado.')
+    })
+    this.bindMutationButtons('[data-reconcile-payment]', async (button) => {
+      const result = await this.backend.reconcileAdminPayment(
+        button.dataset.reconcilePayment!,
+      )
+      this.notice = `Pagamento consultado: ${result.payment.status}.`
+      await this.loadTab('payments')
     })
     this.root.querySelectorAll<HTMLFormElement>('[data-chat-restriction]')
       .forEach((form) => {

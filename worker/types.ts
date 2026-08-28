@@ -228,6 +228,8 @@ export interface PaymentRepository {
     reason: string,
   ): Promise<void>
   getUserPayment(userId: string, paymentId: string): Promise<PaymentRecord | null>
+  getPaymentById(paymentId: string): Promise<PaymentRecord | null>
+  listPendingMercadoPagoPayments(limit: number): Promise<PaymentRecord[]>
   processMercadoPagoPayment(
     snapshot: MercadoPagoSnapshot,
     eventId: string,
@@ -243,6 +245,12 @@ export interface PaymentService {
     requestKey: string,
   ): Promise<Record<string, unknown>>
   getPayment(userId: string, paymentId: string): Promise<Record<string, unknown> | null>
+  reconcilePayment(paymentId: string): Promise<Record<string, unknown> | null>
+  reconcilePendingPayments(limit?: number): Promise<{
+    checked: number
+    failed: number
+    updated: number
+  }>
   handleWebhook(request: Request): Promise<void>
 }
 

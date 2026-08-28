@@ -35,7 +35,7 @@ import {
 } from './lib/admin-validation'
 import { ApiError, jsonResponse } from './lib/api-error'
 import { decodePathSegment, requireUuid } from './lib/validation'
-import type { AdminRepository } from './types'
+import type { AdminRepository, PaymentService } from './types'
 
 export function adminAllowedMethods(pathname: string): string[] | null {
   if (pathname === '/v1/admin/announcements') return ['GET', 'POST']
@@ -60,6 +60,7 @@ export function adminAllowedMethods(pathname: string): string[] | null {
     || /^\/v1\/admin\/chat\/reports\/[^/]+\/review$/.test(pathname)
     || /^\/v1\/admin\/chat\/users\/[^/]+\/restriction(\/clear)?$/.test(pathname)
     || /^\/v1\/admin\/chat\/messages\/[^/]+\/delete$/.test(pathname)
+    || /^\/v1\/admin\/payments\/[^/]+\/reconcile$/.test(pathname)
   ) return ['POST']
 
   if (
@@ -93,6 +94,7 @@ export async function handleAdminRequest(
   pathname: string,
   actorUserId: string,
   repository: AdminRepository,
+  paymentService?: PaymentService,
 ): Promise<Response> {
   if (pathname === '/v1/admin/session') {
     const body: AdminSessionResponse = {
@@ -324,6 +326,19 @@ export async function handleAdminRequest(
       pagination: pagination(page, pageSize, result.total),
     }
     return jsonResponse(body)
+  }
+
+  const paymentReconcileMatch = /^\/v1\/admin\/payments\/([^/]+)\/reconcile$/.exec(pathname)
+  if (paymentReconcileMatch) {
+    if (!paymentService) {
+      throw new ApiError(503, 'payments_unavailable', 'Pagamento indisponível.')
+    }
+    const paymentId = routeId(paymentReconcileMatch, 'payment id')
+    const result = await paymentService.reconcilePayment(paymentId)
+    if (!result) {
+      throw new ApiError(404, 'payment_not_found', 'Pagamento não encontrado.')
+    }
+    return jsonResponse(result)
   }
 
   throw new ApiError(404, 'not_found', 'Endpoint não encontrado.')

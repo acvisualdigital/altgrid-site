@@ -124,6 +124,12 @@ describe('platform Worker endpoints', () => {
       getPayment: vi.fn(async () => ({
         payment: { id: PAYMENT_ID, status: 'approved' },
       })),
+      reconcilePayment: vi.fn(async () => ({
+        payment: { id: PAYMENT_ID, status: 'approved' },
+      })),
+      reconcilePendingPayments: vi.fn(async () => ({
+        checked: 0, failed: 0, updated: 0,
+      })),
       handleWebhook: vi.fn(async () => undefined),
     }
     licenseSnapshotService = {

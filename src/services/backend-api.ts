@@ -431,6 +431,14 @@ export class BackendApi {
     )
   }
 
+  reconcileAdminPayment(paymentId: string): Promise<PixPaymentResponse> {
+    return this.adminJsonMutation<PixPaymentResponse>(
+      `/v1/admin/payments/${encodeURIComponent(paymentId)}/reconcile`,
+      'POST',
+      {},
+    )
+  }
+
   updateAdminProduct(
     productId: string,
     input: AdminProductUpdate,

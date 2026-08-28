@@ -504,6 +504,7 @@ export class AuthApp {
   private pixPayment: PixPayment | null = null
   private paymentLoading = false
   private paymentError: string | null = null
+  private paymentPollTimer: ReturnType<typeof setTimeout> | null = null
   private chatNicknameSaving = false
   private selectedChatGameChannelIds: Set<string> | null = null
   private accountOrderChanged = false
@@ -698,6 +699,7 @@ export class AuthApp {
 
   destroy(): void {
     this.destroyed = true
+    this.stopPaymentPolling()
     this.stopPresenceTracking()
     void this.releaseTrackedSessions()
     this.sessionSurfaceManager?.clear()
@@ -1123,6 +1125,7 @@ export class AuthApp {
 
   private clearAuthenticatedState(): void {
     this.stopPresenceTracking()
+    this.stopPaymentPolling()
     this.backendStateRevision += 1
     void this.releaseTrackedSessions()
     this.backendUserId = null
@@ -4865,6 +4868,9 @@ export class AuthApp {
 
   private closeDialog(): void {
     const returnFocus = this.dialogReturnFocus
+    if (this.activeDialog === 'payment') {
+      this.stopPaymentPolling()
+    }
     this.activeDialog = null
     this.dialogError = null
     this.dialogAccountId = null
@@ -4955,6 +4961,7 @@ export class AuthApp {
     try {
       const response = await this.backendApi.createPixPayment(productCode)
       this.pixPayment = response.payment
+      this.startPaymentPolling()
     } catch (error) {
       this.paymentError = backendErrorMessage(error)
     } finally {
@@ -4963,14 +4970,14 @@ export class AuthApp {
     }
   }
 
-  private async refreshPixPayment(button: HTMLButtonElement): Promise<void> {
+  private async refreshPixPayment(button?: HTMLButtonElement): Promise<void> {
     if (!this.backendApi?.getPayment || !this.pixPayment) {
       return
     }
 
     this.paymentLoading = true
     this.paymentError = null
-    button.disabled = true
+    if (button) button.disabled = true
 
     try {
       const response = await this.backendApi.getPayment(this.pixPayment.id)
@@ -4980,12 +4987,49 @@ export class AuthApp {
         && ['approved', 'fulfilled', 'paid'].includes(response.payment.status)
       ) {
         void this.loadApplicationData(this.session, true)
+        this.stopPaymentPolling()
       }
     } catch (error) {
       this.paymentError = backendErrorMessage(error)
     } finally {
       this.paymentLoading = false
       this.render()
+    }
+  }
+
+  private startPaymentPolling(): void {
+    this.stopPaymentPolling()
+    const poll = async (): Promise<void> => {
+      if (
+        this.destroyed
+        || this.activeDialog !== 'payment'
+        || !this.pixPayment
+        || ['approved', 'fulfilled', 'paid', 'cancelled', 'rejected', 'refunded']
+          .includes(this.pixPayment.status)
+      ) {
+        this.stopPaymentPolling()
+        return
+      }
+      if (!this.paymentLoading) {
+        await this.refreshPixPayment()
+      }
+      if (this.activeDialog === 'payment' && this.paymentPollTimer === null) {
+        this.paymentPollTimer = setTimeout(() => {
+          this.paymentPollTimer = null
+          void poll()
+        }, 5_000)
+      }
+    }
+    this.paymentPollTimer = setTimeout(() => {
+      this.paymentPollTimer = null
+      void poll()
+    }, 5_000)
+  }
+
+  private stopPaymentPolling(): void {
+    if (this.paymentPollTimer !== null) {
+      clearTimeout(this.paymentPollTimer)
+      this.paymentPollTimer = null
     }
   }
 
