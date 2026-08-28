@@ -10,6 +10,7 @@ const electronMocks = vi.hoisted(() => ({
   app: {
     getVersion: vi.fn(() => '1.0.0'),
     isPackaged: false,
+    quit: vi.fn(),
   },
 }))
 const updaterMocks = vi.hoisted(() => {
@@ -81,6 +82,7 @@ describe('UpdaterService', () => {
     vi.useRealTimers()
     electronMocks.app.isPackaged = false
     electronMocks.app.getVersion.mockReset().mockReturnValue('1.0.0')
+    electronMocks.app.quit.mockReset()
     delete process.env.ALTGRID_UPDATE_OWNER
     delete process.env.ALTGRID_UPDATE_REPO
     delete process.env.PORTABLE_EXECUTABLE_FILE
@@ -253,7 +255,8 @@ describe('UpdaterService', () => {
       version: '2.1.0',
     })
     expect(service.quitAndInstall()).toBe(true)
-    expect(updaterMocks.autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true)
+    expect(electronMocks.app.quit).toHaveBeenCalledOnce()
+    expect(updaterMocks.autoUpdater.quitAndInstall).not.toHaveBeenCalled()
     expect(listener).toHaveBeenCalled()
     expect(send).toHaveBeenLastCalledWith(
       IPC_CHANNELS.updater.event,

@@ -215,7 +215,11 @@ export class UpdaterService {
       return false
     }
 
-    autoUpdater.quitAndInstall(false, true)
+    // autoInstallOnAppQuit applies the downloaded package after Electron has
+    // fully released its BrowserWindows, WebContents and session partitions.
+    // Starting NSIS directly here races those processes and can make the old
+    // uninstaller report that AltGrid is still open.
+    app.quit()
     return true
   }
 
