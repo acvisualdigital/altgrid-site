@@ -22,6 +22,7 @@ import type {
   PublicConfigResponse,
   PublicGamesResponse,
   PublicProductsResponse,
+  ReferralProgramResponse,
   RegisterDeviceInput,
   ResolvedEntitlements,
   UpdateProfileInput,
@@ -152,6 +153,10 @@ export class BackendApi {
 
   getMe(): Promise<MeResponse> {
     return this.privateRead<MeResponse>('/v1/me')
+  }
+
+  getReferralProgram(): Promise<ReferralProgramResponse> {
+    return this.privateRead<ReferralProgramResponse>('/v1/referrals')
   }
 
   updateProfile(input: UpdateProfileInput): Promise<{ profile: MeResponse['profile'] }> {

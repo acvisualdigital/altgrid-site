@@ -6,6 +6,7 @@ import type {
 } from '@supabase/supabase-js'
 
 import type { Database } from '../types/database'
+import { normalizeReferralCode } from '../lib/auth-validation'
 
 export type AuthServiceErrorCode =
   | 'connection_failed'
@@ -158,11 +159,16 @@ export class AuthService {
   async signUp(
     email: string,
     password: string,
+    referralCode = '',
   ): Promise<SignUpResult> {
     return this.execute(async () => {
+      const normalizedReferralCode = normalizeReferralCode(referralCode)
       const { data, error } = await this.client.auth.signUp({
         email: email.trim(),
         password,
+        ...(normalizedReferralCode
+          ? { options: { data: { referral_code: normalizedReferralCode } } }
+          : {}),
       })
 
       if (error) {

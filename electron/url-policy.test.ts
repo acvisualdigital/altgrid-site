@@ -53,13 +53,17 @@ describe('desktop URL policies', () => {
     )).toBe(false)
   })
 
-  it('accepts only password-recovery deep links for the AltGrid shell', () => {
+  it('accepts only recovery or strictly formatted referral deep links', () => {
     const recovery = 'altgrid://app/?auth=recovery#access_token=opaque&type=recovery'
 
     expect(parseTrustedRecoveryDeepLink(recovery)).toBe(recovery)
     expect(parseTrustedRecoveryDeepLink('altgrid://app/admin')).toBeNull()
     expect(parseTrustedRecoveryDeepLink('altgrid://evil/?auth=recovery')).toBeNull()
     expect(parseTrustedRecoveryDeepLink('https://app/?auth=recovery')).toBeNull()
+    expect(parseTrustedRecoveryDeepLink('altgrid://app/?ref=hunt-abcdefgh'))
+      .toBe('altgrid://app/?ref=HUNT-ABCDEFGH')
+    expect(parseTrustedRecoveryDeepLink('altgrid://app/?ref=HUNT-ABCDEFGH&admin=true'))
+      .toBeNull()
     expect(findTrustedRecoveryDeepLink(['AltGrid.exe', '--flag', recovery]))
       .toBe(recovery)
   })
@@ -73,5 +77,9 @@ describe('desktop URL policies', () => {
       'altgrid://evil/?auth=recovery',
       'altgrid://app/',
     )).toBeNull()
+    expect(recoveryDeepLinkToShellUrl(
+      'altgrid://app/?ref=HUNT-ABCDEFGH',
+      'altgrid://app/',
+    )).toBe('altgrid://app/?ref=HUNT-ABCDEFGH')
   })
 })

@@ -79,6 +79,39 @@ describe('BackendApi', () => {
     expect(new Headers(init.headers).get('Accept')).toBe('application/json')
   })
 
+  it('loads the referral program through an authenticated request', async () => {
+    const auth = authDouble()
+    const fetcher = vi.fn().mockResolvedValue(json({
+      code: 'HUNT-ABCDEFGH',
+      share_url: 'https://altgrid.com.br/?ref=HUNT-ABCDEFGH',
+      campaign: {
+        id: 'campaign-id',
+        name: 'Lançamento',
+        starts_at: '2026-08-28T03:00:00.000Z',
+        ends_at: '2026-10-01T02:59:59.000Z',
+        status: 'active',
+      },
+      stats: { total: 0, valid: 0, pending: 0, rejected: 0, pro_days: 0, position: null },
+      leaderboard: [],
+      recent_referrals: [],
+    }))
+    const api = new BackendApi({
+      authService: auth.service,
+      baseUrl: 'https://api.example.com',
+      fetch: fetcher,
+    })
+
+    await expect(api.getReferralProgram()).resolves.toMatchObject({
+      code: 'HUNT-ABCDEFGH',
+      stats: { pro_days: 0 },
+    })
+    expect(fetcher.mock.calls[0]?.[0]).toBe(
+      'https://api.example.com/v1/referrals',
+    )
+    expect(new Headers((fetcher.mock.calls[0]?.[1] as RequestInit).headers)
+      .get('Authorization')).toBe('Bearer old-access-token')
+  })
+
   it('loads health and app config through public central-client requests', async () => {
     const auth = authDouble()
     const fetcher = vi.fn()

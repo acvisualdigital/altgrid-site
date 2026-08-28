@@ -9,6 +9,8 @@ import {
   validateEmail,
   validatePassword,
   validatePasswordConfirmation,
+  normalizeReferralCode,
+  validateReferralCode,
 } from './lib/auth-validation'
 import {
   AuthService,
@@ -56,6 +58,7 @@ import type {
   PublicConfigResponse,
   PublicGame,
   PublicProduct,
+  ReferralProgramResponse,
   ResolvedEntitlements,
 } from './types/backend-api'
 import type { PlanCode } from './types/database'
@@ -86,6 +89,7 @@ type ActiveDialog =
   | 'payment'
   | 'plans'
   | 'rename-account'
+  | 'referrals'
   | 'settings'
   | 'shortcuts'
   | 'update'
@@ -105,6 +109,7 @@ type ApplicationBackend = Pick<BackendApi, 'getEntitlements' | 'getGames' | 'get
     | 'getHealth'
     | 'getPayment'
     | 'getProducts'
+    | 'getReferralProgram'
     | 'sendPresenceHeartbeat'
     | 'updateProfile'
   >>
@@ -194,6 +199,26 @@ const ECO_MODE_STORAGE_KEY = 'altgrid.preference.eco-mode.v1'
 const ECO_BACKGROUND_FPS_STORAGE_KEY = 'altgrid.preference.eco-background-fps.v1'
 const SESSION_FPS_STORAGE_KEY = 'altgrid.preference.session-fps.v1'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'altgrid.preference.sidebar-collapsed.v1'
+const REFERRAL_CODE_STORAGE_KEY = 'altgrid.referral-code.v1'
+
+function initialReferralCode(): string {
+  try {
+    const queryCode = normalizeReferralCode(
+      new URLSearchParams(window.location.search).get('ref') ?? '',
+    )
+    if (validateReferralCode(queryCode) === null && queryCode) {
+      localStorage.setItem(REFERRAL_CODE_STORAGE_KEY, queryCode)
+      return queryCode
+    }
+
+    const storedCode = normalizeReferralCode(
+      localStorage.getItem(REFERRAL_CODE_STORAGE_KEY) ?? '',
+    )
+    return validateReferralCode(storedCode) === null ? storedCode : ''
+  } catch {
+    return ''
+  }
+}
 
 export type EcoBackgroundFps = 10 | 20 | 30
 
@@ -499,6 +524,10 @@ export class AuthApp {
   private announcements: PublicAnnouncement[] = []
   private products: PublicProduct[] = []
   private appMetrics: AppMetricsResponse | null = null
+  private referralProgram: ReferralProgramResponse | null = null
+  private referralLoading = false
+  private referralError: string | null = null
+  private signupReferralCode = initialReferralCode()
   private presenceHeartbeatTimer: ReturnType<typeof setInterval> | null = null
   private presenceUserId: string | null = null
   private pixPayment: PixPayment | null = null
@@ -668,7 +697,9 @@ export class AuthApp {
         this.prepareAuthenticatedSession(session)
       } else {
         this.session = session
-        this.currentView = this.recoveryMode ? 'reset' : 'login'
+        this.currentView = this.recoveryMode
+          ? 'reset'
+          : this.signupReferralCode ? 'signup' : 'login'
       }
     } catch (error) {
       if (
@@ -1144,6 +1175,9 @@ export class AuthApp {
     this.announcements = []
     this.products = []
     this.appMetrics = null
+    this.referralProgram = null
+    this.referralLoading = false
+    this.referralError = null
     this.notificationCenter.setAnnouncements([])
     this.pixPayment = null
     this.paymentError = null
@@ -1568,6 +1602,41 @@ export class AuthApp {
     return request
   }
 
+  private async loadReferralProgram(force = false): Promise<void> {
+    if (!this.backendApi?.getReferralProgram || this.referralLoading) {
+      if (!this.backendApi?.getReferralProgram) {
+        this.referralError = 'O programa de indicações está temporariamente indisponível.'
+        this.render()
+      }
+      return
+    }
+
+    if (this.referralProgram && !force) return
+
+    const userId = this.session?.user.id
+    if (!userId) return
+
+    this.referralLoading = true
+    this.referralError = null
+    this.render()
+
+    try {
+      const program = await this.backendApi.getReferralProgram()
+      if (!this.destroyed && this.session?.user.id === userId) {
+        this.referralProgram = program
+      }
+    } catch (error) {
+      if (!this.destroyed && this.session?.user.id === userId) {
+        this.referralError = backendErrorMessage(error)
+      }
+    } finally {
+      if (!this.destroyed && this.session?.user.id === userId) {
+        this.referralLoading = false
+        this.render()
+      }
+    }
+  }
+
   private async refreshGamePresets(): Promise<void> {
     if (!this.gamePresetService || !this.session || this.destroyed) {
       return
@@ -1803,6 +1872,8 @@ export class AuthApp {
                 ? [this.games, this.gameCatalogError]
                 : this.activeDialog === 'my-plan'
                   ? this.me
+                  : this.activeDialog === 'referrals'
+                    ? [this.referralLoading, this.referralError, this.referralProgram]
         : this.configuredAccounts.find(
             (account) => account.id === this.dialogAccountId,
           )?.displayName ?? null
@@ -2125,6 +2196,12 @@ export class AuthApp {
             'Confirmar senha',
             'new-password',
           )}
+          <div class="field field--referral">
+            <label for="signup-referral-code">Código de indicação <small>opcional</small></label>
+            <input id="signup-referral-code" name="referralCode" type="text" inputmode="text" autocomplete="off" maxlength="13" placeholder="HUNT-XXXXXXXX" value="${escapeHtml(this.signupReferralCode)}" aria-describedby="signup-referral-code-help signup-referral-code-error" />
+            <small id="signup-referral-code-help">Se você recebeu um link, o código aparece preenchido automaticamente.</small>
+            <span class="field__error" id="signup-referral-code-error"></span>
+          </div>
 
           <button class="button button--primary" data-submit type="submit">
             Criar conta
@@ -2260,6 +2337,7 @@ export class AuthApp {
 
         <nav class="sidebar-menu" aria-label="Preferências">
           ${this.chatService ? `<button data-open-chat type="button" aria-pressed="${this.chatService.getState().open}"><span aria-hidden="true">◉</span> ${this.chatService.getState().open ? 'Fechar chat' : 'Chat'}</button>` : ''}
+          <button data-open-dialog="referrals" type="button"><span aria-hidden="true">✦</span> Indique e ganhe</button>
           <button data-open-dialog="settings" type="button"><span aria-hidden="true">⚙</span> Configurações</button>
           <button data-open-dialog="shortcuts" type="button"><span aria-hidden="true">⌨</span> Atalhos</button>
           <button data-open-dialog="about" type="button"><span aria-hidden="true">ⓘ</span> Sobre o AltGrid</button>
@@ -2282,6 +2360,7 @@ export class AuthApp {
             </div>
             <div class="sidebar-profile-popover__actions">
               <button class="menu-item" data-open-dialog="my-plan" type="button"><span><i aria-hidden="true">◆</i>Meu plano</span><b aria-hidden="true">›</b></button>
+              <button class="menu-item" data-open-dialog="referrals" type="button"><span><i aria-hidden="true">✦</i>Indique e ganhe</span><b aria-hidden="true">›</b></button>
               <button class="menu-item" data-open-dialog="about" type="button"><span><i aria-hidden="true">◎</i>Minha conta</span><b aria-hidden="true">›</b></button>
               <button class="menu-item" data-open-dialog="settings" type="button"><span><i aria-hidden="true">⚙</i>Configurações</span><b aria-hidden="true">›</b></button>
             </div>
@@ -2338,6 +2417,7 @@ export class AuthApp {
               <span><span class="profile-name-with-plan"><strong>${escapeHtml(this.profileDisplayName())}</strong>${profilePlanBadge}</span><small>${escapeHtml(this.renderPlanName())}</small></span>
             </div>
             <button class="menu-item" data-open-dialog="my-plan" type="button">Meu plano <b aria-hidden="true">›</b></button>
+            <button class="menu-item" data-open-dialog="referrals" type="button">Indique e ganhe <b aria-hidden="true">›</b></button>
             <button class="menu-item" data-open-dialog="settings" type="button">Configurações <b aria-hidden="true">›</b></button>
             <button class="menu-item" data-open-dialog="about" type="button">Sobre o AltGrid <b aria-hidden="true">›</b></button>
             <button class="menu-item menu-item--danger" id="logout-button" type="button">Sair</button>
@@ -3782,6 +3862,91 @@ export class AuthApp {
       `
     }
 
+    if (this.activeDialog === 'referrals') {
+      const program = this.referralProgram
+      const campaignEnd = program
+        ? new Intl.DateTimeFormat('pt-BR', {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+          }).format(new Date(program.campaign.ends_at))
+        : null
+      const ranking = program?.leaderboard ?? []
+      const recent = program?.recent_referrals ?? []
+      const statusLabel: Record<string, string> = {
+        pending: 'Em validação',
+        qualified: 'Qualificado',
+        rewarded: 'Recompensado',
+        rejected: 'Não elegível',
+      }
+
+      return `
+        <dialog class="modal modal--referrals" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="referral-hero">
+            <div>
+              <p class="eyebrow">PROGRAMA DE INDICAÇÕES</p>
+              <h2 id="dialog-title">Convide. Suba no ranking. Faça história.</h2>
+              <p>Cada amigo válido rende <strong>1 dia de PRO</strong>. No fim da campanha, os três líderes recebem planos vitalícios.</p>
+            </div>
+            <div class="referral-hero__mark" aria-hidden="true">✦</div>
+          </div>
+
+          ${this.referralError ? `<div class="form-alert is-visible" role="alert">${escapeHtml(this.referralError)}</div>` : ''}
+          ${this.referralLoading && !program ? '<div class="referral-loading"><span class="spinner spinner--green"></span><span>Validando indicações e carregando o ranking…</span></div>' : ''}
+          ${program ? `
+            <section class="referral-share" aria-label="Seu link de indicação">
+              <div>
+                <small>SEU CÓDIGO INDIVIDUAL</small>
+                <strong>${escapeHtml(program.code)}</strong>
+                <span>Envie seu link. O código entra automaticamente no cadastro.</span>
+              </div>
+              <div class="referral-share__actions">
+                <button class="button button--primary" data-share-referral type="button">Compartilhar link</button>
+                <button class="button button--secondary" data-copy-referral type="button">Copiar</button>
+              </div>
+              <input data-referral-url type="text" readonly value="${escapeHtml(program.share_url)}" aria-label="Link de indicação" />
+            </section>
+
+            <div class="referral-stats" aria-label="Seus resultados">
+              <article><small>Indicações válidas</small><strong>${program.stats.valid}</strong><span>+${program.stats.pro_days} ${program.stats.pro_days === 1 ? 'dia' : 'dias'} de PRO</span></article>
+              <article><small>Sua posição</small><strong>${program.stats.position ? `#${program.stats.position}` : '—'}</strong><span>${program.stats.position ? 'no ranking atual' : 'convide para entrar'}</span></article>
+              <article><small>Em validação</small><strong>${program.stats.pending}</strong><span>confirmação automática</span></article>
+            </div>
+
+            <section class="referral-prizes" aria-labelledby="referral-prizes-title">
+              <div class="referral-section-heading"><div><p class="eyebrow">PÓDIO VITALÍCIO</p><h3 id="referral-prizes-title">Os três maiores indicadores vencem</h3></div><small>Encerra em ${escapeHtml(campaignEnd ?? '—')}</small></div>
+              <div class="referral-prize-grid">
+                <article class="referral-prize referral-prize--founder"><span>1º LUGAR</span><img src="${planFounderBadgeUrl}" alt="" /><div><strong>FOUNDER</strong><small>Plano máximo vitalício</small></div></article>
+                <article class="referral-prize referral-prize--plus"><span>2º LUGAR</span><img src="${planProPlusBadgeUrl}" alt="" /><div><strong>PLUS</strong><small>Plano Plus vitalício</small></div></article>
+                <article class="referral-prize referral-prize--pro"><span>3º LUGAR</span><img src="${planProBadgeUrl}" alt="" /><div><strong>PRO</strong><small>Plano PRO vitalício</small></div></article>
+              </div>
+            </section>
+
+            <section class="referral-board" aria-labelledby="referral-ranking-title">
+              <div class="referral-section-heading"><div><p class="eyebrow">RANKING AO VIVO</p><h3 id="referral-ranking-title">Corrida de indicações</h3></div><button class="text-button" data-refresh-referrals type="button">Atualizar</button></div>
+              <div class="referral-board__list">
+                ${ranking.length > 0 ? ranking.slice(0, 10).map((entry) => `
+                  <div class="referral-rank-row ${entry.is_current_user ? 'is-current-user' : ''} ${entry.position <= 3 ? `is-top-${entry.position}` : ''}">
+                    <span class="referral-rank-row__position">${entry.position <= 3 ? ['🥇', '🥈', '🥉'][entry.position - 1] : `#${entry.position}`}</span>
+                    <span class="referral-rank-row__avatar">${escapeHtml(entry.display_name.slice(0, 1).toUpperCase())}</span>
+                    <span><strong>${escapeHtml(entry.display_name)}${entry.is_current_user ? ' (você)' : ''}</strong><small>${entry.prize_plan ? `Prêmio atual: ${entry.prize_plan === 'PRO_PLUS' ? 'PLUS' : entry.prize_plan}` : 'Na disputa'}</small></span>
+                    <b>${entry.valid_referrals} ${entry.valid_referrals === 1 ? 'indicação' : 'indicações'}</b>
+                  </div>
+                `).join('') : '<div class="referral-empty"><strong>O pódio ainda está aberto.</strong><span>Seja o primeiro a registrar uma indicação válida.</span></div>'}
+              </div>
+            </section>
+
+            <div class="referral-lower-grid">
+              <section class="referral-rules"><p class="eyebrow">COMO FUNCIONA</p><ol><li><b>1</b><span>Compartilhe seu link individual.</span></li><li><b>2</b><span>Seu amigo cria e confirma a conta pelo código.</span></li><li><b>3</b><span>Após 24h e uso em dispositivo válido, você recebe 1 dia de PRO.</span></li></ol></section>
+              <section class="referral-integrity"><p class="eyebrow">RANKING PROTEGIDO</p><h3>Validação contra abuso</h3><p>E-mail confirmado, espera mínima, conta única e dispositivo exclusivo. Autoindicação, repetição de dispositivo e crédito duplicado não contam.</p></section>
+            </div>
+
+            ${recent.length > 0 ? `<section class="referral-recent"><div class="referral-section-heading"><h3>Suas indicações recentes</h3></div>${recent.slice(0, 6).map((entry) => `<div><span class="referral-rank-row__avatar">${escapeHtml(entry.display_name.slice(0, 1).toUpperCase())}</span><span><strong>${escapeHtml(entry.display_name)}</strong><small>${new Intl.DateTimeFormat('pt-BR').format(new Date(entry.created_at))}</small></span><b class="referral-status referral-status--${entry.status}">${escapeHtml(statusLabel[entry.status] ?? entry.status)}</b></div>`).join('')}</section>` : ''}
+          ` : ''}
+          <div class="modal__actions modal__actions--end"><button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
+        </dialog>
+      `
+    }
+
     if (this.activeDialog === 'settings') {
       const restore = localStorage.getItem('altgrid.preference.restore-session') !== 'false'
       const confirmClose = localStorage.getItem('altgrid.preference.confirm-close') !== 'false'
@@ -4025,6 +4190,9 @@ export class AuthApp {
           this.activeDialog = dialog
           this.dialogError = null
           this.render()
+          if (dialog === 'referrals') {
+            void this.loadReferralProgram()
+          }
         })
       })
 
@@ -5196,6 +5364,47 @@ export class AuthApp {
       })
     }
 
+    const copyReferral = this.root.querySelector<HTMLButtonElement>(
+      '[data-copy-referral]',
+    )
+    if (copyReferral) {
+      this.bindButtonOnce(copyReferral, () => {
+        const url = this.root.querySelector<HTMLInputElement>('[data-referral-url]')?.value
+        if (!url) return
+        void navigator.clipboard.writeText(url)
+          .then(() => { copyReferral.textContent = 'Link copiado' })
+          .catch(() => this.showSessionAlert('Não foi possível copiar o link.'))
+      })
+    }
+
+    const shareReferral = this.root.querySelector<HTMLButtonElement>(
+      '[data-share-referral]',
+    )
+    if (shareReferral) {
+      this.bindButtonOnce(shareReferral, () => {
+        const url = this.referralProgram?.share_url
+        if (!url) return
+        const text = `Entre no AltGrid pelo meu convite ${this.referralProgram?.code} e conheça o gerenciador multissessão.`
+        if (navigator.share) {
+          void navigator.share({ title: 'Convite AltGrid', text, url })
+            .catch(() => undefined)
+          return
+        }
+        void navigator.clipboard.writeText(`${text}\n${url}`)
+          .then(() => { shareReferral.textContent = 'Convite copiado' })
+          .catch(() => this.showSessionAlert('Não foi possível compartilhar o convite.'))
+      })
+    }
+
+    const refreshReferrals = this.root.querySelector<HTMLButtonElement>(
+      '[data-refresh-referrals]',
+    )
+    if (refreshReferrals) {
+      this.bindButtonOnce(refreshReferrals, () => {
+        void this.loadReferralProgram(true)
+      })
+    }
+
     this.root
       .querySelectorAll<HTMLButtonElement>('[data-check-update]')
       .forEach((button) => {
@@ -5764,6 +5973,7 @@ export class AuthApp {
       const email = this.valueOf(form, 'email')
       const password = this.valueOf(form, 'password')
       const confirmation = this.valueOf(form, 'passwordConfirmation')
+      const referralCode = normalizeReferralCode(this.valueOf(form, 'referralCode'))
       const errors: FieldErrors = {
         email: validateEmail(email),
         password: validatePassword(password),
@@ -5771,6 +5981,7 @@ export class AuthApp {
           password,
           confirmation,
         ),
+        referralCode: validateReferralCode(referralCode),
       }
 
       if (!this.applyFieldErrors(form, errors)) {
@@ -5783,7 +5994,17 @@ export class AuthApp {
         const result: SignUpResult = await this.authService.signUp(
           email,
           password,
+          referralCode,
         )
+
+        if (referralCode) {
+          this.signupReferralCode = ''
+          try {
+            localStorage.removeItem(REFERRAL_CODE_STORAGE_KEY)
+          } catch {
+            // Storage is optional; signup already succeeded.
+          }
+        }
 
         if (result.session && !result.needsEmailConfirmation) {
           this.prepareAuthenticatedSession(result.session)

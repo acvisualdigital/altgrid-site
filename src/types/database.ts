@@ -114,9 +114,32 @@ interface Referral {
   referred_user_id: string
   status: 'pending' | 'qualified' | 'rewarded' | 'rejected'
   qualification_reason: string | null
+  campaign_id: string | null
+  qualification_device_hash: string | null
   created_at: string
   qualified_at: string | null
   rewarded_at: string | null
+}
+
+interface ReferralCampaign {
+  id: string
+  name: string
+  starts_at: string
+  ends_at: string
+  status: 'active' | 'finalized'
+  finalized_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+interface ReferralCampaignAward {
+  id: string
+  campaign_id: string
+  rank: number
+  user_id: string
+  plan_code: Exclude<PlanCode, 'FREE'>
+  license_id: string | null
+  created_at: string
 }
 
 interface ReferralReward {
@@ -241,6 +264,17 @@ export interface Database {
           | 'beneficiary_user_id'
           | 'reward_type'
           | 'reward_days'
+        >
+      >
+      referral_campaigns: TableDefinition<
+        ReferralCampaign,
+        InsertRow<ReferralCampaign, 'name' | 'starts_at' | 'ends_at'>
+      >
+      referral_campaign_awards: TableDefinition<
+        ReferralCampaignAward,
+        InsertRow<
+          ReferralCampaignAward,
+          'campaign_id' | 'rank' | 'user_id' | 'plan_code'
         >
       >
       products: TableDefinition<

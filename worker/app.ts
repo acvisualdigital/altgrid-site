@@ -68,6 +68,7 @@ function allowedMethods(pathname: string): string[] | null {
     pathname === '/health'
     || pathname === '/v1/me'
     || pathname === '/v1/me/entitlements'
+    || pathname === '/v1/referrals'
     || pathname === '/v1/games'
     || pathname === '/v1/config/public'
     || pathname === '/v1/app/config'
@@ -269,6 +270,10 @@ export function createApi(
         await readDisplayName(request),
       )
       return jsonResponse({ profile })
+    }
+
+    if (pathname === '/v1/referrals') {
+      return jsonResponse(await dependencies.repository.getReferralProgram(user.id))
     }
 
     if (pathname.startsWith('/v1/admin/')) {

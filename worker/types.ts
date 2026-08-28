@@ -7,6 +7,7 @@ import type {
   LicenseSnapshotResponse,
   PublicGame,
   RegisterDeviceInput,
+  ReferralProgramResponse,
   SafeProfile,
   SafeUser,
 } from '../src/types/backend-api'
@@ -98,6 +99,9 @@ export interface BackendRepository {
     deviceId: string,
     now: string,
   ): Promise<DeviceResponse | null>
+  getReferralProgram(userId: string): Promise<ReferralProgramResponse>
+  reconcileReferralProgram(limit?: number): Promise<Record<string, unknown>>
+  finalizeReferralCampaigns(): Promise<Record<string, unknown>>
 }
 
 export interface AnnouncementRecord {

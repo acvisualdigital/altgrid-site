@@ -49,6 +49,12 @@ export function isSafeExternalUrl(candidate: unknown): candidate is string {
 export function parseTrustedRecoveryDeepLink(candidate: unknown): string | null {
   const url = parsedUrl(candidate)
 
+  const isRecovery = url?.searchParams.get('auth') === 'recovery'
+  const referralCode = url?.searchParams.get('ref')?.trim().toUpperCase() ?? ''
+  const isReferral = /^HUNT-[A-HJ-NP-Z2-9]{8}$/.test(referralCode)
+    && url?.searchParams.size === 1
+    && url.hash === ''
+
   if (
     !url
     || url.username
@@ -56,9 +62,13 @@ export function parseTrustedRecoveryDeepLink(candidate: unknown): string | null 
     || url.protocol !== 'altgrid:'
     || url.host !== 'app'
     || (url.pathname !== '' && url.pathname !== '/')
-    || url.searchParams.get('auth') !== 'recovery'
+    || (!isRecovery && !isReferral)
   ) {
     return null
+  }
+
+  if (isReferral) {
+    url.searchParams.set('ref', referralCode)
   }
 
   return url.toString()

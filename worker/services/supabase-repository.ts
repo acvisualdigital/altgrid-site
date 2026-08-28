@@ -10,6 +10,7 @@ import type {
   FeatureMap,
   PublicGame,
   RegisterDeviceInput,
+  ReferralProgramResponse,
   SafeProfile,
 } from '../../src/types/backend-api'
 import type { Database, Json } from '../../src/types/database'
@@ -181,6 +182,35 @@ export class SupabaseRepository implements
     }
 
     return data
+  }
+
+  async getReferralProgram(userId: string): Promise<ReferralProgramResponse> {
+    const { data, error } = await this.client.rpc('referral_program_dashboard', {
+      p_user_id: userId,
+    })
+
+    if (error) throwDataError(error)
+    return data as ReferralProgramResponse
+  }
+
+  async reconcileReferralProgram(limit = 250): Promise<Record<string, unknown>> {
+    const { data, error } = await this.client.rpc('reconcile_referral_program', {
+      p_limit: limit,
+      p_now: new Date().toISOString(),
+      p_referrer_user_id: null,
+    })
+
+    if (error) throwDataError(error)
+    return data as Record<string, unknown>
+  }
+
+  async finalizeReferralCampaigns(): Promise<Record<string, unknown>> {
+    const { data, error } = await this.client.rpc('finalize_referral_campaigns', {
+      p_now: new Date().toISOString(),
+    })
+
+    if (error) throwDataError(error)
+    return data as Record<string, unknown>
   }
 
   async hasProLifetimeUpgradeEligibility(userId: string): Promise<boolean> {
