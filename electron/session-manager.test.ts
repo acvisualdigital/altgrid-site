@@ -23,6 +23,7 @@ interface FakeView extends NativeSessionView {
   setEcoMode: Mock<(enabled: boolean) => void>
   setMuted: Mock<(muted: boolean) => void>
   setVisible: Mock<(visible: boolean) => void>
+  setZoomFactor: Mock<(factor: number) => void>
 }
 
 function createHarness(
@@ -45,6 +46,7 @@ function createHarness(
       setEcoMode: vi.fn(),
       setMuted: vi.fn(),
       setVisible: vi.fn(),
+      setZoomFactor: vi.fn(),
     }
     contexts.set(context.accountId, context)
     views.set(context.accountId, view)
@@ -151,6 +153,19 @@ describe('SessionManager', () => {
     expect(view.setBounds).toHaveBeenCalledWith(resizedBounds)
     expect(view.setMuted).toHaveBeenCalledOnce()
     expect(view.setMuted).toHaveBeenCalledWith(true)
+  })
+
+  it('zooms out narrow grid slots so non-responsive games stop clipping', async () => {
+    const harness = createHarness()
+    await harness.manager.createSession('account-1', 'https://game.example/')
+    const view = harness.views.get('account-1')!
+    view.setZoomFactor.mockClear()
+
+    harness.manager.resizeSession('account-1', { x: 0, y: 0, width: 480, height: 600 })
+    expect(view.setZoomFactor).toHaveBeenLastCalledWith(0.67)
+
+    harness.manager.resizeSession('account-1', { x: 0, y: 0, width: 1_920, height: 1_080 })
+    expect(view.setZoomFactor).toHaveBeenLastCalledWith(1)
   })
 
   it('applies Eco Mode to existing sessions and new sessions without reloading', async () => {
@@ -289,6 +304,7 @@ describe('SessionManager', () => {
         setEcoMode: vi.fn(),
         setMuted: vi.fn(),
         setVisible: vi.fn(),
+        setZoomFactor: vi.fn(),
       }
       harness.views.set(context.accountId, view)
       return view

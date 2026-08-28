@@ -292,6 +292,12 @@ export function createNativeSessionViewFactory(
           applyBackgroundThrottling()
         }
       },
+
+      setZoomFactor(factor): void {
+        if (!view.webContents.isDestroyed()) {
+          view.webContents.setZoomFactor(factor)
+        }
+      },
     }
   }
 }

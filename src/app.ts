@@ -3129,7 +3129,10 @@ export class AuthApp {
       }
 
       const bounds = surface.getBoundingClientRect()
-      if (scrollingGrid) {
+      // Only pagination overflow needs this all-or-nothing guard: when every
+      // session already fits on one page, a tiny scroll/rounding difference
+      // must not hide an otherwise-visible account behind the placeholder.
+      if (scrollingGrid && layout.pageCount > 1) {
         const fullyInsideViewport = bounds.x >= rectangle.x - 1
           && bounds.y >= rectangle.y - 1
           && bounds.x + bounds.width <= rectangle.x + rectangle.width + 1

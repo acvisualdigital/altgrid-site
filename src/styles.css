@@ -2013,7 +2013,7 @@ form {
 
 .session-card {
   display: grid;
-  grid-template-rows: 36px minmax(0, 1fr);
+  grid-template-rows: 42px minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -2037,9 +2037,9 @@ form {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
-  padding: 0 6px 0 11px;
+  padding: 0 10px 0 14px;
   border-bottom: 1px solid var(--border-soft);
   background: #171c24;
 }

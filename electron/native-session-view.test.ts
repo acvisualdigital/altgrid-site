@@ -50,6 +50,7 @@ const electronMocks = vi.hoisted(() => {
       setWindowOpenHandler: vi.fn((handler: EventHandler) => {
         this.windowOpenHandler = handler
       }),
+      setZoomFactor: vi.fn(),
       stop: vi.fn(),
     }
     backgroundColor = ''
@@ -232,6 +233,24 @@ describe('createNativeSessionViewFactory', () => {
     expect(view.webContents.loadURL).not.toHaveBeenCalled()
     expect(view.webContents.reload).not.toHaveBeenCalled()
     expect(view.webContents.close).not.toHaveBeenCalled()
+  })
+
+  it('applies the zoom factor to the live WebContents until destroyed', () => {
+    const { hostWindow } = createHostWindow()
+    const factory = createNativeSessionViewFactory(hostWindow, false)
+    const nativeView = factory({
+      accountId: 'account-zoom',
+      onEvent: vi.fn(),
+      partition: 'persist:altgrid-account-account-zoom',
+    })
+    const view = electronMocks.views[0]!
+
+    nativeView.setZoomFactor(0.75)
+    expect(view.webContents.setZoomFactor).toHaveBeenLastCalledWith(0.75)
+
+    view.webContents.isDestroyed.mockReturnValue(true)
+    nativeView.setZoomFactor(1)
+    expect(view.webContents.setZoomFactor).toHaveBeenCalledOnce()
   })
 
   it('clears storage and cache only when explicitly requested', async () => {

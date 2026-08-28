@@ -10,6 +10,18 @@ const ACCOUNT_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/
 const MAX_VIEW_DIMENSION = 8_192
 const MAX_VIEW_AREA = 33_554_432
 const DEFAULT_LOAD_TIMEOUT_MS = 30_000
+// Many game pages are not responsive below this width; zooming out below it
+// gives their layout more effective CSS space so buttons/bars stop clipping.
+const AUTO_FIT_REFERENCE_WIDTH = 960
+const AUTO_FIT_MIN_ZOOM = 0.67
+
+function computeAutoFitZoom(width: number): number {
+  if (!Number.isFinite(width) || width <= 0) {
+    return 1
+  }
+
+  return Math.min(1, Math.max(AUTO_FIT_MIN_ZOOM, width / AUTO_FIT_REFERENCE_WIDTH))
+}
 const DEFAULT_SESSION_BOUNDS: SessionBounds = {
   height: 720,
   width: 1_280,
@@ -33,6 +45,7 @@ export interface NativeSessionView {
   setEcoMode(enabled: boolean): void
   setMuted(muted: boolean): void
   setVisible(visible: boolean): void
+  setZoomFactor(factor: number): void
 }
 
 export interface NativeSessionViewContext {
@@ -200,6 +213,7 @@ export class SessionManager {
       view.setEcoMode(this.ecoModeEnabled)
       view.attach()
       view.setBounds(record.bounds)
+      view.setZoomFactor(computeAutoFitZoom(record.bounds.width))
       view.setVisible(false)
     } catch {
       this.records.delete(normalizedId)
@@ -274,6 +288,7 @@ export class SessionManager {
 
     record.bounds = bounds
     record.view.setBounds(bounds)
+    record.view.setZoomFactor(computeAutoFitZoom(bounds.width))
     return snapshot(record)
   }
 
