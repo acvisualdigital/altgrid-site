@@ -2012,8 +2012,27 @@ form {
   overflow-y: auto;
   overscroll-behavior-y: contain;
   scroll-snap-type: y proximity;
-  scrollbar-color: rgba(66, 215, 108, 0.44) transparent;
+  scrollbar-color: rgba(66, 215, 108, 0.64) var(--surface);
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
+}
+
+.session-shell.is-grid-mode .session-workspace::-webkit-scrollbar {
+  width: 10px;
+}
+
+.session-shell.is-grid-mode .session-workspace::-webkit-scrollbar-track {
+  background: var(--surface);
+}
+
+.session-shell.is-grid-mode .session-workspace::-webkit-scrollbar-thumb {
+  border: 2px solid var(--surface);
+  border-radius: 999px;
+  background: rgba(66, 215, 108, 0.64);
+}
+
+.session-shell.is-grid-mode .session-workspace::-webkit-scrollbar-thumb:hover {
+  background: var(--green-hover);
 }
 
 .session-grid {
@@ -3450,7 +3469,7 @@ form {
 }
 
 .sidebar-profile strong,
-.sidebar-profile small {
+.sidebar-profile__details > small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3461,32 +3480,103 @@ form {
   font-size: 13px;
 }
 
-.sidebar-profile small {
+.sidebar-profile__details > small {
   color: var(--text-muted);
   font-size: 11px;
 }
 
-.sidebar-profile .founder-badge {
-  display: inline-flex;
+.profile-name-with-plan {
+  display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  min-width: 0;
+}
+
+.profile-name-with-plan > strong {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.plan-badge {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
   width: max-content;
-  margin-top: 3px;
-  padding: 2px 6px;
-  border: 1px solid rgba(255, 205, 92, 0.45);
-  border-radius: 999px;
-  color: #ffdc7a;
-  background: linear-gradient(135deg, rgba(115, 74, 17, 0.42), rgba(50, 34, 15, 0.72));
+  height: 18px;
+  padding: 1px 5px 1px 2px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 5px;
   font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.04em;
-  line-height: 1.2;
+  line-height: 1;
   text-transform: uppercase;
-  box-shadow: inset 0 0 0 1px rgba(255, 229, 151, 0.05);
+  white-space: nowrap;
 }
 
-.founder-badge > span {
-  color: #ffe9a7;
+.plan-badge__icon {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  mix-blend-mode: screen;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
+}
+
+.plan-badge__text,
+.plan-badge__number {
+  position: relative;
+  z-index: 1;
+}
+
+.plan-badge__number {
+  color: inherit;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.01em;
+}
+
+.plan-badge--free {
+  border-color: rgba(158, 174, 194, 0.38);
+  color: #dce4ef;
+  background: linear-gradient(135deg, rgba(85, 101, 122, 0.44), rgba(33, 42, 54, 0.82));
+  box-shadow: inset 0 1px 0 rgba(236, 243, 251, 0.08);
+}
+
+.plan-badge--pro {
+  border-color: rgba(66, 222, 123, 0.44);
+  color: #92f3b7;
+  background: linear-gradient(135deg, rgba(20, 105, 62, 0.55), rgba(14, 53, 36, 0.82));
+  box-shadow: 0 0 8px rgba(35, 201, 91, 0.08), inset 0 1px 0 rgba(171, 255, 200, 0.1);
+}
+
+.plan-badge--pro-plus {
+  border-color: rgba(123, 178, 255, 0.55);
+  color: #c6dcff;
+  background: linear-gradient(135deg, rgba(36, 98, 153, 0.62), rgba(77, 46, 132, 0.78));
+  box-shadow: 0 0 9px rgba(86, 151, 255, 0.12), inset 0 1px 0 rgba(210, 228, 255, 0.14);
+}
+
+.plan-badge--founder {
+  color: #ffe8a8;
+  border-color: rgba(246, 205, 111, 0.62);
+  background: linear-gradient(110deg, rgba(102, 67, 20, 0.78), rgba(191, 139, 47, 0.3) 48%, rgba(76, 50, 18, 0.76));
+  box-shadow: 0 2px 10px rgba(173, 116, 27, 0.16), inset 0 1px 0 rgba(255, 244, 194, 0.24);
+}
+
+.plan-badge--founder::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: '';
+  background: linear-gradient(120deg, transparent 15%, rgba(255, 244, 194, 0.2) 48%, transparent 68%);
+  transform: translateX(-110%);
+  animation: founder-badge-shine 4.5s ease-in-out infinite;
 }
 
 .sidebar-profile-popover {
@@ -3520,7 +3610,7 @@ form {
   white-space: nowrap;
 }
 
-.sidebar-profile-popover__identity small {
+.sidebar-profile-popover__identity > div > small {
   margin-top: 2px;
   color: var(--text-muted);
   font-size: 10px;
@@ -4039,8 +4129,12 @@ form {
 }
 
 .chat-message header strong {
+  min-width: 0;
+  overflow: hidden;
   color: var(--text);
   font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-message time {
@@ -4057,58 +4151,15 @@ form {
   white-space: pre-wrap;
 }
 
-.chat-plan-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: .04em;
+.chat-message .plan-badge {
+  height: 17px;
+  padding-right: 4px;
+  font-size: 8px;
 }
 
-.chat-plan-badge--pro {
-  color: var(--green-hover);
-  background: rgba(35, 201, 91, 0.1);
-  border: 1px solid rgba(35, 201, 91, 0.25);
-}
-
-.chat-plan-badge--founder {
-  position: relative;
-  color: #ffe8a8;
-  background: linear-gradient(110deg, rgba(102, 67, 20, .74), rgba(191, 139, 47, .25) 48%, rgba(76, 50, 18, .7));
-  border: 1px solid rgba(246, 205, 111, .62);
-  box-shadow: 0 2px 10px rgba(173, 116, 27, .16), inset 0 1px 0 rgba(255, 244, 194, .24);
-  overflow: hidden;
-}
-
-.chat-plan-badge--founder::after {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  content: '';
-  background: linear-gradient(120deg, transparent 15%, rgba(255, 244, 194, .2) 48%, transparent 68%);
-  transform: translateX(-110%);
-  animation: founder-badge-shine 4.5s ease-in-out infinite;
-}
-
-.chat-plan-badge__crest {
-  display: grid;
-  place-items: center;
+.chat-message .plan-badge__icon {
   width: 13px;
   height: 13px;
-  color: #5e3c10;
-  border-radius: 50%;
-  background: #f7d477;
-  box-shadow: 0 0 0 1px rgba(255, 240, 178, .35);
-  font-size: 8px;
-}
-
-.chat-plan-badge--founder small {
-  color: #f5d78c;
-  font-size: 8px;
-  letter-spacing: .02em;
 }
 
 @keyframes founder-badge-shine {
@@ -4116,12 +4167,12 @@ form {
   78% { transform: translateX(110%); }
 }
 
-.app-frame.is-eco-mode .chat-plan-badge--founder::after {
+.app-frame.is-eco-mode .plan-badge--founder::after {
   animation: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chat-plan-badge--founder::after {
+  .plan-badge--founder::after {
     animation: none;
   }
 }
@@ -5119,7 +5170,7 @@ form {
 }
 
 .mobile-profile-popover__heading strong,
-.mobile-profile-popover__heading small {
+.mobile-profile-popover__heading > span:last-child > small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5129,7 +5180,7 @@ form {
   font-size: 14px;
 }
 
-.mobile-profile-popover__heading small {
+.mobile-profile-popover__heading > span:last-child > small {
   margin-top: 2px;
   color: var(--green-hover);
   font-size: 10px;

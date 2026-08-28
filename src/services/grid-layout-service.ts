@@ -82,6 +82,10 @@ interface RankedPreset {
 
 const ADVANCED_GRID_FEATURE = 'advanced_grids'
 const AUTO_HYSTERESIS = 0.12
+const AUTO_MIN_CARD_WIDTH = 280
+const AUTO_MIN_CARD_HEIGHT = 320
+const AUTO_MAX_COLUMNS = 5
+const AUTO_MAX_VIEWPORT_ROWS = 2
 
 const PRESETS: Record<ConcreteGridMode, GridPreset> = {
   '1x1': {
@@ -397,6 +401,27 @@ export class GridLayoutService {
     gap: number,
     fallback: GridPreset,
   ): GridPreset {
+    // Beyond 3x3, keep cards readable and let the workspace scroll vertically
+    // instead of shrinking every live game surface indefinitely.
+    const readableColumns = Math.min(
+      AUTO_MAX_COLUMNS,
+      Math.max(1, Math.floor((area.width + gap) / (AUTO_MIN_CARD_WIDTH + gap))),
+    )
+    const readableRows = Math.min(
+      AUTO_MAX_VIEWPORT_ROWS,
+      Math.max(1, Math.floor((area.height + gap) / (AUTO_MIN_CARD_HEIGHT + gap))),
+    )
+    const readablePreset: GridPreset = {
+      columns: readableColumns,
+      mode: '3x3',
+      requiresAdvancedGrids: true,
+      rows: readableRows,
+    }
+
+    if (hasUsableCells(area, gap, readablePreset)) {
+      return readablePreset
+    }
+
     const candidates = Array.from({ length: sessionCount }, (_, index) => index + 1)
       .filter((columns) => hasUsableCells(area, gap, {
         columns,

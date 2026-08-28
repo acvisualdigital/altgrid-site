@@ -5,6 +5,7 @@ import {
   AuthApp,
   compareVersions,
   passwordRecoveryRedirectUrl,
+  renderPlanBadge,
   type AccountSessionStatusEvent,
 } from './app'
 import {
@@ -82,6 +83,34 @@ describe('version comparison', () => {
   it('ignores build metadata and rejects malformed versions', () => {
     expect(compareVersions('1.0.0-beta.1+desktop', '1.0.0-beta.1+worker')).toBe(0)
     expect(compareVersions('beta.1', '1.0.0')).toBeNull()
+  })
+})
+
+describe('plan badges', () => {
+  it.each([
+    ['FREE', 'free', 'FREE', 'Plano Free'],
+    ['PRO', 'pro', 'PRO', 'Plano Pro'],
+    ['PRO_PLUS', 'pro-plus', 'PRO+', 'Plano Pro Plus'],
+    ['FOUNDER', 'founder', 'FOUNDER', 'Plano Founder'],
+  ] as const)('renders the %s asset badge with accessible text', (
+    plan,
+    className,
+    visibleLabel,
+    accessibleName,
+  ) => {
+    const badge = renderPlanBadge(plan)
+
+    expect(badge).toContain(`plan-badge--${className}`)
+    expect(badge).toContain('class="plan-badge__icon"')
+    expect(badge).toContain(`aria-label="${accessibleName}"`)
+    expect(badge).toContain(`>${visibleLabel}</span>`)
+  })
+
+  it('keeps the padded Founder number in the shared badge', () => {
+    const badge = renderPlanBadge('FOUNDER', 42)
+
+    expect(badge).toContain('aria-label="Plano Founder, número 0042"')
+    expect(badge).toContain('class="plan-badge__number">#0042</small>')
   })
 })
 
@@ -517,6 +546,8 @@ describe('AuthApp session lifecycle', () => {
       expect(root.innerHTML).toContain('data-chat-channel-type="game"')
       expect(root.innerHTML).toContain('chat-panel__game-icon')
       expect(root.innerHTML).toContain('chat-message__avatar')
+      expect(root.innerHTML).toContain('plan-badge--free')
+      expect(root.innerHTML).toContain('aria-label="Plano Free"')
       expect(root.innerHTML).toContain('src="https://cdn.example.com/huntera.png"')
       expect(harness.renderChatChannelIcon(channels[1])).toContain(
         'src="https://cdn.example.com/huntera.png"',
@@ -994,6 +1025,8 @@ describe('AuthApp session lifecycle', () => {
       expect(backend.getHealth).toHaveBeenCalledOnce()
       expect(backend.getAppConfig).toHaveBeenCalledOnce()
       expect(root.innerHTML).toContain('sidebar-profile-popover__plan')
+      expect(root.innerHTML).toContain('profile-name-with-plan')
+      expect(root.innerHTML).toContain('plan-badge--pro')
       expect(root.innerHTML).toContain('<strong>PRO</strong>')
       expect(root.innerHTML).toContain('0/10 sessões abertas')
       expect(root.innerHTML).not.toContain('data-grid-locked="true"')
@@ -2243,7 +2276,7 @@ describe('AuthApp session lifecycle', () => {
     expect(launcher.reload).not.toHaveBeenCalled()
   })
 
-  it('keeps a second account in the continuous 1x1 scrolling grid', async () => {
+  it('keeps 1x1 rows readable and recycles native surfaces while scrolling', async () => {
     installBrowser('https://app.example.com/')
 
     const frame = new AcceptanceElement()
@@ -2259,9 +2292,14 @@ describe('AuthApp session lifecycle', () => {
 
     const factory: SessionSurfaceElementFactory = {
       createCard: () => asHtmlElement(new AcceptanceElement()),
-      createSurface: () => {
+      createSurface: (accountId) => {
         const surface = new AcceptanceElement()
-        surface.bounds = { height: 680, width: 1260, x: 10, y: 10 }
+        surface.bounds = {
+          height: 680,
+          width: 1260,
+          x: 10,
+          y: accountId === 'manual-account-1' ? 10 : 730,
+        }
         return asHtmlElement(surface)
       },
     }
@@ -2343,7 +2381,26 @@ describe('AuthApp session lifecycle', () => {
     harness.applyWorkspacePresentation()
     await vi.waitFor(() => expect(launcher.applyLayout).toHaveBeenCalledTimes(2))
 
-    expect(launcher.applyLayout.mock.calls[1]![0].overflowSessionIds).toEqual([])
+    expect(grid.styles.get('--grid-rows')).toBe('2')
+    expect(grid.styles.get('--grid-row-height')).toBe('720px')
+    expect(launcher.applyLayout.mock.calls[1]![0].slots.map(
+      (slot: GridLayout['slots'][number]) => slot.sessionId,
+    )).toEqual([accountA.id])
+    expect(launcher.applyLayout.mock.calls[1]![0].overflowSessionIds).toEqual([
+      accountB.id,
+    ])
+
+    ;(surfaceA as unknown as AcceptanceElement).bounds.y = -710
+    ;(surfaceB as unknown as AcceptanceElement).bounds.y = 10
+    harness.applyWorkspacePresentation()
+    await vi.waitFor(() => expect(launcher.applyLayout).toHaveBeenCalledTimes(3))
+
+    expect(launcher.applyLayout.mock.calls[2]![0].slots.map(
+      (slot: GridLayout['slots'][number]) => slot.sessionId,
+    )).toEqual([accountB.id])
+    expect(launcher.applyLayout.mock.calls[2]![0].overflowSessionIds).toEqual([
+      accountA.id,
+    ])
     expect(manager.get(accountA.id)!.surface).toBe(surfaceA)
     expect(manager.get(accountB.id)!.surface).toBe(surfaceB)
     expect(launcher.open).toHaveBeenCalledTimes(2)

@@ -1,5 +1,9 @@
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js'
 import altgridLogoUrl from './assets/altgrid-mark.png'
+import planFounderBadgeUrl from './assets/plans/plan-founder.png'
+import planFreeBadgeUrl from './assets/plans/plan-free.png'
+import planProBadgeUrl from './assets/plans/plan-pro.png'
+import planProPlusBadgeUrl from './assets/plans/plan-pro-plus.png'
 
 import {
   validateEmail,
@@ -54,6 +58,7 @@ import type {
   PublicProduct,
   ResolvedEntitlements,
 } from './types/backend-api'
+import type { PlanCode } from './types/database'
 
 type AuthView =
   | 'authenticated'
@@ -268,6 +273,49 @@ function escapeHtml(value: string): string {
         '"': '&quot;',
       })[character] ?? character,
   )
+}
+
+const PLAN_BADGE_PRESENTATION: Record<PlanCode, {
+  accessibleName: string
+  assetUrl: string
+  label: string
+}> = {
+  FOUNDER: {
+    accessibleName: 'Founder',
+    assetUrl: planFounderBadgeUrl,
+    label: 'FOUNDER',
+  },
+  FREE: {
+    accessibleName: 'Free',
+    assetUrl: planFreeBadgeUrl,
+    label: 'FREE',
+  },
+  PRO: {
+    accessibleName: 'Pro',
+    assetUrl: planProBadgeUrl,
+    label: 'PRO',
+  },
+  PRO_PLUS: {
+    accessibleName: 'Pro Plus',
+    assetUrl: planProPlusBadgeUrl,
+    label: 'PRO+',
+  },
+}
+
+export function renderPlanBadge(
+  plan: PlanCode,
+  founderNumber: number | null = null,
+): string {
+  const presentation = PLAN_BADGE_PRESENTATION[plan]
+  const planClass = plan.toLowerCase().replace('_', '-')
+  const founderNumberText = plan === 'FOUNDER' && founderNumber !== null
+    ? `#${String(founderNumber).padStart(4, '0')}`
+    : ''
+  const accessibleName = founderNumberText
+    ? `Plano ${presentation.accessibleName}, número ${founderNumberText.slice(1)}`
+    : `Plano ${presentation.accessibleName}`
+
+  return `<span class="plan-badge plan-badge--${planClass}" aria-label="${escapeHtml(accessibleName)}"><img class="plan-badge__icon" src="${escapeHtml(presentation.assetUrl)}" alt="" aria-hidden="true" /><span class="plan-badge__text">${presentation.label}</span>${founderNumberText ? `<small class="plan-badge__number">${founderNumberText}</small>` : ''}</span>`
 }
 
 function errorMessage(error: unknown): string {
@@ -1795,14 +1843,6 @@ export class AuthApp {
       : plan
   }
 
-  private renderFounderBadge(): string {
-    if (this.permissionService.getCurrentPlan() !== 'FOUNDER') {
-      return ''
-    }
-
-    return `<small class="founder-badge"><span aria-hidden="true">♛</span>${escapeHtml(this.renderPlanName())}</small>`
-  }
-
   private renderSessionLimitSummary(activeSessions: number): string {
     if (this.permissionService.getCurrentPlan() === 'FREE') {
       return `${activeSessions} ${activeSessions === 1 ? 'aberta' : 'abertas'} · Huntera 3 / demais 2`
@@ -2162,6 +2202,8 @@ export class AuthApp {
     const selectedSlug = activeAccount?.gameSlug ?? this.games[0]?.slug
     const visibleGames = this.games.slice(0, 6)
     const activeSessions = this.permissionService.getActiveSessionCount()
+    const currentPlan = this.permissionService.getCurrentPlan()
+    const profilePlanBadge = renderPlanBadge(currentPlan, this.me?.founder_number ?? null)
 
     return `
       <aside class="game-sidebar" data-sidebar-region aria-label="Navegação principal">
@@ -2194,13 +2236,13 @@ export class AuthApp {
         <details class="toolbar-menu sidebar-profile-menu" data-toolbar-menu>
           <summary class="sidebar-profile" aria-label="Abrir perfil">
             <span class="profile-avatar">${escapeHtml(this.profileDisplayName().slice(0, 1).toUpperCase())}</span>
-            <span><strong>${escapeHtml(this.profileDisplayName())}</strong>${this.renderFounderBadge() || '<small>Minha conta</small>'}</span>
+            <span class="sidebar-profile__details"><span class="profile-name-with-plan"><strong>${escapeHtml(this.profileDisplayName())}</strong>${profilePlanBadge}</span><small>Minha conta</small></span>
             ${uiIcon('chevron')}
           </summary>
           <div class="menu-popover menu-popover--up sidebar-profile-popover" aria-label="Conta e plano">
             <div class="sidebar-profile-popover__identity">
               <span class="profile-avatar">${escapeHtml(this.profileDisplayName().slice(0, 1).toUpperCase())}</span>
-              <div><strong>${escapeHtml(this.profileDisplayName())}</strong><small>Conta AltGrid</small></div>
+              <div><span class="profile-name-with-plan"><strong>${escapeHtml(this.profileDisplayName())}</strong>${profilePlanBadge}</span><small>Conta AltGrid</small></div>
             </div>
             <div class="sidebar-profile-popover__plan">
               <div class="sidebar-profile-popover__plan-label"><small>Plano atual</small><span class="sidebar-profile-popover__plan-dot"></span></div>
@@ -2223,6 +2265,10 @@ export class AuthApp {
 
   private renderMobileNavigation(): string {
     const chatOpen = Boolean(this.chatService?.getState().open)
+    const profilePlanBadge = renderPlanBadge(
+      this.permissionService.getCurrentPlan(),
+      this.me?.founder_number ?? null,
+    )
 
     return `
       <nav class="mobile-navigation" data-mobile-navigation-region aria-label="Navegação principal">
@@ -2257,7 +2303,7 @@ export class AuthApp {
           <div class="menu-popover menu-popover--up mobile-profile-popover" aria-label="Conta e plano">
             <div class="mobile-profile-popover__heading">
               <span class="profile-avatar">${escapeHtml(this.profileDisplayName().slice(0, 1).toUpperCase())}</span>
-              <span><strong>${escapeHtml(this.profileDisplayName())}</strong><small>${escapeHtml(this.renderPlanName())}</small></span>
+              <span><span class="profile-name-with-plan"><strong>${escapeHtml(this.profileDisplayName())}</strong>${profilePlanBadge}</span><small>${escapeHtml(this.renderPlanName())}</small></span>
             </div>
             <button class="menu-item" data-open-dialog="my-plan" type="button">Meu plano <b aria-hidden="true">›</b></button>
             <button class="menu-item" data-open-dialog="settings" type="button">Configurações <b aria-hidden="true">›</b></button>
@@ -2585,11 +2631,7 @@ export class AuthApp {
     channel: ChatState['channels'][number] | undefined,
   ): string {
     const own = message.user_id === this.session?.user.id
-    const badge = message.plan === 'FOUNDER'
-      ? `<span class="chat-plan-badge chat-plan-badge--founder"><span class="chat-plan-badge__crest" aria-hidden="true">✦</span><span>FOUNDER</span>${message.founder_number ? `<small>#${String(message.founder_number).padStart(4, '0')}</small>` : ''}</span>`
-      : message.plan === 'PRO'
-        ? '<span class="chat-plan-badge chat-plan-badge--pro">PRO</span>'
-        : ''
+    const badge = renderPlanBadge(message.plan, message.founder_number)
 
     return `
       <article class="chat-message ${own ? 'is-own' : ''}" data-chat-message-channel="${escapeHtml(message.channel_id)}">
@@ -3171,12 +3213,19 @@ export class AuthApp {
     let layout = resolution.layout
     const viewportRows = layout.rows
     const scrollingGrid = this.workspaceMode === 'grid' && !this.maximizedAccountId
+    const hasScrollableOverflow = scrollingGrid && layout.pageCount > 1
 
-    if (scrollingGrid && layout.pageCount > 1) {
+    if (hasScrollableOverflow) {
       const rows = Math.max(viewportRows, Math.ceil(layoutIds.length / layout.columns))
       const verticalGap = this.screensOnly ? 4 : 10
       const usableWidth = width - verticalGap * (layout.columns - 1)
-      const usableHeight = height - verticalGap * (rows - 1)
+      const usableViewportHeight = Math.max(
+        1,
+        height - verticalGap * (viewportRows - 1),
+      )
+      const rowHeight = viewportRows === 1
+        ? Math.max(1, height)
+        : Math.max(1, Math.floor(usableViewportHeight / viewportRows))
       layout = {
         ...layout,
         capacity: layout.columns * rows,
@@ -3190,14 +3239,12 @@ export class AuthApp {
             const row = Math.floor(index / layout.columns)
             const left = Math.round(column * usableWidth / layout.columns)
             const right = Math.round((column + 1) * usableWidth / layout.columns)
-            const top = Math.round(row * usableHeight / rows)
-            const bottom = Math.round((row + 1) * usableHeight / rows)
 
             return {
-              height: bottom - top,
+              height: rowHeight,
               width: right - left,
               x: rectangle.x + left + column * verticalGap,
-              y: rectangle.y + top + row * verticalGap,
+              y: rectangle.y + row * (rowHeight + verticalGap),
             }
           })(),
           column: index % layout.columns,
@@ -3220,10 +3267,10 @@ export class AuthApp {
     grid.style.setProperty('--grid-rows', String(rows))
     if (scrollingGrid) {
       const verticalGap = this.screensOnly ? 4 : 10
-      const availableHeight = Math.max(1, height - verticalGap * (rows - 1))
-      const rowHeight = rows === 1
+      const availableHeight = Math.max(1, height - verticalGap * (viewportRows - 1))
+      const rowHeight = viewportRows === 1
         ? Math.max(1, height)
-        : Math.max(1, Math.floor(availableHeight / rows))
+        : Math.max(1, Math.floor(availableHeight / viewportRows))
       grid.style.setProperty('--grid-row-height', `${rowHeight}px`)
     } else {
       grid.style.setProperty('--grid-row-height', '')
@@ -3284,7 +3331,7 @@ export class AuthApp {
       // Only pagination overflow needs this all-or-nothing guard: when every
       // session already fits on one page, a tiny scroll/rounding difference
       // must not hide an otherwise-visible account behind the placeholder.
-      if (scrollingGrid && layout.pageCount > 1) {
+      if (hasScrollableOverflow) {
         const fullyInsideViewport = bounds.x >= rectangle.x - 1
           && bounds.y >= rectangle.y - 1
           && bounds.x + bounds.width <= rectangle.x + rectangle.width + 1

@@ -142,7 +142,7 @@ describe('GridLayoutService', () => {
       expect(result.layout.pageCount).toBe(1)
       expect(result.layout.slots.map((slot) => slot.sessionId)).toEqual(ids(10))
       expect(result.layout.overflowSessionIds).toEqual([])
-      expect(result.layout.columns * result.layout.rows).toBeGreaterThanOrEqual(10)
+      expect(result.layout).toMatchObject({ columns: 5, rows: 2 })
     }
 
     const basic = service(false).resolve({
@@ -159,7 +159,7 @@ describe('GridLayoutService', () => {
     }
   })
 
-  it('keeps dynamic Auto balanced for prime session counts', () => {
+  it('keeps dynamic Auto readable and scrollable for prime session counts', () => {
     const result = service(true).resolve({
       area: landscape,
       mode: 'auto',
@@ -168,9 +168,8 @@ describe('GridLayoutService', () => {
 
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.layout.columns).toBeLessThan(11)
-      expect(result.layout.rows).toBeGreaterThan(1)
-      expect(result.layout.pageCount).toBe(1)
+      expect(result.layout).toMatchObject({ columns: 5, rows: 2, pageCount: 2 })
+      expect(result.layout.overflowSessionIds).toEqual(['session-11'])
     }
   })
 
@@ -231,8 +230,8 @@ describe('GridLayoutService', () => {
 
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.layout.pageCount).toBe(2)
-      expect(result.layout.overflowSessionIds).toEqual(['session-10'])
+      expect(result.layout.pageCount).toBe(10)
+      expect(result.layout.overflowSessionIds).toEqual(ids(10).slice(1))
       expect(result.layout.slots.every((slot) =>
         slot.bounds.width > 0 && slot.bounds.height > 0)).toBe(true)
     }
