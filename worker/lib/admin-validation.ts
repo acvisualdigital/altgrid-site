@@ -161,6 +161,35 @@ export function readAdminSearch(url: string): {
   return { query, page, pageSize }
 }
 
+export function readAdminReferralSearch(url: string): {
+  status: import('../../src/types/admin-api').AdminReferralStatus | null
+  query: string
+  page: number
+  pageSize: number
+} {
+  const { page, pageSize } = readAdminPagination(url, ['q', 'status'])
+  const params = new URL(url).searchParams
+  const query = params.get('q')?.trim() ?? ''
+  const rawStatus = params.get('status')?.trim() ?? ''
+  if (query.length > 200) throw validationError('Busca muito longa.')
+  if (rawStatus && !['pending', 'qualified', 'rewarded', 'rejected'].includes(rawStatus)) {
+    throw validationError('Status de indicação inválido.')
+  }
+  return {
+    status: rawStatus
+      ? rawStatus as import('../../src/types/admin-api').AdminReferralStatus
+      : null,
+    query,
+    page,
+    pageSize,
+  }
+}
+
+export async function readAdminReferralReason(request: Request): Promise<string> {
+  const body = await readJsonObject(request, new Set(['reason']))
+  return requiredText(body.reason, 'reason', 500)
+}
+
 export async function readGrantDays(request: Request): Promise<number> {
   const body = await readJsonObject(request, new Set(['days']))
   const days = Number(body.days)

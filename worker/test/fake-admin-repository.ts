@@ -13,6 +13,9 @@ import type {
   AdminGameUpdate,
   AdminProduct,
   AdminProductUpdate,
+  AdminReferralLog,
+  AdminReferralStats,
+  AdminReferralStatus,
   AdminPaymentLog,
   AdminUserDetail,
   AdminUserSummary,
@@ -30,6 +33,7 @@ export class FakeAdminRepository implements AdminRepository {
   chatReports: AdminChatReport[] = []
   chatRestrictions: AdminChatRestriction[] = []
   audit: AdminAuditEntry[] = []
+  referrals: AdminReferralLog[] = []
   calls: Array<{ action: string; actor: string; target: string; value?: unknown }> = []
 
   async isAdmin(): Promise<boolean> {
@@ -54,6 +58,70 @@ export class FakeAdminRepository implements AdminRepository {
 
   async getAdminUser(_actor: string, userId: string): Promise<AdminUserDetail | null> {
     return this.users.find((user) => user.id === userId) ?? null
+  }
+
+  async getAdminReferrals(
+    _actor: string,
+    status: AdminReferralStatus | null,
+    query: string,
+    page: number,
+    pageSize: number,
+  ): Promise<{ referrals: AdminReferralLog[]; stats: AdminReferralStats; total: number }> {
+    const normalized = query.toLowerCase()
+    const searched = this.referrals.filter((referral) => (
+      (!status || referral.status === status)
+      && (!normalized || [
+        referral.referrer_email ?? '', referral.referred_email ?? '',
+        referral.referrer_display_name ?? '', referral.referred_display_name ?? '',
+        referral.referrer_code ?? '', referral.id,
+      ].some((value) => value.toLowerCase().includes(normalized)))
+    ))
+    const offset = (page - 1) * pageSize
+    const count = (wanted: AdminReferralStatus) => this.referrals.filter(
+      (referral) => referral.status === wanted,
+    ).length
+    return {
+      referrals: searched.slice(offset, offset + pageSize),
+      stats: {
+        total: this.referrals.length,
+        pending: count('pending'),
+        qualified: count('qualified'),
+        rewarded: count('rewarded'),
+        rejected: count('rejected'),
+      },
+      total: searched.length,
+    }
+  }
+
+  async adminApproveReferral(
+    actor: string,
+    referralId: string,
+    reason: string,
+  ): Promise<AdminReferralLog> {
+    const referral = this.referrals.find((item) => item.id === referralId)
+    if (!referral) throw new Error('Referral not found')
+    referral.status = 'rewarded'
+    referral.qualification_reason = `manual_admin_approval: ${reason}`
+    referral.qualified_at ??= '2026-08-25T12:00:00.000Z'
+    referral.rewarded_at = '2026-08-25T12:00:00.000Z'
+    referral.reward_days = 1
+    this.record(actor, 'referral.approve', 'referral', referralId, referral as unknown as Json)
+    return referral
+  }
+
+  async adminRejectReferral(
+    actor: string,
+    referralId: string,
+    reason: string,
+  ): Promise<AdminReferralLog> {
+    const referral = this.referrals.find((item) => item.id === referralId)
+    if (!referral) throw new Error('Referral not found')
+    referral.status = 'rejected'
+    referral.qualification_reason = `manual_admin_rejection: ${reason}`
+    referral.rewarded_at = null
+    referral.reward_days = 0
+    this.record(actor, 'referral.reject', 'referral', referralId, referral as unknown as Json)
+    return referral
   }
 
   private record(

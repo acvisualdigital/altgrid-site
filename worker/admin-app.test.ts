@@ -15,6 +15,7 @@ const DEVICE_ID = '20000000-0000-4000-8000-000000000001'
 const PRODUCT_ID = '50000000-0000-4000-8000-000000000001'
 const REPORT_ID = '83000000-0000-4000-8000-000000000001'
 const MESSAGE_ID = '84000000-0000-4000-8000-000000000001'
+const REFERRAL_ID = '86000000-0000-4000-8000-000000000001'
 
 const adminUser: SafeUser = {
   id: ADMIN_ID,
@@ -236,6 +237,72 @@ describe('administrative Worker API', () => {
     expect(payload.user.referrals).toHaveLength(1)
     expect(payload.user.payments).toHaveLength(1)
     expect(payload.user.devices[0]).not.toHaveProperty('device_hash')
+  })
+
+  it('lists referral logs and records manual approval and rejection', async () => {
+    adminRepository.admin = true
+    adminRepository.referrals = [{
+      id: REFERRAL_ID,
+      referrer_user_id: TARGET_ID,
+      referred_user_id: '00000000-0000-4000-8000-000000000003',
+      campaign_id: '87000000-0000-4000-8000-000000000001',
+      campaign_name: 'Corrida de Indicações',
+      status: 'pending',
+      qualification_reason: 'awaiting_24h_validation',
+      created_at: '2026-08-27T12:00:00.000Z',
+      qualified_at: null,
+      rewarded_at: null,
+      referrer_email: 'cliente@example.com',
+      referrer_display_name: 'Cliente',
+      referrer_code: 'HUNT-ABCDEFGH',
+      referred_email: 'indicado@example.com',
+      referred_display_name: 'Indicado',
+      device_hint: null,
+      reward_days: 0,
+    }]
+
+    const list = await api.fetch(request('/v1/admin/referrals?status=pending&q=cliente'))
+    expect(list.status).toBe(200)
+    expect(await list.json()).toMatchObject({
+      referrals: [{ id: REFERRAL_ID, status: 'pending' }],
+      stats: { total: 1, pending: 1, rewarded: 0 },
+      pagination: { total: 1 },
+    })
+
+    const approve = await api.fetch(request(
+      `/v1/admin/referrals/${REFERRAL_ID}/approve`,
+      'POST',
+      { reason: 'Cadastro confirmado pelo suporte' },
+    ))
+    expect(approve.status).toBe(200)
+    expect(await approve.json()).toMatchObject({
+      referral: { id: REFERRAL_ID, status: 'rewarded', reward_days: 1 },
+    })
+
+    const reject = await api.fetch(request(
+      `/v1/admin/referrals/${REFERRAL_ID}/reject`,
+      'POST',
+      { reason: 'Conta duplicada confirmada' },
+    ))
+    expect(reject.status).toBe(200)
+    expect(await reject.json()).toMatchObject({
+      referral: { id: REFERRAL_ID, status: 'rejected', reward_days: 0 },
+    })
+    expect(adminRepository.audit.map((entry) => entry.action)).toEqual([
+      'referral.reject',
+      'referral.approve',
+    ])
+  })
+
+  it('rejects referral moderation without a documented reason', async () => {
+    adminRepository.admin = true
+    const response = await api.fetch(request(
+      `/v1/admin/referrals/${REFERRAL_ID}/approve`,
+      'POST',
+      { reason: '' },
+    ))
+    expect(response.status).toBe(400)
+    expect(adminRepository.calls).toEqual([])
   })
 
   it('grants PRO days, changes plan and records both critical actions', async () => {

@@ -48,6 +48,38 @@ export interface AdminReferral {
   rewarded_at: string | null
 }
 
+export type AdminReferralStatus = 'pending' | 'qualified' | 'rewarded' | 'rejected'
+
+export interface AdminReferralLog extends AdminReferral {
+  campaign_id: string | null
+  campaign_name: string | null
+  referrer_email: string | null
+  referrer_display_name: string | null
+  referrer_code: string | null
+  referred_email: string | null
+  referred_display_name: string | null
+  device_hint: string | null
+  reward_days: number
+}
+
+export interface AdminReferralStats {
+  total: number
+  pending: number
+  qualified: number
+  rewarded: number
+  rejected: number
+}
+
+export interface AdminReferralsResponse {
+  referrals: AdminReferralLog[]
+  stats: AdminReferralStats
+  pagination: AdminPagination
+}
+
+export interface AdminReferralResponse {
+  referral: AdminReferralLog
+}
+
 export interface AdminPayment {
   id: string
   provider: string

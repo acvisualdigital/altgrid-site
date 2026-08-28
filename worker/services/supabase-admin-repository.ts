@@ -20,6 +20,9 @@ import type {
   AdminProduct,
   AdminProductUpdate,
   AdminReferral,
+  AdminReferralLog,
+  AdminReferralStats,
+  AdminReferralStatus,
   AdminUserDetail,
   AdminUserSummary,
 } from '../../src/types/admin-api'
@@ -96,6 +99,14 @@ type UserDetailRpcResult = {
   devices: AdminDevice[]
   referrals: { as_referrer: AdminReferral[]; as_referred: AdminReferral[] }
   payments: AdminPayment[]
+}
+
+type ReferralListRpcResult = {
+  page: number
+  page_size: number
+  total: number
+  stats: AdminReferralStats
+  items: AdminReferralLog[]
 }
 
 function dataError(error: PostgrestError): never {
@@ -229,6 +240,53 @@ export class SupabaseAdminRepository implements AdminRepository {
     }
   }
 
+  async getAdminReferrals(
+    actorUserId: string,
+    status: AdminReferralStatus | null,
+    query: string,
+    page: number,
+    pageSize: number,
+  ): Promise<{ referrals: AdminReferralLog[]; stats: AdminReferralStats; total: number }> {
+    const { data, error } = await this.client.rpc('admin_list_referrals', {
+      p_actor_user_id: actorUserId,
+      p_status: status,
+      p_query: query,
+      p_page: page,
+      p_page_size: pageSize,
+    })
+    if (error) dataError(error)
+    const result = data as unknown as ReferralListRpcResult
+    return {
+      referrals: result.items ?? [],
+      stats: result.stats,
+      total: result.total,
+    }
+  }
+
+  adminApproveReferral(
+    actorUserId: string,
+    referralId: string,
+    reason: string,
+  ): Promise<AdminReferralLog> {
+    return this.adminRpcResult<AdminReferralLog>('admin_approve_referral', {
+      p_actor_user_id: actorUserId,
+      p_referral_id: referralId,
+      p_reason: reason,
+    })
+  }
+
+  adminRejectReferral(
+    actorUserId: string,
+    referralId: string,
+    reason: string,
+  ): Promise<AdminReferralLog> {
+    return this.adminRpcResult<AdminReferralLog>('admin_reject_referral', {
+      p_actor_user_id: actorUserId,
+      p_referral_id: referralId,
+      p_reason: reason,
+    })
+  }
+
   private async adminRpc(name: string, parameters: Record<string, unknown>): Promise<void> {
     const { error } = await this.client.rpc(name, parameters)
     if (error) dataError(error)
@@ -241,6 +299,15 @@ export class SupabaseAdminRepository implements AdminRepository {
     const { data, error } = await this.client.rpc(name, parameters)
     if (error) dataError(error)
     return (data as { after: T }).after
+  }
+
+  private async adminRpcResult<T>(
+    name: string,
+    parameters: Record<string, unknown>,
+  ): Promise<T> {
+    const { data, error } = await this.client.rpc(name, parameters)
+    if (error) dataError(error)
+    return data as T
   }
 
   adminGrantProDays(actorUserId: string, targetUserId: string, days: number): Promise<void> {
