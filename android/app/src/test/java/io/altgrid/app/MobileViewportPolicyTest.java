@@ -10,8 +10,8 @@ public class MobileViewportPolicyTest {
     public void standardizesPortraitAndLandscapeBreakpointsWithoutBlockingPinchZoom() {
         String script = MobileViewportPolicy.documentStartScript();
 
-        assertTrue(script.contains("width=720, viewport-fit=cover"));
-        assertTrue(script.contains("width=1280, viewport-fit=cover"));
+        assertTrue(script.contains("width=480, viewport-fit=cover"));
+        assertTrue(script.contains("width=854, viewport-fit=cover"));
         assertTrue(script.contains("orientation: landscape"));
         assertFalse(script.contains("user-scalable=no"));
         assertFalse(script.contains("maximum-scale"));

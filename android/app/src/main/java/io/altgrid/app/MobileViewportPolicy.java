@@ -1,15 +1,16 @@
 package io.altgrid.app;
 
 /**
- * Keeps game pages on one predictable tablet-sized breakpoint. Android devices
+ * Keeps game pages on one predictable phone-wide breakpoint. Android devices
  * can expose very different CSS viewport widths even when their physical
- * screens look similar. A wider virtual canvas prevents game panels from
- * switching to narrow layouts that stack controls vertically, while the
- * WebView's overview mode scales the complete canvas to the native surface.
+ * screens look similar. The virtual canvas is wide enough to keep the game
+ * controls arranged horizontally without shrinking the whole interface to a
+ * desktop-sized 720 px canvas. The WebView's overview mode then fits it to the
+ * native session surface.
  */
 final class MobileViewportPolicy {
-    static final int PORTRAIT_CSS_WIDTH = 720;
-    static final int LANDSCAPE_CSS_WIDTH = 1280;
+    static final int PORTRAIT_CSS_WIDTH = 480;
+    static final int LANDSCAPE_CSS_WIDTH = 854;
 
     private static final String DOCUMENT_START_SCRIPT =
         "(function(){'use strict';"

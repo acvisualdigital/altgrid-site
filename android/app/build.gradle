@@ -53,6 +53,12 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // Preview builds must coexist with the officially signed app so a
+            // tester never needs to uninstall the production installation.
+            applicationIdSuffix ".preview"
+            versionNameSuffix "-preview"
+        }
         release {
             signingConfig signingConfigs.release
             minifyEnabled true
