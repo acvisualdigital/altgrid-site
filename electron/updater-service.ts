@@ -21,7 +21,13 @@ function releaseNotesAsText(releaseNotes: UpdateInfo['releaseNotes']): string | 
   const raw = typeof releaseNotes === 'string'
     ? releaseNotes
     : releaseNotes.map((entry) => entry.note ?? '').join('\n')
-  const plainText = raw
+  // Windows and Android ship from the same tag/release; drop Android-only
+  // lines so the desktop update dialog never mentions the mobile beta.
+  const windowsRelevant = raw
+    .split(/\r?\n/)
+    .filter((line) => !/android/i.test(line))
+    .join('\n')
+  const plainText = windowsRelevant
     .replace(/<[^>]*>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()

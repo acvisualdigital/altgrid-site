@@ -263,6 +263,24 @@ describe('UpdaterService', () => {
     service.stop()
   })
 
+  it('strips Android-only lines from release notes shown on Windows', async () => {
+    electronMocks.app.isPackaged = true
+    process.env.ALTGRID_UPDATE_OWNER = 'altgrid'
+    process.env.ALTGRID_UPDATE_REPO = 'desktop'
+    const service = new UpdaterService(createWindow().browserWindow)
+
+    updaterMocks.emit('update-available', {
+      releaseNotes: 'Correções gerais.\nBeta do Android com novos recursos.\nMelhorias de desempenho.',
+      version: '2.1.0',
+    })
+
+    expect(service.getState()).toMatchObject({
+      releaseNotes: 'Correções gerais. Melhorias de desempenho.',
+    })
+
+    service.stop()
+  })
+
   it('starts one delayed and one periodic check, then fully detaches on stop', async () => {
     vi.useFakeTimers()
     electronMocks.app.isPackaged = true
