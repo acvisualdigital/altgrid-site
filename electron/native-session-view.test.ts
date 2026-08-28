@@ -45,6 +45,7 @@ const electronMocks = vi.hoisted(() => {
         this.handlers.set(event, handler)
       }),
       reload: vi.fn(),
+      send: vi.fn(),
       setAudioMuted: vi.fn(),
       setBackgroundThrottling: vi.fn(),
       setWindowOpenHandler: vi.fn((handler: EventHandler) => {
@@ -183,6 +184,7 @@ describe('createNativeSessionViewFactory', () => {
       devTools: false,
       nodeIntegration: false,
       nodeIntegrationInSubFrames: false,
+      preload: expect.stringMatching(/session-preload\.cjs$/),
       sandbox: true,
       webSecurity: true,
       webviewTag: false,
@@ -251,6 +253,46 @@ describe('createNativeSessionViewFactory', () => {
     view.webContents.isDestroyed.mockReturnValue(true)
     nativeView.setZoomFactor(1)
     expect(view.webContents.setZoomFactor).toHaveBeenCalledOnce()
+  })
+
+  it('sends the best-effort FPS budget without using offscreen frame APIs', () => {
+    const { hostWindow } = createHostWindow()
+    const factory = createNativeSessionViewFactory(hostWindow, false)
+    const nativeView = factory({
+      accountId: 'account-fps',
+      onEvent: vi.fn(),
+      partition: 'persist:altgrid-account-account-fps',
+    })
+    const view = electronMocks.views[0]!
+
+    nativeView.setFrameRateLimit(24)
+    expect(view.webContents.send).toHaveBeenLastCalledWith(
+      'altgrid:session-preload:set-frame-rate-limit',
+      24,
+    )
+
+    view.handlers.get('did-finish-load')?.()
+    expect(view.webContents.send).toHaveBeenLastCalledWith(
+      'altgrid:session-preload:set-frame-rate-limit',
+      24,
+    )
+    expect(view.webContents.send).toHaveBeenCalledTimes(2)
+    expect('setFrameRate' in view.webContents).toBe(false)
+  })
+
+  it('reports focus from the native game surface', () => {
+    const { hostWindow } = createHostWindow()
+    const onEvent = vi.fn()
+    const factory = createNativeSessionViewFactory(hostWindow, false)
+    factory({
+      accountId: 'account-focus',
+      onEvent,
+      partition: 'persist:altgrid-account-account-focus',
+    })
+
+    electronMocks.views[0]!.handlers.get('focus')?.()
+
+    expect(onEvent).toHaveBeenCalledWith({ type: 'focused' })
   })
 
   it('clears storage and cache only when explicitly requested', async () => {

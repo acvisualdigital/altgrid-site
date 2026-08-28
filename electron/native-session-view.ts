@@ -4,7 +4,10 @@ import {
   type BrowserWindow,
   type Session,
 } from 'electron'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
+import { SESSION_PRELOAD_CHANNELS } from './contracts.js'
 import type {
   NativeSessionView,
   NativeSessionViewFactory,
@@ -12,6 +15,10 @@ import type {
 import { isAllowedSessionUrl } from './url-policy.js'
 
 const hardenedSessions = new WeakSet<Session>()
+const sessionPreloadPath = join(
+  dirname(fileURLToPath(import.meta.url)),
+  'session-preload.cjs',
+)
 
 function destinationLabel(url: string): string {
   try {
@@ -42,6 +49,7 @@ function secureWebPreferences(
     navigateOnDragDrop: false,
     nodeIntegration: false,
     nodeIntegrationInSubFrames: false,
+    preload: sessionPreloadPath,
     sandbox: true,
     safeDialogs: true,
     session: sessionInstance,
@@ -84,6 +92,7 @@ export function createNativeSessionViewFactory(
     let attached = false
     let destroyed = false
     let ecoModeEnabled = false
+    let frameRateLimit = 0
     let parked = true
     let currentBounds = { height: 720, width: 1_280, x: 0, y: 0 }
     const popupWindows = new Set<BrowserWindow>()
@@ -141,6 +150,18 @@ export function createNativeSessionViewFactory(
       }
     }
 
+    const applyFrameRateLimit = (): void => {
+      if (!view.webContents.isDestroyed()) {
+        // Electron's native setFrameRate API only supports offscreen rendering.
+        // The isolated preload therefore applies a best-effort rAF budget while
+        // this on-screen WebContentsView and its authenticated state stay alive.
+        view.webContents.send(
+          SESSION_PRELOAD_CHANNELS.setFrameRateLimit,
+          frameRateLimit,
+        )
+      }
+    }
+
     view.setBackgroundColor('#080c11')
     view.webContents.setWindowOpenHandler(handleWindowOpen)
     view.webContents.on('did-create-window', (popupWindow) => {
@@ -154,6 +175,7 @@ export function createNativeSessionViewFactory(
           reportBlockedDestination(url)
         }
       })
+      popupWindow.on('focus', () => onEvent({ type: 'focused' }))
       popupWindow.once('closed', () => popupWindows.delete(popupWindow))
     })
     view.webContents.on('will-attach-webview', (event) => event.preventDefault())
@@ -179,7 +201,11 @@ export function createNativeSessionViewFactory(
       }
     })
     view.webContents.on('did-start-loading', () => onEvent({ type: 'loading' }))
-    view.webContents.on('did-finish-load', () => onEvent({ type: 'ready' }))
+    view.webContents.on('focus', () => onEvent({ type: 'focused' }))
+    view.webContents.on('did-finish-load', () => {
+      applyFrameRateLimit()
+      onEvent({ type: 'ready' })
+    })
     view.webContents.on('did-navigate', (_event, url) => {
       onEvent({ type: 'navigated', url })
     })
@@ -273,6 +299,13 @@ export function createNativeSessionViewFactory(
         if (!view.webContents.isDestroyed()) {
           ecoModeEnabled = enabled
           applyBackgroundThrottling()
+        }
+      },
+
+      setFrameRateLimit(fps): void {
+        if (!view.webContents.isDestroyed()) {
+          frameRateLimit = fps
+          applyFrameRateLimit()
         }
       },
 

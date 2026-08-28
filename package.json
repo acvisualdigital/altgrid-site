@@ -1,6 +1,6 @@
 {
   "name": "altgrid",
-  "version": "0.9.0-beta.10",
+  "version": "0.9.0-beta.11",
   "description": "Gerenciador desktop multissessão para jogos e sites suportados.",
   "author": "AltGrid",
   "private": true,
@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "vite",
     "build": "pnpm typecheck && vite build && pnpm worker:build",
-    "desktop:compile": "tsc -p tsconfig.electron.json && esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=electron-dist/preload.cjs",
+    "desktop:compile": "tsc -p tsconfig.electron.json && esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=electron-dist/preload.cjs && esbuild electron/session-preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=electron-dist/session-preload.cjs",
     "desktop:dev": "pnpm desktop:compile && concurrently --kill-others --success first \"vite --mode desktop\" \"wait-on http://127.0.0.1:3000 && cross-env ALTGRID_DEV_SERVER_URL=http://127.0.0.1:3000 electron .\"",
     "desktop:build": "pnpm typecheck && vite build --mode desktop && pnpm desktop:compile && node scripts/package-desktop.mjs",
     "android:sync": "pnpm build:android:web && cap sync android",

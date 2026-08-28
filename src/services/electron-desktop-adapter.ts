@@ -18,7 +18,7 @@ export interface DesktopSessionLaunchTarget {
 export interface DesktopSessionStatusEvent {
   accountId: string
   detail?: string
-  type: 'crashed' | 'load-failed' | 'loading' | 'ready'
+  type: 'crashed' | 'focused' | 'load-failed' | 'loading' | 'ready'
 }
 
 export interface ElectronDesktopIntegration {
@@ -159,8 +159,14 @@ export class ElectronSessionLauncher {
     await this.api.muteSession(account.id, muted)
   }
 
-  setEcoMode(enabled: boolean): Promise<boolean> {
-    return this.api.setEcoMode(enabled)
+  setEcoMode(enabled: boolean, secondaryFps?: number): Promise<boolean> {
+    return secondaryFps === undefined
+      ? this.api.setEcoMode(enabled)
+      : this.api.setEcoMode(enabled, secondaryFps)
+  }
+
+  async setFrameRate(account: DesktopAccountReference, fps: number): Promise<void> {
+    await this.api.setFrameRate(account.id, fps)
   }
 
   dispose(): void {
@@ -191,7 +197,7 @@ export class ElectronSessionLauncher {
 function isStatusEvent(event: SessionEvent): event is SessionEvent & {
   type: DesktopSessionStatusEvent['type']
 } {
-  return ['crashed', 'load-failed', 'loading', 'ready'].includes(event.type)
+  return ['crashed', 'focused', 'load-failed', 'loading', 'ready'].includes(event.type)
 }
 
 function desktopApiFromWindow(): AltgridDesktopApi | null {

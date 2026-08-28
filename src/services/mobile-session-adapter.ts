@@ -183,9 +183,11 @@ export class MobileSessionLauncher implements AccountSessionLauncher {
     return MobileGame.reload({ accountId: account.id })
   }
 
-  setEcoMode(): boolean {
+  setEcoMode(_enabled: boolean, _backgroundFps: 10 | 20 | 30): boolean {
     return false
   }
+
+  setFrameRate(): void {}
 
   setMuted(): void {}
 

@@ -20,12 +20,12 @@ vi.mock('electron', () => ({
 
 await import('./preload.js')
 
-describe('desktop preload Eco Mode bridge', () => {
+describe('desktop preload performance bridge', () => {
   beforeEach(() => {
     electronMocks.invoke.mockClear()
   })
 
-  it('exposes only the boolean Eco Mode command over its dedicated IPC channel', async () => {
+  it('exposes Eco Mode and per-session FPS only over dedicated IPC channels', async () => {
     const api = electronMocks.exposeInMainWorld.mock.calls[0]?.[1] as
       | AltgridDesktopApi
       | undefined
@@ -35,6 +35,20 @@ describe('desktop preload Eco Mode bridge', () => {
     expect(electronMocks.invoke).toHaveBeenCalledWith(
       'altgrid:sessions:set-eco-mode',
       true,
+    )
+
+    await api!.sessions.setEcoMode(true, 24)
+    expect(electronMocks.invoke).toHaveBeenCalledWith(
+      'altgrid:sessions:set-eco-mode',
+      true,
+      24,
+    )
+
+    await api!.sessions.setFrameRate('account-1', 60)
+    expect(electronMocks.invoke).toHaveBeenCalledWith(
+      'altgrid:sessions:set-frame-rate',
+      'account-1',
+      60,
     )
   })
 })

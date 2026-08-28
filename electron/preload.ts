@@ -62,8 +62,13 @@ const api: AltgridDesktopApi = Object.freeze({
     resizeSession: (accountId: string, bounds: SessionBounds) => (
       invoke<SessionSnapshot>(IPC_CHANNELS.sessions.resize, accountId, bounds)
     ),
-    setEcoMode: (enabled: boolean) => (
-      invoke<boolean>(IPC_CHANNELS.sessions.setEcoMode, enabled)
+    setEcoMode: (enabled: boolean, secondaryFps?: number) => (
+      secondaryFps === undefined
+        ? invoke<boolean>(IPC_CHANNELS.sessions.setEcoMode, enabled)
+        : invoke<boolean>(IPC_CHANNELS.sessions.setEcoMode, enabled, secondaryFps)
+    ),
+    setFrameRate: (accountId: string, fps: number) => (
+      invoke<SessionSnapshot>(IPC_CHANNELS.sessions.setFrameRate, accountId, fps)
     ),
     showSession: (accountId: string) => (
       invoke<SessionSnapshot>(IPC_CHANNELS.sessions.show, accountId)

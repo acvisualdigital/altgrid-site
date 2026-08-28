@@ -19,6 +19,7 @@ function snapshot(
   return {
     accountId,
     bounds,
+    frameRate: 0,
     muted: false,
     partition: `persist:${accountId}`,
     status: 'ready',
@@ -48,6 +49,10 @@ function createSessionApi() {
     reloadSession: vi.fn(async (accountId: string) => snapshot(accountId, true)),
     resizeSession: vi.fn(async (accountId: string) => snapshot(accountId, true)),
     setEcoMode: vi.fn(async (enabled: boolean) => enabled),
+    setFrameRate: vi.fn(async (accountId: string, fps: number) => ({
+      ...snapshot(accountId, true),
+      frameRate: fps,
+    })),
     showSession: vi.fn(async (accountId: string) => snapshot(accountId, true)),
   } satisfies AltgridDesktopApi['sessions']
 
@@ -140,7 +145,8 @@ describe('ElectronSessionLauncher', () => {
     await launcher.focus({ id: 'account-1' })
     await launcher.reload({ id: 'account-1' })
     await launcher.setMuted({ id: 'account-1' }, true)
-    await expect(launcher.setEcoMode(true)).resolves.toBe(true)
+    await expect(launcher.setEcoMode(true, 20)).resolves.toBe(true)
+    await launcher.setFrameRate({ id: 'account-1' }, 45)
     await launcher.clearData({ id: 'account-1' })
     await launcher.close({ id: 'account-1' })
 
@@ -151,7 +157,8 @@ describe('ElectronSessionLauncher', () => {
     expect(harness.api.focusSession).toHaveBeenCalledWith('account-1')
     expect(harness.api.reloadSession).toHaveBeenCalledWith('account-1')
     expect(harness.api.muteSession).toHaveBeenCalledWith('account-1', true)
-    expect(harness.api.setEcoMode).toHaveBeenCalledWith(true)
+    expect(harness.api.setEcoMode).toHaveBeenCalledWith(true, 20)
+    expect(harness.api.setFrameRate).toHaveBeenCalledWith('account-1', 45)
     expect(harness.api.clearData).toHaveBeenCalledWith('account-1')
     expect(harness.api.closeSession).toHaveBeenCalledWith('account-1')
     await expect(launcher.open({ id: 'account-2' }, null)).rejects.toThrow(

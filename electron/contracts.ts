@@ -10,6 +10,7 @@ export type SessionStatus = 'loading' | 'ready' | 'crashed' | 'load-failed'
 export interface SessionSnapshot {
   accountId: string
   bounds: SessionBounds
+  frameRate: number
   muted: boolean
   partition: string
   status: SessionStatus
@@ -21,6 +22,7 @@ export type SessionEventType =
   | 'created'
   | 'destroyed'
   | 'escape'
+  | 'focused'
   | 'loading'
   | 'ready'
   | 'crashed'
@@ -74,7 +76,8 @@ export interface AltgridDesktopApi {
       accountId: string,
       bounds: SessionBounds,
     ): Promise<SessionSnapshot>
-    setEcoMode(enabled: boolean): Promise<boolean>
+    setEcoMode(enabled: boolean, secondaryFps?: number): Promise<boolean>
+    setFrameRate(accountId: string, fps: number): Promise<SessionSnapshot>
     showSession(accountId: string): Promise<SessionSnapshot>
   }
   updater: {
@@ -106,6 +109,7 @@ export const IPC_CHANNELS = Object.freeze({
     reload: 'altgrid:sessions:reload',
     resize: 'altgrid:sessions:resize',
     setEcoMode: 'altgrid:sessions:set-eco-mode',
+    setFrameRate: 'altgrid:sessions:set-frame-rate',
     show: 'altgrid:sessions:show',
   }),
   updater: Object.freeze({
@@ -115,4 +119,8 @@ export const IPC_CHANNELS = Object.freeze({
     getState: 'altgrid:updater:get-state',
     install: 'altgrid:updater:install',
   }),
+})
+
+export const SESSION_PRELOAD_CHANNELS = Object.freeze({
+  setFrameRateLimit: 'altgrid:session-preload:set-frame-rate-limit',
 })

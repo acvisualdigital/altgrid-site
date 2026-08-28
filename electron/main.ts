@@ -191,8 +191,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.sessions.mute, (event, accountId, muted) => (
     requireSessionManager(event).muteSession(accountId, muted)
   ))
-  ipcMain.handle(IPC_CHANNELS.sessions.setEcoMode, (event, enabled) => (
-    requireSessionManager(event).setEcoMode(enabled)
+  ipcMain.handle(IPC_CHANNELS.sessions.setEcoMode, (event, enabled, secondaryFps) => (
+    requireSessionManager(event).setEcoMode(enabled, secondaryFps)
+  ))
+  ipcMain.handle(IPC_CHANNELS.sessions.setFrameRate, (event, accountId, fps) => (
+    requireSessionManager(event).setFrameRate(accountId, fps)
   ))
   ipcMain.handle(IPC_CHANNELS.sessions.getAll, (event) => (
     requireSessionManager(event).getSessions()

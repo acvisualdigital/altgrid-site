@@ -21,6 +21,7 @@ interface FakeView extends NativeSessionView {
   stop: Mock<() => void>
   setBounds: Mock<(bounds: SessionBounds) => void>
   setEcoMode: Mock<(enabled: boolean) => void>
+  setFrameRateLimit: Mock<(fps: number) => void>
   setMuted: Mock<(muted: boolean) => void>
   setVisible: Mock<(visible: boolean) => void>
   setZoomFactor: Mock<(factor: number) => void>
@@ -44,6 +45,7 @@ function createHarness(
       stop: vi.fn(),
       setBounds: vi.fn(),
       setEcoMode: vi.fn(),
+      setFrameRateLimit: vi.fn(),
       setMuted: vi.fn(),
       setVisible: vi.fn(),
       setZoomFactor: vi.fn(),
@@ -193,6 +195,60 @@ describe('SessionManager', () => {
     expect(() => harness.manager.setEcoMode('true')).toThrow(TypeError)
   })
 
+  it('keeps the focused session smooth and applies the Eco budget to the others', async () => {
+    const harness = createHarness()
+    const events = vi.fn()
+    harness.manager.subscribe(events)
+    await harness.manager.createSession('account-1', 'https://game.example/')
+    await harness.manager.createSession('account-2', 'https://game.example/')
+    harness.manager.showSession('account-1')
+    harness.manager.showSession('account-2')
+    const first = harness.views.get('account-1')!
+    const second = harness.views.get('account-2')!
+    first.setFrameRateLimit.mockClear()
+    second.setFrameRateLimit.mockClear()
+
+    harness.manager.setFrameRate('account-1', 60)
+    harness.manager.setFrameRate('account-2', 0)
+    harness.manager.setEcoMode(true)
+
+    expect(first.setFrameRateLimit).toHaveBeenLastCalledWith(60)
+    expect(second.setFrameRateLimit).toHaveBeenLastCalledWith(20)
+
+    second.emit({ type: 'focused' })
+    expect(first.setFrameRateLimit).toHaveBeenLastCalledWith(20)
+    expect(second.setFrameRateLimit).toHaveBeenLastCalledWith(0)
+    expect(events).toHaveBeenLastCalledWith(expect.objectContaining({
+      accountId: 'account-2',
+      type: 'focused',
+    }))
+
+    harness.manager.setEcoMode(true, 30)
+    expect(first.setFrameRateLimit).toHaveBeenLastCalledWith(30)
+    expect(second.setFrameRateLimit).toHaveBeenLastCalledWith(0)
+    expect(() => harness.manager.setEcoMode(true, 9)).toThrow(RangeError)
+    expect(() => harness.manager.setEcoMode(true, 31)).toThrow(RangeError)
+  })
+
+  it('stores a desired FPS per session and updates native state before its snapshot', async () => {
+    const harness = createHarness()
+    await harness.manager.createSession('account-1', 'https://game.example/')
+    const view = harness.views.get('account-1')!
+    view.setFrameRateLimit.mockClear()
+
+    expect(harness.manager.setFrameRate('account-1', 75.4).frameRate).toBe(75)
+    expect(view.setFrameRateLimit).toHaveBeenLastCalledWith(75)
+    expect(harness.manager.setFrameRate('account-1', 999).frameRate).toBe(240)
+    expect(harness.manager.setFrameRate('account-1', -4).frameRate).toBe(0)
+    expect(() => harness.manager.setFrameRate('account-1', Number.NaN)).toThrow(TypeError)
+
+    view.setFrameRateLimit.mockImplementationOnce(() => {
+      throw new Error('native failure')
+    })
+    expect(() => harness.manager.setFrameRate('account-1', 30)).toThrow('native failure')
+    expect(harness.manager.getSessions()[0]?.frameRate).toBe(0)
+  })
+
   it('rolls existing sessions back when a native Eco Mode update fails', async () => {
     const harness = createHarness()
     await harness.manager.createSession('account-1', 'https://game.example/')
@@ -302,6 +358,7 @@ describe('SessionManager', () => {
         stop: vi.fn(),
         setBounds: vi.fn(),
         setEcoMode: vi.fn(),
+        setFrameRateLimit: vi.fn(),
         setMuted: vi.fn(),
         setVisible: vi.fn(),
         setZoomFactor: vi.fn(),

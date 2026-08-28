@@ -354,6 +354,21 @@ function installBrowser(href: string, startsOnline = true) {
   }
 }
 
+function installLocalStorage() {
+  const values = new Map<string, string>()
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    removeItem: (key: string) => {
+      values.delete(key)
+    },
+    setItem: (key: string, value: string) => {
+      values.set(key, value)
+    },
+  }
+  vi.stubGlobal('localStorage', storage)
+  return storage
+}
+
 function createAuthServiceDouble() {
   let listener: AuthStateListener | null = null
   const unsubscribe = vi.fn()
@@ -657,6 +672,108 @@ describe('AuthApp session lifecycle', () => {
 
     expect(launcher.calls).toEqual(['escape', 'status', 'open'])
     app.destroy()
+  })
+
+  it('persists and reapplies an independent FPS limit for each account', async () => {
+    installBrowser('https://app.example.com/')
+    installLocalStorage()
+    const auth = createAuthServiceDouble()
+    const setFrameRate = vi.fn().mockResolvedValue(undefined)
+    const account: ConfiguredAccount = {
+      createdAt: '2026-08-25T12:00:00.000Z',
+      displayName: 'Conta FPS',
+      gameSlug: 'huntera',
+      id: 'account-fps',
+    }
+    const app = new AuthApp(createRoot(), auth.service, {
+      sessionLauncher: { setFrameRate },
+    })
+    const harness = app as unknown as {
+      renderSessionCard(account: ConfiguredAccount): string
+      sessionFrameRateFor(accountId: string): number
+      updateSessionFrameRate(
+        account: ConfiguredAccount,
+        fps: number,
+        input: HTMLInputElement,
+      ): Promise<void>
+    }
+    const input = {
+      disabled: false,
+      isConnected: true,
+      value: '45',
+    } as HTMLInputElement
+
+    expect(harness.renderSessionCard(account)).toContain('data-session-frame-rate')
+    await harness.updateSessionFrameRate(account, 45, input)
+
+    expect(setFrameRate).toHaveBeenCalledWith(account, 45)
+    expect(JSON.parse(localStorage.getItem('altgrid.preference.session-fps.v1') ?? '{}'))
+      .toEqual({ 'account-fps': 45 })
+
+    const restored = new AuthApp(createRoot(), auth.service, {
+      sessionLauncher: { setFrameRate },
+    }) as unknown as { sessionFrameRateFor(accountId: string): number }
+    expect(restored.sessionFrameRateFor(account.id)).toBe(45)
+
+    await harness.updateSessionFrameRate(account, 0, input)
+    expect(input.value).toBe('')
+    expect(JSON.parse(localStorage.getItem('altgrid.preference.session-fps.v1') ?? '{}'))
+      .toEqual({})
+  })
+
+  it('persists the Eco background FPS and tracks native session focus', async () => {
+    installBrowser('https://app.example.com/')
+    installLocalStorage()
+    const auth = createAuthServiceDouble()
+    const setEcoMode = vi.fn(async (enabled: boolean) => enabled)
+    const permissions = new PermissionService({
+      account_limit: 6,
+      expires_at: null,
+      features: { eco_mode: true },
+      founder_number: null,
+      lifetime: false,
+      plan: 'PRO',
+    })
+    const account: ConfiguredAccount = {
+      createdAt: '2026-08-25T12:00:00.000Z',
+      displayName: 'Conta Eco',
+      gameSlug: 'huntera',
+      id: 'account-eco',
+    }
+    await permissions.openSession(account.id, vi.fn())
+    const app = new AuthApp(createRoot(), auth.service, {
+      permissionService: permissions,
+      sessionLauncher: { setEcoMode },
+    })
+    const harness = app as unknown as {
+      configuredAccounts: ConfiguredAccount[]
+      currentView: 'authenticated'
+      ecoBackgroundFps: number
+      focusedAccountId: string | null
+      handleSessionStatus(event: AccountSessionStatusEvent): void
+      render: ReturnType<typeof vi.fn>
+      renderWorkspaceToolbar(): string
+      updateEcoBackgroundFpsPreference(
+        fps: 10 | 20 | 30,
+        input: HTMLSelectElement,
+      ): Promise<void>
+    }
+    harness.configuredAccounts = [account]
+    harness.currentView = 'authenticated'
+    harness.render = vi.fn()
+
+    await harness.updateEcoBackgroundFpsPreference(30, {
+      disabled: false,
+      value: '30',
+    } as HTMLSelectElement)
+
+    expect(setEcoMode).toHaveBeenLastCalledWith(true, 30)
+    expect(localStorage.getItem('altgrid.preference.eco-background-fps.v1')).toBe('30')
+    expect(harness.renderWorkspaceToolbar()).toContain('ON · 30')
+
+    harness.handleSessionStatus({ accountId: account.id, type: 'focused' })
+    expect(harness.focusedAccountId).toBe(account.id)
+    expect(harness.render).toHaveBeenCalled()
   })
 
   it('renders the game inside the mobile host and switches accounts from quick tabs', async () => {

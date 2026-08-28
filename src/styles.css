@@ -1920,6 +1920,37 @@ form {
   color: #ff969e;
 }
 
+.menu-item--field {
+  cursor: default;
+}
+
+.menu-item--field > span {
+  display: grid;
+  gap: 1px;
+}
+
+.menu-item--field small {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.menu-item--field input {
+  width: 58px;
+  min-height: 28px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  background: var(--surface-strong);
+  font: inherit;
+  text-align: right;
+}
+
+.menu-item--field input:focus-visible {
+  outline: 1px solid var(--green);
+  border-color: var(--green-dark);
+}
+
 .menu-lock {
   color: #bd8aff;
   font-size: 9px;
@@ -4426,7 +4457,8 @@ form {
   line-height: 1.55;
 }
 
-.setting-toggle {
+.setting-toggle,
+.setting-select {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -4435,18 +4467,32 @@ form {
   border-bottom: 1px solid var(--border-soft);
 }
 
-.setting-toggle > span {
+.setting-toggle > span,
+.setting-select > span {
   display: grid;
   gap: 3px;
 }
 
-.setting-toggle strong {
+.setting-toggle strong,
+.setting-select strong {
   font-size: 10.5px;
 }
 
-.setting-toggle small {
+.setting-toggle small,
+.setting-select small {
   color: var(--text-muted);
   font-size: 9px;
+}
+
+.setting-select select {
+  min-width: 92px;
+  min-height: 34px;
+  padding: 6px 28px 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface-strong);
+  font: inherit;
 }
 
 .catalog-modal-list {

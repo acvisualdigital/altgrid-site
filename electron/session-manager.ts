@@ -14,6 +14,10 @@ const DEFAULT_LOAD_TIMEOUT_MS = 30_000
 // gives their layout more effective CSS space so buttons/bars stop clipping.
 const AUTO_FIT_REFERENCE_WIDTH = 960
 const AUTO_FIT_MIN_ZOOM = 0.67
+const MAX_FRAME_RATE = 240
+const DEFAULT_ECO_SECONDARY_FRAME_RATE = 20
+const MIN_ECO_SECONDARY_FRAME_RATE = 10
+const MAX_ECO_SECONDARY_FRAME_RATE = 30
 
 function computeAutoFitZoom(width: number): number {
   if (!Number.isFinite(width) || width <= 0) {
@@ -21,6 +25,28 @@ function computeAutoFitZoom(width: number): number {
   }
 
   return Math.min(1, Math.max(AUTO_FIT_MIN_ZOOM, width / AUTO_FIT_REFERENCE_WIDTH))
+}
+
+function normalizeFrameRate(input: unknown): number {
+  if (typeof input !== 'number' || !Number.isFinite(input)) {
+    throw new TypeError('O FPS informado é inválido.')
+  }
+
+  // 0 means unlimited/auto; anything else is clamped to a sane, positive range.
+  return Math.min(Math.max(Math.round(input), 0), MAX_FRAME_RATE)
+}
+
+function normalizeEcoSecondaryFrameRate(input: unknown): number {
+  if (typeof input !== 'number' || !Number.isInteger(input)) {
+    throw new TypeError('O FPS secundário do Eco Mode é inválido.')
+  }
+  if (
+    input < MIN_ECO_SECONDARY_FRAME_RATE
+    || input > MAX_ECO_SECONDARY_FRAME_RATE
+  ) {
+    throw new RangeError('O FPS secundário do Eco Mode deve ficar entre 10 e 30.')
+  }
+  return input
 }
 const DEFAULT_SESSION_BOUNDS: SessionBounds = {
   height: 720,
@@ -30,7 +56,7 @@ const DEFAULT_SESSION_BOUNDS: SessionBounds = {
 }
 
 export type NativeSessionEvent =
-  | { type: 'escape' | 'loading' | 'ready' }
+  | { type: 'escape' | 'focused' | 'loading' | 'ready' }
   | { type: 'crashed' | 'load-failed' | 'popup-blocked'; detail?: string }
   | { type: 'navigated'; url: string }
 
@@ -43,6 +69,7 @@ export interface NativeSessionView {
   stop(): void
   setBounds(bounds: SessionBounds): void
   setEcoMode(enabled: boolean): void
+  setFrameRateLimit(fps: number): void
   setMuted(muted: boolean): void
   setVisible(visible: boolean): void
   setZoomFactor(factor: number): void
@@ -68,6 +95,7 @@ export interface SessionManagerOptions {
 interface SessionRecord {
   accountId: string
   bounds: SessionBounds
+  frameRate: number
   muted: boolean
   partition: string
   status: SessionStatus
@@ -146,6 +174,7 @@ function snapshot(record: SessionRecord): SessionSnapshot {
   return {
     accountId: record.accountId,
     bounds: { ...record.bounds },
+    frameRate: record.frameRate,
     muted: record.muted,
     partition: record.partition,
     status: record.status,
@@ -162,6 +191,8 @@ export class SessionManager {
   private readonly loadTimeoutMs: number
   private readonly records = new Map<string, SessionRecord>()
   private ecoModeEnabled = false
+  private ecoSecondaryFrameRate = DEFAULT_ECO_SECONDARY_FRAME_RATE
+  private focusedAccountId: string | null = null
 
   constructor(options: SessionManagerOptions) {
     this.allowInsecureLoopback = options.allowInsecureLoopback ?? false
@@ -198,6 +229,7 @@ export class SessionManager {
     Object.assign(record, {
       accountId: normalizedId,
       bounds: { ...DEFAULT_SESSION_BOUNDS },
+      frameRate: 0,
       muted: false,
       partition,
       status: 'loading' satisfies SessionStatus,
@@ -211,6 +243,7 @@ export class SessionManager {
       // Apply the current process-local preference before the remote page starts.
       // This preserves the WebContents and its persistent authenticated partition.
       view.setEcoMode(this.ecoModeEnabled)
+      view.setFrameRateLimit(this.effectiveFrameRate(record))
       view.attach()
       view.setBounds(record.bounds)
       view.setZoomFactor(computeAutoFitZoom(record.bounds.width))
@@ -248,6 +281,9 @@ export class SessionManager {
 
     record.visible = true
     record.view.setVisible(true)
+    if (this.focusedAccountId === null) {
+      this.updateFocusedAccount(record.accountId)
+    }
     return snapshot(record)
   }
 
@@ -260,6 +296,12 @@ export class SessionManager {
 
     record.visible = false
     record.view.setVisible(false)
+    if (this.focusedAccountId === record.accountId) {
+      const replacement = [...this.records.values()].find((candidate) => (
+        candidate.accountId !== record.accountId && candidate.visible
+      ))
+      this.updateFocusedAccount(replacement?.accountId ?? null)
+    }
     return snapshot(record)
   }
 
@@ -267,6 +309,7 @@ export class SessionManager {
     const record = this.requireRecord(accountId)
 
     if (record.visible) {
+      this.updateFocusedAccount(record.accountId)
       record.view.focus()
     }
 
@@ -340,29 +383,67 @@ export class SessionManager {
     return snapshot(record)
   }
 
-  setEcoMode(enabled: unknown): boolean {
+  setFrameRate(accountId: unknown, inputFps: unknown): SessionSnapshot {
+    const record = this.requireRecord(accountId)
+    const fps = normalizeFrameRate(inputFps)
+
+    if (record.frameRate === fps) {
+      return snapshot(record)
+    }
+
+    record.view.setFrameRateLimit(this.effectiveFrameRate(record, fps))
+    record.frameRate = fps
+    return snapshot(record)
+  }
+
+  setEcoMode(enabled: unknown, inputSecondaryFps?: unknown): boolean {
     if (typeof enabled !== 'boolean') {
       throw new TypeError('O estado do Eco Mode deve ser booleano.')
     }
 
-    if (enabled === this.ecoModeEnabled) {
+    const secondaryFps = inputSecondaryFps === undefined
+      ? this.ecoSecondaryFrameRate
+      : normalizeEcoSecondaryFrameRate(inputSecondaryFps)
+
+    if (
+      enabled === this.ecoModeEnabled
+      && secondaryFps === this.ecoSecondaryFrameRate
+    ) {
       return this.ecoModeEnabled
     }
 
-    const previous = this.ecoModeEnabled
+    const previousEnabled = this.ecoModeEnabled
+    const previousSecondaryFps = this.ecoSecondaryFrameRate
     const updatedViews: NativeSessionView[] = []
 
     try {
       for (const record of this.records.values()) {
         updatedViews.push(record.view)
         record.view.setEcoMode(enabled)
+        record.view.setFrameRateLimit(this.effectiveFrameRate(
+          record,
+          record.frameRate,
+          enabled,
+          secondaryFps,
+        ))
       }
     } catch {
       // Avoid reporting a mode that only some sessions received. A native
       // setter failure is unexpected, but best-effort rollback is inexpensive.
       for (const view of updatedViews.reverse()) {
         try {
-          view.setEcoMode(previous)
+          const record = [...this.records.values()].find((candidate) => (
+            candidate.view === view
+          ))
+          view.setEcoMode(previousEnabled)
+          if (record) {
+            view.setFrameRateLimit(this.effectiveFrameRate(
+              record,
+              record.frameRate,
+              previousEnabled,
+              previousSecondaryFps,
+            ))
+          }
         } catch {
           // The original failure remains authoritative.
         }
@@ -371,6 +452,7 @@ export class SessionManager {
     }
 
     this.ecoModeEnabled = enabled
+    this.ecoSecondaryFrameRate = secondaryFps
     return this.ecoModeEnabled
   }
 
@@ -454,6 +536,10 @@ export class SessionManager {
       return
     }
 
+    if (event.type === 'focused') {
+      this.updateFocusedAccount(accountId)
+    }
+
     if (event.type === 'loading' || event.type === 'ready') {
       record.status = event.type
     } else if (event.type === 'crashed' || event.type === 'load-failed') {
@@ -477,11 +563,53 @@ export class SessionManager {
     }
 
     this.records.delete(normalizedId)
+    const wasFocused = this.focusedAccountId === normalizedId
+    if (wasFocused) {
+      this.focusedAccountId = null
+    }
     record.visible = false
     record.view.setVisible(false)
     record.view.destroy(force)
+    if (wasFocused) {
+      const replacement = [...this.records.values()].find((candidate) => candidate.visible)
+      this.updateFocusedAccount(replacement?.accountId ?? null)
+    }
     this.emit({ accountId: normalizedId, type: 'destroyed' })
     return true
+  }
+
+  private effectiveFrameRate(
+    record: SessionRecord,
+    desiredFrameRate = record.frameRate,
+    ecoModeEnabled = this.ecoModeEnabled,
+    ecoSecondaryFrameRate = this.ecoSecondaryFrameRate,
+  ): number {
+    if (!ecoModeEnabled || record.accountId === this.focusedAccountId) {
+      return desiredFrameRate
+    }
+
+    return desiredFrameRate === 0
+      ? ecoSecondaryFrameRate
+      : Math.min(desiredFrameRate, ecoSecondaryFrameRate)
+  }
+
+  private updateFocusedAccount(accountId: string | null): void {
+    if (accountId === this.focusedAccountId) {
+      return
+    }
+
+    const previousId = this.focusedAccountId
+    this.focusedAccountId = accountId
+
+    for (const candidateId of [previousId, accountId]) {
+      if (!candidateId) {
+        continue
+      }
+      const record = this.records.get(candidateId)
+      if (record) {
+        record.view.setFrameRateLimit(this.effectiveFrameRate(record))
+      }
+    }
   }
 
   private requireRecord(accountId: unknown): SessionRecord {

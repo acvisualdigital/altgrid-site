@@ -127,14 +127,15 @@ export interface AccountSessionLauncher {
     handler: (event: AccountSessionStatusEvent) => void,
   ): (() => void) | void
   reload(account: ConfiguredAccount): Promise<void> | void
-  setEcoMode(enabled: boolean): Promise<boolean> | boolean
+  setEcoMode(enabled: boolean, backgroundFps: EcoBackgroundFps): Promise<boolean> | boolean
+  setFrameRate(account: ConfiguredAccount, fps: number): Promise<void> | void
   setMuted(account: ConfiguredAccount, muted: boolean): Promise<void> | void
 }
 
 export interface AccountSessionStatusEvent {
   accountId: string
   detail?: string
-  type: 'closed' | 'crashed' | 'load-failed' | 'loading' | 'ready'
+  type: 'closed' | 'crashed' | 'focused' | 'load-failed' | 'loading' | 'ready'
 }
 
 export interface AccountSessionLaunchTarget {
@@ -184,7 +185,11 @@ export interface AppUpdater {
 const RECOVERY_QUERY_VALUE = 'recovery'
 const APP_VERSION = __APP_VERSION__
 const ECO_MODE_STORAGE_KEY = 'altgrid.preference.eco-mode.v1'
+const ECO_BACKGROUND_FPS_STORAGE_KEY = 'altgrid.preference.eco-background-fps.v1'
+const SESSION_FPS_STORAGE_KEY = 'altgrid.preference.session-fps.v1'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'altgrid.preference.sidebar-collapsed.v1'
+
+export type EcoBackgroundFps = 10 | 20 | 30
 
 type UiIconName =
   | 'add'
@@ -424,6 +429,7 @@ export class AuthApp {
   private readonly sessionLauncher: AccountSessionLauncher
   private readonly mobileSessionMode: boolean
   private readonly ecoModeSupported: boolean
+  private readonly frameRateControlSupported: boolean
   private readonly updater: AppUpdater | null
   private readonly gridLayoutService: GridLayoutService
   private activeDialog: ActiveDialog = null
@@ -458,6 +464,7 @@ export class AuthApp {
   private gridMode: GridMode = 'auto'
   private ecoModeRequested = true
   private ecoModeEffective = false
+  private ecoBackgroundFps: EcoBackgroundFps = 20
   private ecoModeOperation: Promise<void> = Promise.resolve()
   private workspaceMode: WorkspaceMode = 'account'
   private gridPageIndex = 0
@@ -479,6 +486,7 @@ export class AuthApp {
   private readonly sessionOpeningInFlight = new Map<string, Promise<boolean>>()
   private readonly sessionIssues = new Map<string, string>()
   private readonly mutedAccountIds = new Set<string>()
+  private readonly sessionFrameRates = new Map<string, number>()
   private sessionSurfaceManager: SessionSurfaceManager | null = null
   private focusedAccountId: string | null = null
   private dialogReturnFocus:
@@ -506,7 +514,13 @@ export class AuthApp {
     const sessionLauncher = options.sessionLauncher
     this.mobileSessionMode = sessionLauncher?.mobileNative === true
     this.ecoModeSupported = typeof sessionLauncher?.setEcoMode === 'function'
+    this.frameRateControlSupported = !this.mobileSessionMode
+      && typeof sessionLauncher?.setFrameRate === 'function'
     this.ecoModeRequested = this.readEcoModePreference()
+    this.ecoBackgroundFps = this.readEcoBackgroundFpsPreference()
+    this.readSessionFrameRatePreferences().forEach((fps, accountId) => {
+      this.sessionFrameRates.set(accountId, fps)
+    })
     try {
       this.sidebarCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true'
     } catch {
@@ -530,7 +544,10 @@ export class AuthApp {
         sessionLauncher?.registerStatusHandler?.(handler)
       ),
       reload: (account) => sessionLauncher?.reload?.(account),
-      setEcoMode: (enabled) => sessionLauncher?.setEcoMode?.(enabled) ?? false,
+      setEcoMode: (enabled, backgroundFps) => (
+        sessionLauncher?.setEcoMode?.(enabled, backgroundFps) ?? false
+      ),
+      setFrameRate: (account, fps) => sessionLauncher?.setFrameRate?.(account, fps),
       setMuted: (account, muted) => sessionLauncher?.setMuted?.(account, muted),
     }
     this.gridLayoutService = new GridLayoutService(this.permissionService)
@@ -820,6 +837,25 @@ export class AuthApp {
 
     if (event.type === 'closed') {
       void this.handleNativeSessionClosed(event.accountId)
+      return
+    }
+
+    if (event.type === 'focused') {
+      if (this.permissionService.isSessionActive(event.accountId)) {
+        const focusChanged = this.focusedAccountId !== event.accountId
+        this.focusedAccountId = event.accountId
+        if (focusChanged) {
+          const account = this.configuredAccounts.find(
+            (candidate) => candidate.id === event.accountId,
+          )
+          if (account) {
+            this.updateWorkspaceContext(account)
+          }
+          if (this.currentView === 'authenticated') {
+            this.render()
+          }
+        }
+      }
       return
     }
 
@@ -1898,7 +1934,7 @@ export class AuthApp {
             </button>
             <button class="header-command-button eco-mode-button ${this.ecoModeEffective ? 'is-active' : ''}" data-toggle-eco-mode type="button" aria-label="${this.ecoModeSupported ? 'Desativar' : 'Eco Mode indisponível'} Eco Mode" aria-pressed="${this.ecoModeEffective}" ${this.ecoModeSupported ? '' : 'disabled'}>
               ${uiIcon('leaf')}
-              <span>Eco <small>${this.ecoModeEffective ? 'ON' : 'OFF'}</small></span>
+              <span>Eco <small>${this.ecoModeEffective ? `ON · ${this.ecoBackgroundFps}` : 'OFF'}</small></span>
             </button>
             ${this.renderNotificationCenter()}
           </div>
@@ -2290,6 +2326,59 @@ export class AuthApp {
     }
   }
 
+  private readEcoBackgroundFpsPreference(): EcoBackgroundFps {
+    try {
+      const value = Number(localStorage.getItem(ECO_BACKGROUND_FPS_STORAGE_KEY))
+      return value === 10 || value === 30 ? value : 20
+    } catch {
+      return 20
+    }
+  }
+
+  private storeEcoBackgroundFpsPreference(fps: EcoBackgroundFps): void {
+    try {
+      localStorage.setItem(ECO_BACKGROUND_FPS_STORAGE_KEY, String(fps))
+    } catch {
+      // Keep the in-memory preference when local storage is unavailable.
+    }
+  }
+
+  private readSessionFrameRatePreferences(): Map<string, number> {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(SESSION_FPS_STORAGE_KEY) ?? '{}') as unknown
+
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return new Map()
+      }
+
+      return new Map(Object.entries(parsed).flatMap(([accountId, value]) => (
+        typeof value === 'number'
+          && Number.isInteger(value)
+          && value >= 1
+          && value <= 240
+          ? [[accountId, value] as const]
+          : []
+      )))
+    } catch {
+      return new Map()
+    }
+  }
+
+  private storeSessionFrameRatePreferences(): void {
+    try {
+      localStorage.setItem(
+        SESSION_FPS_STORAGE_KEY,
+        JSON.stringify(Object.fromEntries(this.sessionFrameRates)),
+      )
+    } catch {
+      // Native frame-rate state remains usable for the current run.
+    }
+  }
+
+  private sessionFrameRateFor(accountId: string): number {
+    return this.sessionFrameRates.get(accountId) ?? 0
+  }
+
   private syncEcoMode(): Promise<void> {
     const target = this.ecoModeSupported
       && this.ecoModeRequested
@@ -2302,7 +2391,10 @@ export class AuthApp {
           return
         }
 
-        const confirmed = await this.sessionLauncher.setEcoMode(target)
+        const confirmed = await this.sessionLauncher.setEcoMode(
+          target,
+          this.ecoBackgroundFps,
+        )
         this.ecoModeEffective = confirmed === target
       })
 
@@ -2335,6 +2427,56 @@ export class AuthApp {
     }
 
     this.render()
+  }
+
+  private async updateEcoBackgroundFpsPreference(
+    fps: EcoBackgroundFps,
+    input: HTMLSelectElement,
+  ): Promise<void> {
+    const previous = this.ecoBackgroundFps
+    this.ecoBackgroundFps = fps
+    this.storeEcoBackgroundFpsPreference(fps)
+    input.disabled = true
+
+    try {
+      await this.syncEcoMode()
+      this.showSessionAlert('')
+    } catch {
+      this.ecoBackgroundFps = previous
+      this.storeEcoBackgroundFpsPreference(previous)
+      await this.syncEcoMode().catch(() => undefined)
+      this.showSessionAlert('Não foi possível alterar o limite do Eco Mode.')
+    }
+
+    this.render()
+  }
+
+  private async updateSessionFrameRate(
+    account: ConfiguredAccount,
+    fps: number,
+    input: HTMLInputElement,
+  ): Promise<void> {
+    const previous = this.sessionFrameRateFor(account.id)
+    input.disabled = true
+
+    try {
+      await this.sessionLauncher.setFrameRate(account, fps)
+      if (fps === 0) {
+        this.sessionFrameRates.delete(account.id)
+      } else {
+        this.sessionFrameRates.set(account.id, fps)
+      }
+      this.storeSessionFrameRatePreferences()
+      input.value = fps === 0 ? '' : String(fps)
+      this.showSessionAlert('')
+    } catch {
+      input.value = previous === 0 ? '' : String(previous)
+      this.showSessionAlert('Não foi possível alterar o FPS desta conta.')
+    } finally {
+      if (input.isConnected) {
+        input.disabled = false
+      }
+    }
   }
 
   private requiresMinimumVersion(): boolean {
@@ -2684,6 +2826,7 @@ export class AuthApp {
 
   private renderSessionCard(account: ConfiguredAccount): string {
     const muted = this.mutedAccountIds.has(account.id)
+    const frameRate = this.sessionFrameRateFor(account.id)
 
     return `
       <article class="session-card" data-session-card data-account-id="${escapeHtml(account.id)}">
@@ -2699,6 +2842,10 @@ export class AuthApp {
               <button class="menu-item" data-reload-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Recarregar</button>
               <button class="menu-item" data-maximize-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Maximizar</button>
               <button class="menu-item" data-toggle-session-mute data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">${muted ? 'Ativar som' : 'Silenciar'}</button>
+              ${this.frameRateControlSupported ? `<label class="menu-item menu-item--field">
+                <span>FPS desta conta<small>0 ou vazio = Auto</small></span>
+                <input data-session-frame-rate data-account-id="${escapeHtml(account.id)}" type="number" inputmode="numeric" min="0" max="240" step="1" value="${frameRate === 0 ? '' : frameRate}" placeholder="Auto" aria-label="FPS de ${escapeHtml(account.displayName)}" />
+              </label>` : ''}
               <button class="menu-item" data-close-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Fechar</button>
               <button class="menu-item menu-item--danger" data-clear-session-data data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Limpar dados</button>
               <button class="menu-item menu-item--danger" data-delete-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Excluir configuração</button>
@@ -2837,6 +2984,7 @@ export class AuthApp {
         const game = card.querySelector<HTMLElement>('[data-session-game]')
         const surface = card.querySelector<HTMLElement>('[data-session-surface-id]')
         const muteButton = card.querySelector<HTMLButtonElement>('[data-toggle-session-mute]')
+        const frameRateInput = card.querySelector<HTMLInputElement>('[data-session-frame-rate]')
 
         if (name) {
           name.textContent = account.displayName
@@ -2858,6 +3006,10 @@ export class AuthApp {
           muteButton.textContent = this.mutedAccountIds.has(account.id)
             ? 'Ativar som'
             : 'Silenciar'
+        }
+        if (frameRateInput && document.activeElement !== frameRateInput) {
+          const frameRate = this.sessionFrameRateFor(account.id)
+          frameRateInput.value = frameRate === 0 ? '' : String(frameRate)
         }
         const menuTrigger = card.querySelector<HTMLElement>('.session-menu__trigger')
         menuTrigger?.setAttribute('aria-label', `Opções de ${account.displayName}`)
@@ -3557,7 +3709,7 @@ export class AuthApp {
               <button class="is-active" data-settings-tab="general" type="button">Geral</button><button data-settings-tab="accounts" type="button">Contas</button><button data-settings-tab="visual" type="button">Visual</button><button data-settings-tab="updates" type="button">Atualizações</button><button data-settings-tab="notifications" type="button">Notificações</button><button data-settings-tab="about" type="button">Sobre</button>
             </nav>
             <div class="settings-content">
-              <section data-settings-panel="general"><h3>Geral</h3><label class="setting-toggle"><span><strong>Eco Mode</strong><small>${ecoModeNote}</small></span><input data-preference="eco-mode" type="checkbox" ${this.ecoModeRequested ? 'checked' : ''} ${ecoModeAvailable ? '' : 'disabled'} /></label><label class="setting-toggle"><span><strong>Restaurar última sessão</strong><small>Reabre as contas usadas na inicialização anterior.</small></span><input data-preference="restore-session" type="checkbox" ${restore ? 'checked' : ''} /></label><label class="setting-toggle"><span><strong>Confirmar antes de fechar</strong><small>Evita encerrar sessões por acidente.</small></span><input data-preference="confirm-close" type="checkbox" ${confirmClose ? 'checked' : ''} /></label></section>
+              <section data-settings-panel="general"><h3>Geral</h3><label class="setting-toggle"><span><strong>Eco Mode</strong><small>${ecoModeNote}</small></span><input data-preference="eco-mode" type="checkbox" ${this.ecoModeRequested ? 'checked' : ''} ${ecoModeAvailable ? '' : 'disabled'} /></label><label class="setting-select"><span><strong>FPS em segundo plano</strong><small>A conta em uso permanece suave; as demais economizam recursos.</small></span><select data-eco-background-fps ${ecoModeAvailable ? '' : 'disabled'}><option value="10" ${this.ecoBackgroundFps === 10 ? 'selected' : ''}>10 FPS</option><option value="20" ${this.ecoBackgroundFps === 20 ? 'selected' : ''}>20 FPS</option><option value="30" ${this.ecoBackgroundFps === 30 ? 'selected' : ''}>30 FPS</option></select></label><label class="setting-toggle"><span><strong>Restaurar última sessão</strong><small>Reabre as contas usadas na inicialização anterior.</small></span><input data-preference="restore-session" type="checkbox" ${restore ? 'checked' : ''} /></label><label class="setting-toggle"><span><strong>Confirmar antes de fechar</strong><small>Evita encerrar sessões por acidente.</small></span><input data-preference="confirm-close" type="checkbox" ${confirmClose ? 'checked' : ''} /></label></section>
               <section data-settings-panel="accounts" hidden><h3>Contas</h3><p>Cookies e credenciais dos jogos ficam somente neste dispositivo, isolados por conta.</p></section>
               <section data-settings-panel="visual" hidden><h3>Visual</h3><p>O tema escuro premium acompanha automaticamente o AltGrid.</p></section>
               <section data-settings-panel="updates" hidden><h3>Atualizações</h3><p>Canal atual: <strong>${updateChannel}</strong> · instalada ${APP_VERSION}${this.configText('latest_version') ? ` · disponível ${escapeHtml(this.configText('latest_version')!)}` : ''}</p><button class="button button--secondary" data-check-update type="button">Verificar atualização</button></section>
@@ -4384,6 +4536,33 @@ export class AuthApp {
       })
 
     this.root
+      .querySelectorAll<HTMLInputElement>('[data-session-frame-rate]')
+      .forEach((input) => {
+        if (input.dataset.actionBound === 'true') {
+          return
+        }
+
+        input.dataset.actionBound = 'true'
+        input.addEventListener('change', () => {
+          const account = this.accountFromAction(input)
+          if (!account) {
+            return
+          }
+
+          const rawValue = input.value.trim()
+          const fps = rawValue === '' ? 0 : Number(rawValue)
+          if (!Number.isInteger(fps) || fps < 0 || fps > 240) {
+            const previous = this.sessionFrameRateFor(account.id)
+            input.value = previous === 0 ? '' : String(previous)
+            this.showSessionAlert('Informe um FPS entre 1 e 240, ou deixe vazio para Auto.')
+            return
+          }
+
+          void this.updateSessionFrameRate(account, fps, input)
+        })
+      })
+
+    this.root
       .querySelectorAll<HTMLButtonElement>('[data-clear-session-data]')
       .forEach((button) => {
         this.bindButtonOnce(button, () => {
@@ -4573,8 +4752,8 @@ export class AuthApp {
     button.addEventListener('click', listener)
   }
 
-  private accountFromAction(button: HTMLButtonElement): ConfiguredAccount | null {
-    const accountId = button.dataset.accountId
+  private accountFromAction(element: HTMLElement): ConfiguredAccount | null {
+    const accountId = element.dataset.accountId
     return this.configuredAccounts.find((account) => account.id === accountId) ?? null
   }
 
@@ -4796,6 +4975,19 @@ export class AuthApp {
           }
         })
       })
+
+    const ecoBackgroundFps = this.root.querySelector<HTMLSelectElement>(
+      '[data-eco-background-fps]',
+    )
+    if (ecoBackgroundFps && ecoBackgroundFps.dataset.actionBound !== 'true') {
+      ecoBackgroundFps.dataset.actionBound = 'true'
+      ecoBackgroundFps.addEventListener('change', () => {
+        const fps = Number(ecoBackgroundFps.value)
+        if (fps === 10 || fps === 20 || fps === 30) {
+          void this.updateEcoBackgroundFpsPreference(fps, ecoBackgroundFps)
+        }
+      })
+    }
 
     this.root
       .querySelectorAll<HTMLButtonElement>('[data-toggle-eco-mode]')
@@ -5079,6 +5271,8 @@ export class AuthApp {
 
       this.accountService.remove(userId, accountId)
       this.configuredAccounts = this.accountService.list(userId)
+      this.sessionFrameRates.delete(accountId)
+      this.storeSessionFrameRatePreferences()
       this.mutedAccountIds.delete(accountId)
       this.sessionIssues.delete(accountId)
       this.maximizedAccountId = this.maximizedAccountId === accountId
@@ -5210,7 +5404,20 @@ export class AuthApp {
         this.activeDialog = 'free-limit'
       } else if (result === 'opened' || result === 'already_open') {
         this.focusedAccountId = accountId
-        this.showSessionAlert('')
+        let frameRateApplied = true
+        if (this.frameRateControlSupported) {
+          await Promise.resolve(
+            this.sessionLauncher.setFrameRate(
+              account,
+              this.sessionFrameRateFor(account.id),
+            ),
+          ).catch(() => {
+            frameRateApplied = false
+          })
+        }
+        this.showSessionAlert(frameRateApplied
+          ? ''
+          : 'A conta abriu, mas não foi possível aplicar o limite de FPS.')
       }
 
       this.render()
