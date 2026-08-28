@@ -74,15 +74,21 @@ const applyLatestRelease = async () => {
     const release = await response.json()
     const assets = Array.isArray(release.assets) ? release.assets : []
     const windows = findAsset(assets, /^AltGrid-Setup-.*\.exe$/i)
+    const releaseVersion = String(release.tag_name ?? '').replace(/^v/i, '')
 
     if (windows?.browser_download_url) {
       document.querySelectorAll('.download-windows').forEach((link) => {
         link.href = windows.browser_download_url
       })
     }
-    document.querySelectorAll('.current-version-short').forEach((element) => {
-      element.textContent = '1.0.0'
-    })
+    if (/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(releaseVersion)) {
+      document.querySelectorAll('.download-windows .current-version, .download-card-main .current-version').forEach((element) => {
+        element.textContent = `Versão ${releaseVersion}`
+      })
+      document.querySelectorAll('.current-version-short').forEach((element) => {
+        element.textContent = releaseVersion
+      })
+    }
   } catch (error) {
     console.info('AltGrid: usando links de download estáveis.', error)
   }
