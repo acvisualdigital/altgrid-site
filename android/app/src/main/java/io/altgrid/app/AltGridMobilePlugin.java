@@ -119,6 +119,18 @@ public class AltGridMobilePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void setFullscreen(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+        runOnUiThread(call, () -> {
+            if (GameActivity.setFullscreen(enabled)) {
+                call.resolve(new JSObject());
+            } else {
+                call.reject("A tela Android não está disponível.");
+            }
+        });
+    }
+
+    @PluginMethod
     public void applyLayout(PluginCall call) {
         JSArray requestedSessions = call.getArray("sessions");
         if (requestedSessions == null) {

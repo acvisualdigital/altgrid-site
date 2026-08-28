@@ -15,6 +15,7 @@ import { createEmbeddedOfflineLicenseService } from './services/license-snapshot
 import { PermissionService } from './services/permission-service'
 import { SupabaseChatRealtimeGateway } from './services/supabase-chat-realtime'
 import { createMobileSessionLauncher } from './services/mobile-session-adapter'
+import { createMobileUpdateService } from './services/mobile-update-service'
 
 const root = document.querySelector<HTMLElement>('#app')
 
@@ -36,6 +37,7 @@ try {
     : null
   const desktop = createElectronDesktopIntegration()
   const mobile = desktop ? null : createMobileSessionLauncher()
+  const mobileUpdater = desktop ? null : createMobileUpdateService(__APP_VERSION__)
   const chatService = backendApi
     ? new ChatService(
         backendApi,
@@ -87,7 +89,7 @@ try {
         openExternalUrl: desktop?.openExternalUrl,
         permissionService: new PermissionService(),
         sessionLauncher: desktop?.sessionLauncher ?? mobile ?? undefined,
-        updater: desktop?.updater,
+        updater: desktop?.updater ?? mobileUpdater ?? undefined,
       })
 
   void app.start()
@@ -95,6 +97,7 @@ try {
     unsubscribeFromDeviceRegistration?.()
     app.destroy()
     desktop?.dispose()
+    mobileUpdater?.dispose()
   }, { once: true })
 } catch {
   root.innerHTML = `

@@ -24,6 +24,9 @@ import android.widget.FrameLayout;
 import androidx.webkit.ProfileStore;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.getcapacitor.BridgeActivity;
 
@@ -66,6 +69,7 @@ public class GameActivity extends BridgeActivity {
     private final Map<String, GameSession> sessions = new LinkedHashMap<>();
     private final Map<String, SessionLayout> latestLayout = new LinkedHashMap<>();
     private FrameLayout sessionStage;
+    private boolean fullscreenSession = false;
 
     static final class SessionLayout {
         final String accountId;
@@ -163,6 +167,42 @@ public class GameActivity extends BridgeActivity {
         }
         activity.applySessionLayout(layout);
         return true;
+    }
+
+    static boolean setFullscreen(boolean enabled) {
+        GameActivity activity;
+        synchronized (SESSION_LOCK) {
+            activity = trackedActivityLocked();
+        }
+        if (activity == null || activity.isFinishing()) {
+            return false;
+        }
+        activity.fullscreenSession = enabled;
+        activity.applyFullscreenInsets();
+        return true;
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && fullscreenSession) {
+            applyFullscreenInsets();
+        }
+    }
+
+    private void applyFullscreenInsets() {
+        WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(
+            getWindow(),
+            getWindow().getDecorView()
+        );
+        if (fullscreenSession) {
+            controller.setSystemBarsBehavior(
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            );
+            controller.hide(WindowInsetsCompat.Type.systemBars());
+        } else {
+            controller.show(WindowInsetsCompat.Type.systemBars());
+        }
     }
 
     public static boolean close(String requestedAccountId, Runnable completed) {
@@ -449,6 +489,8 @@ public class GameActivity extends BridgeActivity {
         session.container.setClickable(true);
         session.container.setFocusable(true);
         session.container.bringToFront();
+        session.webView.requestLayout();
+        session.webView.invalidate();
     }
 
     private void configureWebView(WebView view, GameSession session, boolean popup) {
@@ -467,6 +509,11 @@ public class GameActivity extends BridgeActivity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setSupportMultipleWindows(true);
         settings.setJavaScriptCanOpenWindowsAutomatically(true);
+        settings.setUseWideViewPort(true);
+        settings.setLoadWithOverviewMode(true);
+        settings.setSupportZoom(true);
+        settings.setBuiltInZoomControls(true);
+        settings.setDisplayZoomControls(false);
         settings.setOffscreenPreRaster(false);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             settings.setSafeBrowsingEnabled(true);

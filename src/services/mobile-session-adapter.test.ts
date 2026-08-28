@@ -28,6 +28,7 @@ const mobilePlugin = vi.hoisted(() => {
     resetListener(): void {
       statusListener = null
     },
+    setFullscreen: vi.fn(async () => undefined),
   }
 })
 
@@ -68,6 +69,18 @@ describe('MobileSessionLauncher', () => {
     expect(launcher.getPlatform()).toBe('android')
     expect(launcher.mobileNative).toBe(true)
     expect('maxConcurrentSessions' in launcher).toBe(false)
+  })
+
+  it('delegates immersive fullscreen to the Android host', async () => {
+    const launcher = new MobileSessionLauncher()
+
+    await launcher.setFullscreen(true)
+    await launcher.setFullscreen(false)
+
+    expect(mobilePlugin.setFullscreen.mock.calls).toEqual([
+      [{ enabled: true }],
+      [{ enabled: false }],
+    ])
   })
 
   it('keeps multiple Android sessions alive and delegates controls by account', async () => {

@@ -134,6 +134,7 @@ export interface AccountSessionLauncher {
   reload(account: ConfiguredAccount): Promise<void> | void
   setEcoMode(enabled: boolean, backgroundFps: EcoBackgroundFps): Promise<boolean> | boolean
   setFrameRate(account: ConfiguredAccount, fps: number): Promise<void> | void
+  setFullscreen?(enabled: boolean): Promise<void> | void
   setMuted(account: ConfiguredAccount, muted: boolean): Promise<void> | void
 }
 
@@ -596,6 +597,7 @@ export class AuthApp {
         sessionLauncher?.setEcoMode?.(enabled, backgroundFps) ?? false
       ),
       setFrameRate: (account, fps) => sessionLauncher?.setFrameRate?.(account, fps),
+      setFullscreen: (enabled) => sessionLauncher?.setFullscreen?.(enabled),
       setMuted: (account, muted) => sessionLauncher?.setMuted?.(account, muted),
     }
     this.gridLayoutService = new GridLayoutService(this.permissionService)
@@ -926,10 +928,19 @@ export class AuthApp {
 
   private async handleNativeSessionClosed(accountId: string): Promise<void> {
     const wasActive = this.permissionService.isSessionActive(accountId)
+    const wasFullscreen = this.mobileSessionMode
+      && this.screensOnly
+      && this.maximizedAccountId === accountId
 
     await this.permissionService.closeSession(accountId)
     this.mutedAccountIds.delete(accountId)
     this.sessionIssues.delete(accountId)
+
+    if (wasFullscreen) {
+      this.maximizedAccountId = null
+      this.screensOnly = false
+      this.setNativeFullscreen(false)
+    }
 
     if (this.focusedAccountId === accountId) {
       this.focusedAccountId = this.getActiveAccounts()[0]?.id ?? null
@@ -957,17 +968,31 @@ export class AuthApp {
 
     if (this.maximizedAccountId) {
       this.maximizedAccountId = null
+      if (this.mobileSessionMode) {
+        this.screensOnly = false
+        this.setNativeFullscreen(false)
+      }
       this.applyWorkspacePresentation()
       return true
     }
 
     if (this.screensOnly) {
       this.screensOnly = false
+      this.setNativeFullscreen(false)
       this.applyWorkspacePresentation()
       return true
     }
 
     return false
+  }
+
+  private setNativeFullscreen(enabled: boolean): void {
+    if (!this.mobileSessionMode) {
+      return
+    }
+
+    void Promise.resolve(this.sessionLauncher.setFullscreen?.(enabled))
+      .catch(() => undefined)
   }
 
   private async handleAuthStateChange(
@@ -2869,6 +2894,9 @@ export class AuthApp {
   private renderSessionCard(account: ConfiguredAccount): string {
     const muted = this.mutedAccountIds.has(account.id)
     const frameRate = this.sessionFrameRateFor(account.id)
+    const mobileFullscreen = this.mobileSessionMode
+      && this.screensOnly
+      && this.maximizedAccountId === account.id
 
     return `
       <article class="session-card" data-session-card data-account-id="${escapeHtml(account.id)}">
@@ -2882,7 +2910,7 @@ export class AuthApp {
             <div class="menu-popover" role="menu">
               <button class="menu-item" data-rename-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Renomear</button>
               <button class="menu-item" data-reload-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Recarregar</button>
-              <button class="menu-item" data-maximize-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Maximizar</button>
+              <button class="menu-item" data-maximize-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">${this.mobileSessionMode ? (mobileFullscreen ? 'Sair da tela cheia' : 'Tela cheia · zoom automático') : 'Maximizar'}</button>
               <button class="menu-item" data-toggle-session-mute data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">${muted ? 'Ativar som' : 'Silenciar'}</button>
               ${this.frameRateControlSupported ? `<label class="menu-item menu-item--field">
                 <span>FPS desta conta<small>0 ou vazio = Auto</small></span>
@@ -3161,6 +3189,17 @@ export class AuthApp {
       this.workspaceMode === 'grid' && !this.maximizedAccountId,
     )
     shell.dataset.requestedGrid = this.gridMode
+
+    if (this.mobileSessionMode) {
+      this.root
+        .querySelectorAll<HTMLButtonElement>('[data-maximize-account]')
+        .forEach((button) => {
+          button.textContent = this.screensOnly
+            && button.dataset.accountId === this.maximizedAccountId
+              ? 'Sair da tela cheia'
+              : 'Tela cheia · zoom automático'
+        })
+    }
 
     const activeIds = this.getActiveAccounts().map((account) => account.id)
     const overlayMenuOpen = Boolean(this.root.querySelector(
@@ -3699,8 +3738,8 @@ export class AuthApp {
         content = `<div class="update-summary"><strong>Baixando atualização</strong><span>Você pode continuar usando o AltGrid.</span><progress max="100" value="${progress}">${progress}%</progress><small>${Math.round(progress)}%</small></div>`
         actions = ''
       } else if (state.status === 'downloaded') {
-        content = `<div class="update-summary"><strong>Atualização pronta</strong><span>${version}</span>${notes ? `<ul>${notes}</ul>` : ''}<small>Reinicie agora ou escolha instalar depois; nesse caso, a atualização será aplicada quando o AltGrid for fechado normalmente.</small></div>`
-        actions = '<button class="button button--primary" data-install-update type="button">Reiniciar e instalar</button>'
+        content = `<div class="update-summary"><strong>Atualização pronta</strong><span>${version}</span>${notes ? `<ul>${notes}</ul>` : ''}<small>Instale agora ou escolha instalar depois. O Windows aplica a atualização ao fechar o AltGrid; no Android, o sistema pedirá sua confirmação.</small></div>`
+        actions = '<button class="button button--primary" data-install-update type="button">Instalar atualização</button>'
       } else if (state.status === 'not_available') {
         if (!state.supported && state.message) {
           content = `<p class="modal__note">${escapeHtml(state.message)}</p>`
@@ -4499,7 +4538,12 @@ export class AuthApp {
       .querySelectorAll<HTMLButtonElement>('[data-exit-screens-only]')
       .forEach((button) => {
         this.bindButtonOnce(button, () => {
+          if (this.mobileSessionMode) {
+            this.maximizedAccountId = null
+            this.setNativeFullscreen(false)
+          }
           this.screensOnly = false
+          this.lastLayoutSignature = ''
           this.applyWorkspacePresentation()
         })
       })
@@ -4515,8 +4559,23 @@ export class AuthApp {
           }
 
           button.closest('details')?.removeAttribute('open')
-          this.maximizedAccountId = accountId
+          if (
+            this.mobileSessionMode
+            && this.screensOnly
+            && this.maximizedAccountId === accountId
+          ) {
+            this.maximizedAccountId = null
+            this.screensOnly = false
+          } else {
+            this.focusedAccountId = accountId
+            this.maximizedAccountId = accountId
+            if (this.mobileSessionMode) {
+              this.screensOnly = true
+            }
+          }
+          this.lastLayoutSignature = ''
           this.applyWorkspacePresentation()
+          this.setNativeFullscreen(this.screensOnly)
         })
       })
 

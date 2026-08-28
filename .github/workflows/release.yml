@@ -68,12 +68,61 @@ jobs:
       - name: Build Microsoft Store package
         run: node scripts/package-store.mjs
 
-      - name: Build Android beta
+      - name: Configure Android release signing
+        shell: pwsh
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          $requiredValues = @{
+            ANDROID_KEYSTORE_BASE64 = $env:ANDROID_KEYSTORE_BASE64
+            ANDROID_KEYSTORE_PASSWORD = $env:ANDROID_KEYSTORE_PASSWORD
+            ANDROID_KEY_ALIAS = $env:ANDROID_KEY_ALIAS
+            ANDROID_KEY_PASSWORD = $env:ANDROID_KEY_PASSWORD
+          }
+          foreach ($entry in $requiredValues.GetEnumerator()) {
+            if ([string]::IsNullOrWhiteSpace($entry.Value)) {
+              throw "Secret Android obrigatório ausente: $($entry.Key)."
+            }
+            if ($entry.Value -match "[`r`n]") {
+              throw "Secret Android inválido: $($entry.Key) contém quebra de linha."
+            }
+          }
+
+          $versionName = $env:RELEASE_TAG.Substring(1)
+          if ($versionName -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') {
+            throw "Tag Android inválida: $($env:RELEASE_TAG)."
+          }
+          $runNumber = [int64]$env:GITHUB_RUN_NUMBER
+          $runAttempt = [Math]::Min([int64]$env:GITHUB_RUN_ATTEMPT, 9)
+          $versionCode = 1000000 + ($runNumber * 10) + $runAttempt
+          if ($versionCode -gt 2100000000) {
+            throw "O versionCode Android excedeu o limite da plataforma."
+          }
+
+          $keystorePath = Join-Path $env:RUNNER_TEMP "altgrid-android-release.jks"
+          try {
+            $keystoreBytes = [Convert]::FromBase64String($env:ANDROID_KEYSTORE_BASE64)
+            [IO.File]::WriteAllBytes($keystorePath, $keystoreBytes)
+          } catch {
+            throw "ANDROID_KEYSTORE_BASE64 não contém um keystore base64 válido."
+          }
+
+          "ALTGRID_ANDROID_KEYSTORE_PATH=$keystorePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ALTGRID_ANDROID_KEYSTORE_PASSWORD=$env:ANDROID_KEYSTORE_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ALTGRID_ANDROID_KEY_ALIAS=$env:ANDROID_KEY_ALIAS" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ALTGRID_ANDROID_KEY_PASSWORD=$env:ANDROID_KEY_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ALTGRID_ANDROID_VERSION_NAME=$versionName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ALTGRID_ANDROID_VERSION_CODE=$versionCode" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build signed Android release
         shell: pwsh
         run: |
           pnpm android:sync
           Push-Location android
-          .\gradlew.bat assembleDebug
+          .\gradlew.bat assembleRelease
           Pop-Location
 
       - name: Configure optional Windows signing
@@ -114,7 +163,7 @@ jobs:
           pnpm exec electron-builder --win nsis portable --publish never
 
           $androidArtifact = "release/AltGrid-Android-$($env:RELEASE_TAG.Substring(1)).apk"
-          Copy-Item -LiteralPath "android/app/build/outputs/apk/debug/app-debug.apk" -Destination $androidArtifact
+          Copy-Item -LiteralPath "android/app/build/outputs/apk/release/app-release.apk" -Destination $androidArtifact
 
           $storeArtifact = "store-release/AltGrid-Store-$($env:RELEASE_TAG.Substring(1)).appx"
 
@@ -153,7 +202,7 @@ jobs:
           }
           gh release upload $releaseTag @artifacts --repo $releaseRepo --clobber
 
-      - name: Remove temporary signing certificate
+      - name: Remove temporary signing material
         if: always()
         shell: pwsh
         run: |
@@ -175,4 +224,17 @@ jobs:
 
           if (Test-Path -LiteralPath $certificatePath) {
             Remove-Item -LiteralPath $certificatePath -Force
+          }
+
+          $androidKeystorePath = [IO.Path]::GetFullPath(
+            (Join-Path $temporaryRoot "altgrid-android-release.jks")
+          )
+          if (-not $androidKeystorePath.StartsWith(
+            $temporaryPrefix,
+            [StringComparison]::OrdinalIgnoreCase
+          )) {
+            throw "Caminho temporário do keystore Android inválido."
+          }
+          if (Test-Path -LiteralPath $androidKeystorePath) {
+            Remove-Item -LiteralPath $androidKeystorePath -Force
           }

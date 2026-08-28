@@ -31,6 +31,7 @@ interface MobileGamePlugin {
   close(options: { accountId: string }): Promise<void>
   open(options: { accountId: string; title: string; url: string }): Promise<void>
   reload(options: { accountId: string }): Promise<void>
+  setFullscreen(options: { enabled: boolean }): Promise<void>
 }
 
 interface MobileSessionStatusEvent {
@@ -188,6 +189,10 @@ export class MobileSessionLauncher implements AccountSessionLauncher {
   }
 
   setFrameRate(): void {}
+
+  setFullscreen(enabled: boolean): Promise<void> {
+    return MobileGame.setFullscreen({ enabled })
+  }
 
   setMuted(): void {}
 

@@ -4951,6 +4951,69 @@ form {
   padding-left: 13px;
 }
 
+/* Keep one lightweight control strip while a native game fills the mobile app. */
+.app-frame--workspace.is-mobile-session.is-screens-only {
+  grid-template-rows: minmax(0, 1fr);
+  background: #10151c;
+}
+
+.session-shell.is-mobile-session.is-screens-only {
+  --mobile-fullscreen-header-height: calc(44px + env(safe-area-inset-top, 0px));
+  grid-template-rows: minmax(0, 1fr);
+  background: #10151c;
+}
+
+.session-shell.is-mobile-session.is-screens-only .mobile-navigation,
+.session-shell.is-mobile-session.is-screens-only .screens-only-exit {
+  display: none;
+}
+
+.session-shell.is-mobile-session.is-screens-only .workspace-column {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.session-shell.is-mobile-session.is-screens-only .session-workspace {
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+}
+
+.session-shell.is-mobile-session.is-screens-only .session-grid {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  align-content: stretch;
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+}
+
+.session-shell.is-mobile-session.is-screens-only .session-card {
+  width: 100%;
+  height: 100%;
+  grid-template-rows: var(--mobile-fullscreen-header-height) minmax(0, 1fr);
+  border: 0;
+  border-radius: 0;
+  background: #10151c;
+}
+
+.session-shell.is-mobile-session.is-screens-only .session-card__header {
+  display: flex;
+  min-height: var(--mobile-fullscreen-header-height);
+  padding: env(safe-area-inset-top, 0px) 10px 0 13px;
+  background: #171c24;
+}
+
+.session-shell.is-mobile-session.is-screens-only .session-menu > .menu-popover {
+  top: calc(100% + 6px);
+  right: 0;
+  max-height: calc(
+    100dvh - var(--mobile-fullscreen-header-height) - env(safe-area-inset-bottom, 0px) - 12px
+  );
+  overflow-y: auto;
+}
+
 .session-shell.is-mobile-session .session-menu__trigger {
   width: 40px;
   height: 40px;

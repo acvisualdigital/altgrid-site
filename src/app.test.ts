@@ -845,10 +845,13 @@ describe('AuthApp session lifecycle', () => {
 
     await app.start()
     const harness = app as unknown as {
+      maximizedAccountId: string | null
       openConfiguredAccount(
         accountId: string,
         button: HTMLButtonElement,
       ): Promise<void>
+      renderSessionCard(account: ConfiguredAccount): string
+      screensOnly: boolean
       showSessionAlert(message: string): void
     }
     await harness.openConfiguredAccount(
@@ -863,7 +866,14 @@ describe('AuthApp session lifecycle', () => {
     expect(root.innerHTML).not.toContain('Retomar jogo')
     expect(root.innerHTML).not.toContain('data-toggle-grid')
     expect(root.innerHTML).not.toContain('class="game-sidebar"')
+    expect(root.innerHTML).toContain('Tela cheia · zoom automático')
     expect(permissions.getActiveSessionIds()).toEqual([configured.id])
+
+    harness.maximizedAccountId = configured.id
+    harness.screensOnly = true
+    expect(harness.renderSessionCard(configured)).toContain('Sair da tela cheia')
+    harness.maximizedAccountId = null
+    harness.screensOnly = false
 
     const showSessionAlert = vi.fn()
     harness.showSessionAlert = showSessionAlert

@@ -17,6 +17,7 @@ public class MainActivity extends GameActivity {
     @Override
     public void onCreate(Bundle state) {
         registerPlugin(AltGridMobilePlugin.class);
+        registerPlugin(AltGridMobileUpdaterPlugin.class);
         super.onCreate(state);
         handleRecoveryIntent(getIntent());
     }
