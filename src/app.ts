@@ -1817,7 +1817,9 @@ export class AuthApp {
                     <small><i class="account-tab__indicator ${active ? 'is-online' : ''}" aria-hidden="true"></i>${escapeHtml(this.gameNameFor(account))} · ${active ? (this.mobileSessionMode ? 'Conectada' : 'Conectado') : (this.mobileSessionMode ? 'Salva' : 'Offline')}</small>
                   </span>
                 </button>
-                ${active ? `<button class="account-tab__close" data-close-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Fechar sessão ${escapeHtml(account.displayName)}" title="Fechar sessão">×</button>` : ''}
+                ${active
+                  ? `<button class="account-tab__close" data-close-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Fechar sessão ${escapeHtml(account.displayName)}" title="Fechar sessão">×</button>`
+                  : `<button class="account-tab__close" data-delete-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Remover conta ${escapeHtml(account.displayName)}" title="Remover conta">×</button>`}
               </div>
             `
           }).join('')}
