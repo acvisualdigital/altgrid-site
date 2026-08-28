@@ -45,6 +45,24 @@ describe('Android update releases', () => {
     ], '1.0.0')).toBeNull()
   })
 
+  it('ignores a newer Windows-only release and keeps Android on its own channel', () => {
+    const windowsOnlyRelease = {
+      assets: [{
+        browser_download_url: 'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.1.1/AltGrid-Setup-1.1.1.exe',
+        name: 'AltGrid-Setup-1.1.1.exe',
+        size: 120_000_000,
+      }],
+      draft: false,
+      prerelease: false,
+      tag_name: 'v1.1.1',
+    }
+
+    expect(selectMobileRelease([
+      windowsOnlyRelease,
+      release('1.1.0'),
+    ], '1.1.0')).toBeNull()
+  })
+
   it('checks, downloads and starts the native installer through one update state', async () => {
     const downloadUpdate = vi.fn(async () => undefined)
     const installUpdate = vi.fn(async () => ({ started: true }))

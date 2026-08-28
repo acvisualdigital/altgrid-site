@@ -14,6 +14,7 @@ import {
 } from 'electron'
 
 import { IPC_CHANNELS, type SessionBounds } from './contracts.js'
+import { hasMaintenanceShutdownArgument } from './lifecycle-policy.js'
 import {
   clearNativeSessionPartition,
   createNativeSessionViewFactory,
@@ -54,6 +55,16 @@ let sessionManager: SessionManager | null = null
 let updaterService: UpdaterService | null = null
 let shellEntryUrl: string | null = null
 let pendingRecoveryDeepLink = findTrustedRecoveryDeepLink(process.argv)
+
+function prepareForApplicationExit(): void {
+  updaterService?.stop()
+  sessionManager?.destroyAll()
+}
+
+function shutdownForMaintenance(): void {
+  prepareForApplicationExit()
+  app.quit()
+}
 
 function registerDeepLinkProtocol(): void {
   if (process.defaultApp && process.argv[1]) {
@@ -427,6 +438,11 @@ if (!singleInstanceLock) {
   })
 
   app.on('second-instance', (_event, commandLine) => {
+    if (hasMaintenanceShutdownArgument(commandLine)) {
+      shutdownForMaintenance()
+      return
+    }
+
     const recoveryDeepLink = findTrustedRecoveryDeepLink(commandLine)
     if (recoveryDeepLink) {
       void presentRecoveryDeepLink(recoveryDeepLink)
@@ -447,6 +463,7 @@ if (!singleInstanceLock) {
   })
 
   app.on('window-all-closed', () => app.quit())
+  app.on('before-quit', prepareForApplicationExit)
   app.on('web-contents-created', (_event, contents) => {
     contents.on('will-attach-webview', (event) => event.preventDefault())
   })

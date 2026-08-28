@@ -1,6 +1,6 @@
 {
   "name": "altgrid",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Gerenciador desktop multissessão para jogos e sites suportados.",
   "author": "AltGrid",
   "private": true,
@@ -87,7 +87,8 @@
       "artifactName": "AltGrid-Setup-${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "include": "installer/windows.nsh"
     },
     "portable": {
       "artifactName": "AltGrid-Portable-${version}.${ext}"
