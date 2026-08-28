@@ -75,7 +75,7 @@ const applyLatestRelease = async () => {
     const assets = Array.isArray(release.assets) ? release.assets : []
     const windows = findAsset(assets, /^AltGrid-Setup-.*\.exe$/i)
     const android = findAsset(assets, /^AltGrid-Android-.*\.apk$/i)
-    const version = String(release.tag_name || 'v1.0.0').replace(/^v/i, '')
+    const version = String(release.tag_name || 'v1.0.1').replace(/^v/i, '')
 
     if (windows?.browser_download_url) {
       document.querySelectorAll('.download-windows').forEach((link) => {
@@ -89,11 +89,11 @@ const applyLatestRelease = async () => {
       })
     }
 
-    document.querySelectorAll('.current-version').forEach((element) => {
+    document.querySelectorAll('.download-android .current-version').forEach((element) => {
       element.textContent = `Versão ${version}`
     })
     document.querySelectorAll('.current-version-short').forEach((element) => {
-      element.textContent = version
+      element.textContent = '1.0.0'
     })
   } catch (error) {
     console.info('AltGrid: usando links de download estáveis.', error)
