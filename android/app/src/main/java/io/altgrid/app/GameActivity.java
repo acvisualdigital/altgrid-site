@@ -21,6 +21,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
+import androidx.annotation.RequiresApi;
 import androidx.webkit.ProfileStore;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
@@ -35,6 +36,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -102,7 +104,14 @@ public class GameActivity extends BridgeActivity {
         final FrameLayout container;
         final WebView webView;
         final List<WebView> popupViews = new ArrayList<>();
+        boolean documentStartViewportInstalled;
         boolean terminalStatusEmitted;
+        boolean visible;
+        int lastHeight = -1;
+        int lastLeft = Integer.MIN_VALUE;
+        int lastRendererPriority = -1;
+        int lastTop = Integer.MIN_VALUE;
+        int lastWidth = -1;
 
         GameSession(
             String accountId,
@@ -358,6 +367,7 @@ public class GameActivity extends BridgeActivity {
                 webView
             );
             configureWebView(webView, session, false);
+            session.documentStartViewportInstalled = installMobileViewportPolicy(webView);
             container.addView(webView, matchParentLayout());
             container.setVisibility(View.INVISIBLE);
             container.setClickable(false);
@@ -421,16 +431,10 @@ public class GameActivity extends BridgeActivity {
 
         // INVISIBLE keeps each renderer, viewport and JavaScript context alive
         // while allowing the Capacitor shell to receive touches in that area.
+        // Apply each final state directly: toggling every container off and on
+        // for every resize causes avoidable WebView composition stalls.
         for (GameSession session : sessions.values()) {
-            session.container.setVisibility(View.INVISIBLE);
-            session.container.setClickable(false);
-            session.container.setFocusable(false);
-        }
-        for (SessionLayout slot : layout) {
-            GameSession session = sessions.get(slot.accountId);
-            if (session != null) {
-                applySessionLayout(session, slot);
-            }
+            applySessionLayout(session, latestLayout.get(session.accountId));
         }
     }
 
@@ -441,9 +445,7 @@ public class GameActivity extends BridgeActivity {
             || slot.height <= 0
             || bridge == null
             || bridge.getWebView() == null) {
-            session.container.setVisibility(View.INVISIBLE);
-            session.container.setClickable(false);
-            session.container.setFocusable(false);
+            setSessionVisible(session, false);
             return;
         }
 
@@ -472,25 +474,84 @@ public class GameActivity extends BridgeActivity {
         right = Math.max(shellLeft, Math.min(right, shellRight));
         bottom = Math.max(shellTop, Math.min(bottom, shellBottom));
         if (right <= left || bottom <= top) {
-            session.container.setVisibility(View.INVISIBLE);
-            session.container.setClickable(false);
-            session.container.setFocusable(false);
+            setSessionVisible(session, false);
             return;
         }
 
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-            right - left,
-            bottom - top
-        );
-        params.leftMargin = left;
-        params.topMargin = top;
-        session.container.setLayoutParams(params);
-        session.container.setVisibility(View.VISIBLE);
-        session.container.setClickable(true);
-        session.container.setFocusable(true);
-        session.container.bringToFront();
-        session.webView.requestLayout();
-        session.webView.invalidate();
+        int targetWidth = right - left;
+        int targetHeight = bottom - top;
+        boolean boundsChanged = session.lastLeft != left
+            || session.lastTop != top
+            || session.lastWidth != targetWidth
+            || session.lastHeight != targetHeight;
+
+        if (boundsChanged) {
+            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                targetWidth,
+                targetHeight
+            );
+            params.leftMargin = left;
+            params.topMargin = top;
+            session.container.setLayoutParams(params);
+            session.lastLeft = left;
+            session.lastTop = top;
+            session.lastWidth = targetWidth;
+            session.lastHeight = targetHeight;
+        }
+
+        boolean becameVisible = !session.visible;
+        setSessionVisible(session, true);
+        if (becameVisible) {
+            session.container.bringToFront();
+        }
+        if (boundsChanged || becameVisible) {
+            session.webView.requestLayout();
+            session.webView.invalidate();
+        }
+    }
+
+    private void setSessionVisible(GameSession session, boolean visible) {
+        if (session.visible != visible) {
+            session.visible = visible;
+            session.container.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
+            session.container.setClickable(visible);
+            session.container.setFocusable(visible);
+        }
+        updateRendererPriority(session, visible);
+    }
+
+    private void updateRendererPriority(GameSession session, boolean visible) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return;
+        }
+        int priority = visible
+            ? WebView.RENDERER_PRIORITY_IMPORTANT
+            : WebView.RENDERER_PRIORITY_BOUND;
+        if (session.lastRendererPriority == priority) {
+            return;
+        }
+        session.lastRendererPriority = priority;
+        session.webView.setRendererPriorityPolicy(priority, false);
+        for (WebView popup : session.popupViews) {
+            popup.setRendererPriorityPolicy(priority, false);
+        }
+    }
+
+    private boolean installMobileViewportPolicy(WebView view) {
+        try {
+            if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                return false;
+            }
+            WebViewCompat.addDocumentStartJavaScript(
+                view,
+                MobileViewportPolicy.documentStartScript(),
+                Collections.singleton("*")
+            );
+            return true;
+        } catch (LinkageError | RuntimeException error) {
+            Log.w(TAG, "Unable to install the normalized mobile viewport.", error);
+            return false;
+        }
     }
 
     private void configureWebView(WebView view, GameSession session, boolean popup) {
@@ -514,7 +575,9 @@ public class GameActivity extends BridgeActivity {
         settings.setSupportZoom(true);
         settings.setBuiltInZoomControls(true);
         settings.setDisplayZoomControls(false);
+        settings.setTextZoom(100);
         settings.setOffscreenPreRaster(false);
+        view.setInitialScale(0);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             settings.setSafeBrowsingEnabled(true);
             view.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_BOUND, false);
@@ -538,6 +601,12 @@ public class GameActivity extends BridgeActivity {
                     configureWebView(child, session, true);
                     session.popupViews.add(child);
                     session.container.addView(child, matchParentLayout());
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && session.visible) {
+                        child.setRendererPriorityPolicy(
+                            WebView.RENDERER_PRIORITY_IMPORTANT,
+                            false
+                        );
+                    }
                     child.bringToFront();
 
                     WebView.WebViewTransport transport =
@@ -594,6 +663,14 @@ public class GameActivity extends BridgeActivity {
             public void onPageFinished(WebView current, String url) {
                 if (!popup
                     && current == session.webView
+                    && !session.documentStartViewportInstalled) {
+                    current.evaluateJavascript(
+                        MobileViewportPolicy.documentStartScript(),
+                        null
+                    );
+                }
+                if (!popup
+                    && current == session.webView
                     && !session.terminalStatusEmitted
                     && sessions.containsKey(session.accountId)) {
                     AltGridMobilePlugin.emitSessionStatus(session.accountId, "ready", null);
@@ -601,6 +678,7 @@ public class GameActivity extends BridgeActivity {
             }
 
             @Override
+            @RequiresApi(Build.VERSION_CODES.O)
             public boolean onRenderProcessGone(WebView current, RenderProcessGoneDetail detail) {
                 if (current != session.webView) {
                     closePopup(session, current, false);

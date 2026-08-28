@@ -845,6 +845,7 @@ describe('AuthApp session lifecycle', () => {
 
     await app.start()
     const harness = app as unknown as {
+      ecoModeSupported: boolean
       maximizedAccountId: string | null
       openConfiguredAccount(
         accountId: string,
@@ -865,6 +866,7 @@ describe('AuthApp session lifecycle', () => {
     expect(root.innerHTML).not.toContain('mobile-session-ready')
     expect(root.innerHTML).not.toContain('Retomar jogo')
     expect(root.innerHTML).not.toContain('data-toggle-grid')
+    expect(harness.ecoModeSupported).toBe(false)
     expect(root.innerHTML).not.toContain('class="game-sidebar"')
     expect(root.innerHTML).toContain('Tela cheia · zoom automático')
     expect(permissions.getActiveSessionIds()).toEqual([configured.id])

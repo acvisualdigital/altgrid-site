@@ -563,7 +563,11 @@ export class AuthApp {
     this.updater = options.updater ?? null
     const sessionLauncher = options.sessionLauncher
     this.mobileSessionMode = sessionLauncher?.mobileNative === true
-    this.ecoModeSupported = typeof sessionLauncher?.setEcoMode === 'function'
+    // Mobile WebViews must stay unrestricted for smooth gameplay. Android does
+    // not expose the desktop frame limiter, so keep Eco Mode unavailable there
+    // even if the adapter implements a compatibility no-op.
+    this.ecoModeSupported = !this.mobileSessionMode
+      && typeof sessionLauncher?.setEcoMode === 'function'
     this.frameRateControlSupported = !this.mobileSessionMode
       && typeof sessionLauncher?.setFrameRate === 'function'
     this.ecoModeRequested = this.readEcoModePreference()
