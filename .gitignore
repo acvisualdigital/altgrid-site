@@ -4,6 +4,7 @@ build/
 electron-dist/
 release/
 release-final/
+store-release/
 .pnpm-store/
 .wrangler/
 

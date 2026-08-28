@@ -65,6 +65,9 @@ jobs:
           pnpm exec vite build --mode desktop
           pnpm desktop:compile
 
+      - name: Build Microsoft Store package
+        run: node scripts/package-store.mjs
+
       - name: Build Android beta
         shell: pwsh
         run: |
@@ -113,6 +116,8 @@ jobs:
           $androidArtifact = "release/AltGrid-Android-$($env:RELEASE_TAG.Substring(1)).apk"
           Copy-Item -LiteralPath "android/app/build/outputs/apk/debug/app-debug.apk" -Destination $androidArtifact
 
+          $storeArtifact = "store-release/AltGrid-Store-$($env:RELEASE_TAG.Substring(1)).appx"
+
           $releaseRepo = "acvisualdigital/altgrid-releases"
           $releaseTag = $env:RELEASE_TAG
           $releaseArgs = @(
@@ -138,6 +143,7 @@ jobs:
             "release/AltGrid-Setup-$($env:RELEASE_TAG.Substring(1)).exe.blockmap",
             "release/AltGrid-Portable-$($env:RELEASE_TAG.Substring(1)).exe",
             "release/AltGrid-Android-$($env:RELEASE_TAG.Substring(1)).apk",
+            $storeArtifact,
             "release/latest.yml"
           )
           foreach ($artifact in $artifacts) {
