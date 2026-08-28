@@ -1648,6 +1648,10 @@ export class AuthApp {
     this.updateConnectivityBanner()
     this.ensureWorkspaceObserver()
     this.applyWorkspacePresentation()
+    // A newly added card can change whether a scrollbar is needed, which only
+    // settles after this paint. Re-running once more on the next frame keeps
+    // native views aligned instead of requiring a manual scroll to correct them.
+    this.scheduleWorkspaceLayout()
     if (dialogReplaced && this.activeDialog) {
       this.focusCurrentView()
     }
@@ -2884,6 +2888,16 @@ export class AuthApp {
       this.scheduleWorkspaceLayout()
     })
     this.workspaceResizeObserver.observe(workspace)
+
+    // The workspace container itself keeps a fixed size, so adding/removing
+    // session cards only changes the grid's own content box. Observing it too
+    // guarantees native views are repositioned once the new grid settles,
+    // instead of only reacting to a subsequent manual scroll.
+    const grid = workspace.querySelector<HTMLElement>('[data-session-grid]')
+
+    if (grid) {
+      this.workspaceResizeObserver.observe(grid)
+    }
   }
 
   private disconnectWorkspaceObserver(): void {
@@ -3873,32 +3887,55 @@ export class AuthApp {
         })
       }
 
+      // A small movement threshold before engaging pointer capture keeps plain
+      // clicks on account tabs working: capturing on every pointerdown redirects
+      // the click event away from the tapped button, silently breaking taps.
+      const DRAG_THRESHOLD_PX = 6
+      let dragPointerId: number | null = null
       let dragging = false
+      let draggedPastThreshold = false
       let dragStartX = 0
       let dragStartScrollLeft = 0
       accountScroller.addEventListener('pointerdown', (event) => {
         if (event.pointerType !== 'mouse' || event.button !== 0) return
-        dragging = true
+        dragPointerId = event.pointerId
+        dragging = false
+        draggedPastThreshold = false
         dragStartX = event.clientX
         dragStartScrollLeft = accountScroller.scrollLeft
-        accountScroller.classList.add('is-dragging')
-        accountScroller.setPointerCapture(event.pointerId)
       })
       accountScroller.addEventListener('pointermove', (event) => {
-        if (dragging) {
-          accountScroller.scrollLeft = dragStartScrollLeft - (event.clientX - dragStartX)
+        if (dragPointerId !== event.pointerId) return
+        const delta = event.clientX - dragStartX
+        if (!dragging) {
+          if (Math.abs(delta) < DRAG_THRESHOLD_PX) return
+          dragging = true
+          draggedPastThreshold = true
+          accountScroller.classList.add('is-dragging')
+          accountScroller.setPointerCapture(event.pointerId)
         }
+        accountScroller.scrollLeft = dragStartScrollLeft - delta
       })
       const stopDragging = (event: PointerEvent): void => {
-        if (!dragging) return
-        dragging = false
-        accountScroller.classList.remove('is-dragging')
-        if (accountScroller.hasPointerCapture(event.pointerId)) {
-          accountScroller.releasePointerCapture(event.pointerId)
+        if (dragPointerId !== event.pointerId) return
+        if (dragging) {
+          accountScroller.classList.remove('is-dragging')
+          if (accountScroller.hasPointerCapture(event.pointerId)) {
+            accountScroller.releasePointerCapture(event.pointerId)
+          }
         }
+        dragging = false
+        dragPointerId = null
       }
       accountScroller.addEventListener('pointerup', stopDragging)
       accountScroller.addEventListener('pointercancel', stopDragging)
+      accountScroller.addEventListener('click', (event) => {
+        if (draggedPastThreshold) {
+          draggedPastThreshold = false
+          event.preventDefault()
+          event.stopPropagation()
+        }
+      }, true)
 
       previous?.addEventListener('click', () => scrollAccounts(-1))
       next?.addEventListener('click', () => scrollAccounts(1))
