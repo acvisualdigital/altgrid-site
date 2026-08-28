@@ -74,24 +74,12 @@ const applyLatestRelease = async () => {
     const release = await response.json()
     const assets = Array.isArray(release.assets) ? release.assets : []
     const windows = findAsset(assets, /^AltGrid-Setup-.*\.exe$/i)
-    const android = findAsset(assets, /^AltGrid-Android-.*\.apk$/i)
-    const version = String(release.tag_name || 'v1.0.2').replace(/^v/i, '')
 
     if (windows?.browser_download_url) {
       document.querySelectorAll('.download-windows').forEach((link) => {
         link.href = windows.browser_download_url
       })
     }
-
-    if (android?.browser_download_url) {
-      document.querySelectorAll('.download-android').forEach((link) => {
-        link.href = android.browser_download_url
-      })
-    }
-
-    document.querySelectorAll('.download-android .current-version').forEach((element) => {
-      element.textContent = `Versão ${version}`
-    })
     document.querySelectorAll('.current-version-short').forEach((element) => {
       element.textContent = '1.0.0'
     })
