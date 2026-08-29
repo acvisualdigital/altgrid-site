@@ -2706,7 +2706,11 @@ form {
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-inline: contain;
-  scroll-behavior: smooth;
+  /* Wheel and pointer dragging update scrollLeft continuously. Keeping smooth
+     scrolling here restarts the animation on every input event and makes the
+     account strip appear to jump back. Navigation buttons request smooth
+     scrolling explicitly in app.ts. */
+  scroll-behavior: auto;
   scrollbar-width: none;
   cursor: grab;
   touch-action: pan-y;
@@ -2714,7 +2718,6 @@ form {
 
 .account-tabs__scroll.is-dragging {
   cursor: grabbing;
-  scroll-behavior: auto;
   user-select: none;
 }
 

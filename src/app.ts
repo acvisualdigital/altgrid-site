@@ -4379,7 +4379,10 @@ export class AuthApp {
           return
         }
         const before = accountScroller.scrollLeft
-        accountScroller.scrollLeft += event.deltaY
+        accountScroller.scrollBy({
+          behavior: 'auto',
+          left: event.deltaY,
+        })
         if (accountScroller.scrollLeft !== before) {
           event.preventDefault()
         }
