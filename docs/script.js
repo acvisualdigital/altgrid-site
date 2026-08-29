@@ -97,7 +97,10 @@ document.querySelectorAll('.download-windows, .download-android').forEach((link)
   link.addEventListener('click', () => {
     if (typeof window.gtag !== 'function') return
     const platform = link.classList.contains('download-windows') ? 'windows' : 'android'
-    window.gtag('event', 'altgrid_download', {
+    window.gtag('event', 'conversion', {
+      send_to: 'AW-18415695413/HbUGCI6y8ekcELXspM1E',
+      value: 1.0,
+      currency: 'BRL',
       platform,
       link_url: link.href,
       transport_type: 'beacon',
