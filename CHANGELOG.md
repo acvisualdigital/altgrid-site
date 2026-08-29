@@ -2,13 +2,25 @@
 
 ## 1.2.0
 
-- Adiciona proxy exclusivo por conta para Founder no Windows, com HTTP, HTTPS, SOCKS4 e SOCKS5.
+### Windows
+
+- Adiciona proxy exclusivo por conta para Founder, com HTTP, HTTPS, SOCKS4 e SOCKS5.
 - Protege usuário e senha do proxy localmente com a criptografia de credenciais do Windows.
 - Permite salvar, ativar, remover e validar a rota de cada conta sem afetar as demais sessões.
 - Adiciona diagnóstico real de memória por conta na área de configurações.
-- Mantém o perfil de desempenho adaptativo para contas em segundo plano sem ativar Eco Mode no Android.
+- Mantém o perfil de desempenho adaptativo para contas em segundo plano.
+
+### Windows e Android
+
+- Amplia a janela de Configurações, os textos, seletores, abas e caixas de seleção.
 - Corrige o chat para reabrir diretamente nas mensagens mais recentes e preservar a posição ao carregar o histórico.
 - Corrige a rolagem horizontal das contas que voltava sozinha ao usar a roda do mouse.
+- Mantém a navegação de configurações responsiva em telas menores.
+
+### Android
+
+- Mantém as sessões em desempenho normal: Eco Mode, diagnóstico de RAM e proxy por conta não são ativados no Android.
+- Preserva o zoom automático e o enquadramento móvel normalizado entre diferentes tamanhos de tela.
 
 ## 0.9.0-beta.7
 
