@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   AltgridDesktopApi,
   SessionEvent,
+  SessionProxySummary,
   SessionSnapshot,
 } from '../../electron/contracts'
 import type { GridLayout } from './grid-layout-service'
@@ -37,6 +38,8 @@ function createSessionApi() {
     destroySession: vi.fn(async () => true),
     focusSession: vi.fn(async (accountId: string) => snapshot(accountId, true)),
     getSessions: vi.fn(async () => [snapshot('account-1', true), snapshot('account-2', true)]),
+    getProxy: vi.fn(async (): Promise<SessionProxySummary | null> => null),
+    getResourceUsage: vi.fn(async () => []),
     hideSession: vi.fn(async (accountId: string) => snapshot(accountId, false)),
     muteSession: vi.fn(async (accountId: string) => snapshot(accountId, true)),
     navigateSession: vi.fn(async (accountId: string) => snapshot(accountId, true)),
@@ -47,13 +50,28 @@ function createSessionApi() {
       }
     }),
     reloadSession: vi.fn(async (accountId: string) => snapshot(accountId, true)),
+    removeProxy: vi.fn(async () => true),
     resizeSession: vi.fn(async (accountId: string) => snapshot(accountId, true)),
     setEcoMode: vi.fn(async (enabled: boolean) => enabled),
     setFrameRate: vi.fn(async (accountId: string, fps: number) => ({
       ...snapshot(accountId, true),
       frameRate: fps,
     })),
+    setProxy: vi.fn(async (_accountId, input) => ({
+      enabled: input.enabled,
+      hasPassword: Boolean(input.password),
+      host: input.host,
+      port: input.port,
+      protocol: input.protocol,
+      username: input.username ?? '',
+    })),
     showSession: vi.fn(async (accountId: string) => snapshot(accountId, true)),
+    testProxy: vi.fn(async () => ({
+      latencyMs: 1,
+      message: 'Rota configurada.',
+      ok: true,
+      route: 'PROXY proxy.example:8080',
+    })),
   } satisfies AltgridDesktopApi['sessions']
 
   return {
@@ -141,7 +159,10 @@ describe('ElectronSessionLauncher', () => {
     const harness = createSessionApi()
     const launcher = new ElectronSessionLauncher(harness.api)
 
-    await launcher.open({ id: 'account-1' }, { launchUrl: 'https://game.example/' })
+    await launcher.open({ id: 'account-1' }, {
+      allowProxy: false,
+      launchUrl: 'https://game.example/',
+    })
     await launcher.focus({ id: 'account-1' })
     await launcher.reload({ id: 'account-1' })
     await launcher.setMuted({ id: 'account-1' }, true)
@@ -153,6 +174,7 @@ describe('ElectronSessionLauncher', () => {
     expect(harness.api.createSession).toHaveBeenCalledWith(
       'account-1',
       'https://game.example/',
+      false,
     )
     expect(harness.api.focusSession).toHaveBeenCalledWith('account-1')
     expect(harness.api.reloadSession).toHaveBeenCalledWith('account-1')
@@ -163,6 +185,31 @@ describe('ElectronSessionLauncher', () => {
     expect(harness.api.closeSession).toHaveBeenCalledWith('account-1')
     await expect(launcher.open({ id: 'account-2' }, null)).rejects.toThrow(
       'determinar o endereço',
+    )
+  })
+
+  it('uses a stored proxy only when the trusted launch target allows it', async () => {
+    const harness = createSessionApi()
+    const launcher = new ElectronSessionLauncher(harness.api)
+    harness.api.getProxy.mockResolvedValue({
+      enabled: true,
+      hasPassword: true,
+      host: 'proxy.example',
+      port: 8080,
+      protocol: 'http',
+      username: 'founder',
+    })
+
+    await launcher.open({ id: 'account-1' }, {
+      allowProxy: true,
+      launchUrl: 'https://game.example/',
+    })
+
+    expect(harness.api.getProxy).toHaveBeenCalledWith('account-1')
+    expect(harness.api.createSession).toHaveBeenCalledWith(
+      'account-1',
+      'https://game.example/',
+      true,
     )
   })
 

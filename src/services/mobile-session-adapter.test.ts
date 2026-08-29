@@ -43,6 +43,7 @@ vi.mock('@capacitor/core', () => ({
 import { MobileSessionLauncher } from './mobile-session-adapter'
 
 const target: AccountSessionLaunchTarget = {
+  allowProxy: false,
   game: null,
   kind: 'custom',
   launchUrl: 'https://game.example/',

@@ -1349,6 +1349,143 @@ form {
   color: #ff929a;
 }
 
+.modal--proxy {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.proxy-loading {
+  align-items: center;
+  color: var(--text-muted);
+  display: flex;
+  gap: 10px;
+  min-height: 150px;
+  justify-content: center;
+}
+
+.proxy-enable {
+  background: rgba(26, 231, 112, 0.06);
+  border: 1px solid rgba(26, 231, 112, 0.22);
+  border-radius: 12px;
+  margin-bottom: 18px;
+  padding: 14px;
+}
+
+.proxy-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 150px minmax(0, 1fr) 130px;
+}
+
+.proxy-grid .field {
+  margin: 0;
+}
+
+.proxy-grid .proxy-host {
+  grid-column: span 2;
+}
+
+.proxy-security {
+  align-items: center;
+  background: rgba(103, 117, 139, 0.1);
+  border: 1px solid rgba(103, 117, 139, 0.25);
+  border-radius: 12px;
+  display: flex;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 12px 14px;
+}
+
+.proxy-security > span {
+  color: var(--green);
+}
+
+.proxy-security p,
+.proxy-security small,
+.proxy-result span {
+  display: block;
+  margin: 0;
+}
+
+.proxy-result {
+  border: 1px solid;
+  border-radius: 12px;
+  display: grid;
+  gap: 4px;
+  margin-top: 14px;
+  padding: 12px 14px;
+}
+
+.proxy-result--success {
+  background: rgba(26, 231, 112, 0.07);
+  border-color: rgba(26, 231, 112, 0.3);
+}
+
+.proxy-result--error {
+  background: rgba(255, 99, 113, 0.07);
+  border-color: rgba(255, 99, 113, 0.3);
+}
+
+.text-button--danger {
+  color: #ff7b87;
+}
+
+.resource-summary {
+  align-items: center;
+  background: rgba(35, 201, 91, 0.06);
+  border: 1px solid rgba(35, 201, 91, 0.2);
+  border-radius: 12px;
+  display: flex;
+  justify-content: space-between;
+  margin: 16px 0 12px;
+  padding: 14px;
+}
+
+.resource-summary span,
+.resource-summary small,
+.resource-row span,
+.resource-row small {
+  display: block;
+}
+
+.resource-summary strong {
+  display: block;
+  font-size: 22px;
+  margin-top: 2px;
+}
+
+.resource-list {
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.resource-row {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  padding: 11px 14px;
+}
+
+.resource-row + .resource-row {
+  border-top: 1px solid var(--border-soft);
+}
+
+.resource-row small,
+.resource-summary small {
+  color: var(--text-muted-readable);
+  margin-top: 2px;
+}
+
+@media (max-width: 680px) {
+  .proxy-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .proxy-grid .proxy-host {
+    grid-column: auto;
+  }
+}
+
 .admin-referral-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

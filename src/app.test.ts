@@ -1247,6 +1247,7 @@ describe('AuthApp session lifecycle', () => {
       launchUrl: huntera.launch_url,
     })
     expect(harness.resolveSessionLaunchTarget(customAccount)).toEqual({
+      allowProxy: false,
       game: null,
       kind: 'custom',
       launchUrl: 'https://custom.example.com/play',
@@ -1256,6 +1257,63 @@ describe('AuthApp session lifecycle', () => {
       customLaunchUrl: 'javascript:alert(1)',
     })).toBeNull()
 
+  })
+
+  it('renders Founder proxy controls without exposing the stored password', () => {
+    installBrowser('https://app.example.com/')
+    const auth = createAuthServiceDouble()
+    const permissions = new PermissionService({
+      account_limit: -1,
+      expires_at: null,
+      features: { account_proxy: true },
+      founder_number: 1,
+      lifetime: true,
+      plan: 'FOUNDER',
+    })
+    const account: ConfiguredAccount = {
+      createdAt: '2026-08-29T00:00:00.000Z',
+      displayName: 'Founder 1',
+      gameSlug: 'huntera',
+      id: 'founder-account-1',
+    }
+    const app = new AuthApp(createRoot(), auth.service, {
+      permissionService: permissions,
+      sessionLauncher: {
+        getProxy: vi.fn(async () => null),
+        setProxy: vi.fn(),
+      },
+    })
+    const harness = app as unknown as {
+      activeDialog: 'proxy'
+      configuredAccounts: ConfiguredAccount[]
+      dialogAccountId: string
+      proxyConfig: {
+        enabled: boolean
+        hasPassword: boolean
+        host: string
+        port: number
+        protocol: 'http'
+        username: string
+      }
+      renderDialog(): string
+    }
+    harness.activeDialog = 'proxy'
+    harness.configuredAccounts = [account]
+    harness.dialogAccountId = account.id
+    harness.proxyConfig = {
+      enabled: true,
+      hasPassword: true,
+      host: 'proxy.example',
+      port: 8080,
+      protocol: 'http',
+      username: 'founder',
+    }
+
+    const dialog = harness.renderDialog()
+    expect(dialog).toContain('FOUNDER · ROTA POR CONTA')
+    expect(dialog).toContain('proxy.example')
+    expect(dialog).toContain('Senha protegida')
+    expect(dialog).not.toContain('secret-value')
   })
 
   it('stops loading and keeps a retryable authenticated UI when the API is offline', async () => {

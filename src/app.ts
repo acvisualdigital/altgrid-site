@@ -62,6 +62,12 @@ import type {
   ResolvedEntitlements,
 } from './types/backend-api'
 import type { PlanCode } from './types/database'
+import type {
+  SessionProxyInput,
+  SessionProxySummary,
+  SessionProxyTestResult,
+  SessionResourceUsage,
+} from '../electron/contracts'
 
 type AuthView =
   | 'authenticated'
@@ -88,6 +94,7 @@ type ActiveDialog =
   | 'my-plan'
   | 'payment'
   | 'plans'
+  | 'proxy'
   | 'rename-account'
   | 'referrals'
   | 'settings'
@@ -168,6 +175,8 @@ export interface AccountSessionLauncher {
   clearData(account: ConfiguredAccount): Promise<void> | void
   close(account: ConfiguredAccount): Promise<void> | void
   focus(account: ConfiguredAccount): Promise<void> | void
+  getProxy?(account: ConfiguredAccount): Promise<SessionProxySummary | null>
+  getResourceUsage?(): Promise<SessionResourceUsage[]>
   open(
     account: ConfiguredAccount,
     target: AccountSessionLaunchTarget | null,
@@ -177,10 +186,16 @@ export interface AccountSessionLauncher {
     handler: (event: AccountSessionStatusEvent) => void,
   ): (() => void) | void
   reload(account: ConfiguredAccount): Promise<void> | void
+  removeProxy?(account: ConfiguredAccount): Promise<boolean>
   setEcoMode(enabled: boolean, backgroundFps: EcoBackgroundFps): Promise<boolean> | boolean
   setFrameRate(account: ConfiguredAccount, fps: number): Promise<void> | void
   setFullscreen?(enabled: boolean): Promise<void> | void
   setMuted(account: ConfiguredAccount, muted: boolean): Promise<void> | void
+  setProxy?(
+    account: ConfiguredAccount,
+    input: SessionProxyInput,
+  ): Promise<SessionProxySummary>
+  testProxy?(account: ConfiguredAccount): Promise<SessionProxyTestResult>
 }
 
 export interface AccountSessionStatusEvent {
@@ -190,6 +205,7 @@ export interface AccountSessionStatusEvent {
 }
 
 export interface AccountSessionLaunchTarget {
+  allowProxy: boolean
   kind: 'custom' | 'preset'
   launchUrl: string
   game: PublicGame | null
@@ -325,6 +341,14 @@ function formatDate(value: string | null): string {
   return Number.isNaN(parsed.getTime())
     ? value
     : new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium' }).format(parsed)
+}
+
+function formatMemoryKb(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0 MB'
+  const megabytes = value / 1_024
+  return megabytes >= 1_024
+    ? `${(megabytes / 1_024).toFixed(2)} GB`
+    : `${Math.round(megabytes)} MB`
 }
 
 function escapeHtml(value: string): string {
@@ -575,6 +599,12 @@ export class AuthApp {
   private paymentLoading = false
   private paymentError: string | null = null
   private paymentPollTimer: ReturnType<typeof setTimeout> | null = null
+  private proxyConfig: SessionProxySummary | null = null
+  private proxyLoading = false
+  private proxySaving = false
+  private proxyTestResult: SessionProxyTestResult | null = null
+  private resourceUsage: SessionResourceUsage[] = []
+  private resourceUsageLoading = false
   private chatNicknameSaving = false
   private selectedChatGameChannelIds: Set<string> | null = null
   private accountOrderChanged = false
@@ -660,6 +690,12 @@ export class AuthApp {
       clearData: (account) => sessionLauncher?.clearData?.(account),
       close: (account) => sessionLauncher?.close?.(account),
       focus: (account) => sessionLauncher?.focus?.(account),
+      getProxy: sessionLauncher?.getProxy
+        ? (account) => sessionLauncher.getProxy!(account)
+        : undefined,
+      getResourceUsage: sessionLauncher?.getResourceUsage
+        ? () => sessionLauncher.getResourceUsage!()
+        : undefined,
       open: (account, target) => sessionLauncher?.open?.(account, target),
       registerEscapeHandler: (handler) => (
         sessionLauncher?.registerEscapeHandler?.(handler)
@@ -668,12 +704,21 @@ export class AuthApp {
         sessionLauncher?.registerStatusHandler?.(handler)
       ),
       reload: (account) => sessionLauncher?.reload?.(account),
+      removeProxy: sessionLauncher?.removeProxy
+        ? (account) => sessionLauncher.removeProxy!(account)
+        : undefined,
       setEcoMode: (enabled, backgroundFps) => (
         sessionLauncher?.setEcoMode?.(enabled, backgroundFps) ?? false
       ),
       setFrameRate: (account, fps) => sessionLauncher?.setFrameRate?.(account, fps),
       setFullscreen: (enabled) => sessionLauncher?.setFullscreen?.(enabled),
       setMuted: (account, muted) => sessionLauncher?.setMuted?.(account, muted),
+      setProxy: sessionLauncher?.setProxy
+        ? (account, input) => sessionLauncher.setProxy!(account, input)
+        : undefined,
+      testProxy: sessionLauncher?.testProxy
+        ? (account) => sessionLauncher.testProxy!(account)
+        : undefined,
     }
     this.gridLayoutService = new GridLayoutService(this.permissionService)
   }
@@ -1961,8 +2006,17 @@ export class AuthApp {
                 ? [this.games, this.gameCatalogError]
                 : this.activeDialog === 'my-plan'
                   ? this.me
-                  : this.activeDialog === 'referrals'
-                    ? [this.referralLoading, this.referralError, this.referralProgram]
+                : this.activeDialog === 'referrals'
+                  ? [this.referralLoading, this.referralError, this.referralProgram]
+                  : this.activeDialog === 'proxy'
+                    ? [
+                        this.proxyConfig,
+                        this.proxyLoading,
+                        this.proxySaving,
+                        this.proxyTestResult,
+                      ]
+                    : this.activeDialog === 'settings'
+                      ? [this.resourceUsage, this.resourceUsageLoading]
         : this.configuredAccounts.find(
             (account) => account.id === this.dialogAccountId,
           )?.displayName ?? null
@@ -3088,6 +3142,7 @@ export class AuthApp {
               <button class="menu-item" data-reload-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Recarregar</button>
               <button class="menu-item" data-maximize-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">${this.mobileSessionMode ? (mobileFullscreen ? 'Sair da tela cheia' : 'Tela cheia · zoom automático') : 'Maximizar'}</button>
               <button class="menu-item" data-toggle-session-mute data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">${muted ? 'Ativar som' : 'Silenciar'}</button>
+              ${this.proxyControlAvailable() ? `<button class="menu-item" data-proxy-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Proxy exclusivo</button>` : ''}
               ${this.frameRateControlSupported ? `<label class="menu-item menu-item--field">
                 <span>FPS desta conta<small>0 ou vazio = Auto</small></span>
                 <input data-session-frame-rate data-account-id="${escapeHtml(account.id)}" type="number" inputmode="numeric" min="0" max="240" step="1" value="${frameRate === 0 ? '' : frameRate}" placeholder="Auto" aria-label="FPS de ${escapeHtml(account.displayName)}" />
@@ -3129,6 +3184,7 @@ export class AuthApp {
                 <summary aria-label="Opções de ${escapeHtml(account.displayName)}">⋯</summary>
                 <div class="menu-popover menu-popover--up" role="menu">
                   <button class="menu-item" data-rename-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Renomear</button>
+                  ${this.proxyControlAvailable() ? `<button class="menu-item" data-proxy-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Proxy exclusivo</button>` : ''}
                   <button class="menu-item menu-item--danger" data-clear-session-data data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Limpar dados</button>
                   <button class="menu-item menu-item--danger" data-delete-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Excluir configuração</button>
                 </div>
@@ -3643,6 +3699,52 @@ export class AuthApp {
       return utilityDialog
     }
 
+    if (this.activeDialog === 'proxy') {
+      const account = this.configuredAccounts.find(
+        (candidate) => candidate.id === this.dialogAccountId,
+      )
+
+      if (!account) {
+        return ''
+      }
+
+      const config = this.proxyConfig
+      const active = this.permissionService.isSessionActive(account.id)
+      const resultClass = this.proxyTestResult?.ok ? 'proxy-result--success' : 'proxy-result--error'
+
+      return `
+        <dialog class="modal modal--proxy" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="modal__header">
+            <p class="eyebrow">FOUNDER · ROTA POR CONTA</p>
+            <h2 id="dialog-title">Proxy de ${escapeHtml(account.displayName)}</h2>
+            <p>Esta conta usa uma rota própria. A senha fica criptografada pelo Windows e nunca aparece na interface.</p>
+          </div>
+          ${this.renderDialogError()}
+          ${this.proxyLoading ? '<div class="proxy-loading"><i class="spinner spinner--green"></i> Abrindo cofre seguro…</div>' : `
+            <form id="proxy-form">
+              <label class="setting-toggle proxy-enable"><span><strong>Usar proxy nesta conta</strong><small>Aplicado antes de abrir o jogo e isolado das outras contas.</small></span><input name="enabled" type="checkbox" ${config?.enabled ? 'checked' : ''} /></label>
+              <div class="proxy-grid">
+                <label class="field"><span>Protocolo</span><select name="protocol"><option value="http" ${config?.protocol === 'http' || !config ? 'selected' : ''}>HTTP</option><option value="https" ${config?.protocol === 'https' ? 'selected' : ''}>HTTPS</option><option value="socks5" ${config?.protocol === 'socks5' ? 'selected' : ''}>SOCKS5</option><option value="socks4" ${config?.protocol === 'socks4' ? 'selected' : ''}>SOCKS4</option></select></label>
+                <label class="field proxy-host"><span>Servidor</span><input name="host" value="${escapeHtml(config?.host ?? '')}" placeholder="proxy.exemplo.com" autocomplete="off" required /></label>
+                <label class="field"><span>Porta</span><input name="port" type="number" min="1" max="65535" value="${config?.port || 8080}" required /></label>
+                <label class="field"><span>Usuário <small>(opcional)</small></span><input name="username" value="${escapeHtml(config?.username ?? '')}" autocomplete="off" /></label>
+                <label class="field"><span>Senha <small>(opcional)</small></span><input name="password" type="password" placeholder="${config?.hasPassword ? 'Senha protegida — deixe vazio para manter' : 'Senha do proxy'}" autocomplete="new-password" /></label>
+              </div>
+              <div class="proxy-security"><span aria-hidden="true">◆</span><p><strong>Credencial local protegida</strong><small>O AltGrid usa a proteção de dados do Windows. O servidor AltGrid não recebe esta senha.</small></p></div>
+              ${this.proxyTestResult ? `<div class="proxy-result ${resultClass}" role="status"><strong>${escapeHtml(this.proxyTestResult.message)}</strong><span>${escapeHtml(this.proxyTestResult.route)} · ${this.proxyTestResult.latencyMs} ms</span></div>` : ''}
+              <div class="modal__actions">
+                <button class="button button--primary" type="submit" ${this.proxySaving ? 'disabled' : ''}>${this.proxySaving ? 'Salvando…' : 'Salvar e aplicar'}</button>
+                <button class="button button--secondary" data-test-proxy type="button" ${!config?.enabled || !active || this.proxySaving ? 'disabled' : ''}>Validar rota</button>
+                ${config ? '<button class="text-button text-button--danger" data-remove-proxy type="button">Remover proxy</button>' : ''}
+                <button class="button button--secondary" data-close-dialog type="button">Fechar</button>
+              </div>
+              <p class="modal__note">${active ? 'Ao salvar, somente esta conta será recarregada.' : 'Abra a conta após salvar para usar a nova rota.'}</p>
+            </form>
+          `}
+        </dialog>
+      `
+    }
+
     if (this.activeDialog === 'add-account') {
       const availableGames = this.games.filter(
         (game) => game.slug !== CUSTOM_GAME_SLUG,
@@ -4048,6 +4150,14 @@ export class AuthApp {
           ? 'Reduz atividade de telas em segundo plano sem recarregar o jogo.'
           : 'Disponível no aplicativo instalado.'
       const updateChannel = this.configText('update_channel') === 'beta' ? 'Beta' : 'Estável'
+      const totalPrivateKb = this.resourceUsage.reduce(
+        (total, usage) => total + usage.privateKb,
+        0,
+      )
+      const usageRows = this.resourceUsage.map((usage) => {
+        const account = this.configuredAccounts.find((item) => item.id === usage.accountId)
+        return `<div class="resource-row"><span><strong>${escapeHtml(account?.displayName ?? 'Conta')}</strong><small>${escapeHtml(account ? this.gameNameFor(account) : usage.accountId)}</small></span><b>${escapeHtml(formatMemoryKb(usage.privateKb))}</b></div>`
+      }).join('')
       return `
         <dialog class="modal modal--settings" id="app-dialog" aria-labelledby="dialog-title">
           <div class="modal__header"><p class="eyebrow">Preferências</p><h2 id="dialog-title">Configurações</h2></div>
@@ -4057,7 +4167,7 @@ export class AuthApp {
             </nav>
             <div class="settings-content">
               <section data-settings-panel="general"><h3>Geral</h3><label class="setting-toggle"><span><strong>Eco Mode</strong><small>${ecoModeNote}</small></span><input data-preference="eco-mode" type="checkbox" ${this.ecoModeRequested ? 'checked' : ''} ${ecoModeAvailable ? '' : 'disabled'} /></label><label class="setting-select"><span><strong>FPS em segundo plano</strong><small>A conta em uso permanece suave; as demais economizam recursos.</small></span><select data-eco-background-fps ${ecoModeAvailable ? '' : 'disabled'}><option value="10" ${this.ecoBackgroundFps === 10 ? 'selected' : ''}>10 FPS</option><option value="20" ${this.ecoBackgroundFps === 20 ? 'selected' : ''}>20 FPS</option><option value="30" ${this.ecoBackgroundFps === 30 ? 'selected' : ''}>30 FPS</option></select></label><label class="setting-toggle"><span><strong>Restaurar última sessão</strong><small>Reabre as contas usadas na inicialização anterior.</small></span><input data-preference="restore-session" type="checkbox" ${restore ? 'checked' : ''} /></label><label class="setting-toggle"><span><strong>Confirmar antes de fechar</strong><small>Evita encerrar sessões por acidente.</small></span><input data-preference="confirm-close" type="checkbox" ${confirmClose ? 'checked' : ''} /></label></section>
-              <section data-settings-panel="accounts" hidden><h3>Contas</h3><p>Cookies e credenciais dos jogos ficam somente neste dispositivo, isolados por conta.</p></section>
+              <section data-settings-panel="accounts" hidden><h3>Contas e memória</h3><p>Cookies, sessões e proxies ficam somente neste dispositivo, isolados por conta.</p><div class="resource-summary"><span><small>Memória privada das sessões</small><strong>${escapeHtml(formatMemoryKb(totalPrivateKb))}</strong></span><button class="button button--secondary" data-refresh-resource-usage type="button" ${this.resourceUsageLoading ? 'disabled' : ''}>${this.resourceUsageLoading ? 'Medindo…' : 'Medir agora'}</button></div>${usageRows ? `<div class="resource-list">${usageRows}</div>` : '<p class="modal__note">Abra suas contas e clique em “Medir agora” para ver o consumo por sessão.</p>'}<p class="modal__note">O perfil de 10 FPS reduz trabalho de CPU/GPU das contas em segundo plano. Como cada jogo mantém um navegador isolado e ativo, a RAM só é totalmente liberada ao fechar a conta.</p></section>
               <section data-settings-panel="visual" hidden><h3>Visual</h3><p>O tema escuro premium acompanha automaticamente o AltGrid.</p></section>
               <section data-settings-panel="updates" hidden><h3>Atualizações</h3><p>Canal atual: <strong>${updateChannel}</strong> · instalada ${APP_VERSION}${this.configText('latest_version') ? ` · disponível ${escapeHtml(this.configText('latest_version')!)}` : ''}</p><button class="button button--secondary" data-check-update type="button">Verificar atualização</button></section>
               <section data-settings-panel="notifications" hidden><h3>Notificações</h3><label class="setting-toggle"><span><strong>Avisos do AltGrid</strong><small>Atualizações, anúncios e alertas do sistema.</small></span><input data-preference="notifications" type="checkbox" ${notifications ? 'checked' : ''} /></label></section>
@@ -4282,6 +4392,21 @@ export class AuthApp {
           if (dialog === 'referrals') {
             void this.loadReferralProgram()
           }
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-proxy-account]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const account = this.accountFromAction(button)
+
+          if (!account) {
+            return
+          }
+
+          button.closest('details')?.removeAttribute('open')
+          void this.openProxyDialog(account)
         })
       })
 
@@ -5135,6 +5260,12 @@ export class AuthApp {
     if (this.activeDialog === 'payment') {
       this.stopPaymentPolling()
     }
+    if (this.activeDialog === 'proxy') {
+      this.proxyConfig = null
+      this.proxyLoading = false
+      this.proxySaving = false
+      this.proxyTestResult = null
+    }
     this.activeDialog = null
     this.dialogError = null
     this.dialogAccountId = null
@@ -5497,6 +5628,15 @@ export class AuthApp {
       })
     }
 
+    const refreshResourceUsage = this.root.querySelector<HTMLButtonElement>(
+      '[data-refresh-resource-usage]',
+    )
+    if (refreshResourceUsage) {
+      this.bindButtonOnce(refreshResourceUsage, () => {
+        void this.refreshResourceUsage()
+      })
+    }
+
     this.root
       .querySelectorAll<HTMLButtonElement>('[data-check-update]')
       .forEach((button) => {
@@ -5666,6 +5806,29 @@ export class AuthApp {
       })
     }
 
+    const proxyForm = this.root.querySelector<HTMLFormElement>('#proxy-form')
+    if (proxyForm && proxyForm.dataset.actionBound !== 'true') {
+      proxyForm.dataset.actionBound = 'true'
+      proxyForm.addEventListener('submit', (event) => {
+        event.preventDefault()
+        void this.saveProxyConfiguration(proxyForm)
+      })
+    }
+
+    const testProxyButton = this.root.querySelector<HTMLButtonElement>('[data-test-proxy]')
+    if (testProxyButton) {
+      this.bindButtonOnce(testProxyButton, () => {
+        void this.testProxyConfiguration(testProxyButton)
+      })
+    }
+
+    const removeProxyButton = this.root.querySelector<HTMLButtonElement>('[data-remove-proxy]')
+    if (removeProxyButton) {
+      this.bindButtonOnce(removeProxyButton, () => {
+        void this.removeProxyConfiguration(removeProxyButton)
+      })
+    }
+
     const deleteButton = this.root.querySelector<HTMLButtonElement>(
       '[data-confirm-delete-account]',
     )
@@ -5725,6 +5888,7 @@ export class AuthApp {
       }
 
       this.accountService.remove(userId, accountId)
+      await Promise.resolve(this.sessionLauncher.removeProxy?.(account)).catch(() => undefined)
       this.configuredAccounts = this.accountService.list(userId)
       this.sessionFrameRates.delete(accountId)
       this.storeSessionFrameRatePreferences()
@@ -5744,6 +5908,150 @@ export class AuthApp {
     }
   }
 
+  private proxyControlAvailable(): boolean {
+    return !this.mobileSessionMode
+      && typeof this.sessionLauncher.getProxy === 'function'
+      && typeof this.sessionLauncher.setProxy === 'function'
+      && this.permissionService.canUseFeature('account_proxy')
+  }
+
+  private async openProxyDialog(account: ConfiguredAccount): Promise<void> {
+    if (!this.proxyControlAvailable() || !this.sessionLauncher.getProxy) {
+      this.showSessionAlert('O proxy por conta é exclusivo do Founder no aplicativo Windows.')
+      return
+    }
+
+    this.dialogAccountId = account.id
+    this.dialogReturnFocus = { accountId: account.id, type: 'account' }
+    this.activeDialog = 'proxy'
+    this.dialogError = null
+    this.proxyConfig = null
+    this.proxyTestResult = null
+    this.proxyLoading = true
+    this.render()
+
+    try {
+      this.proxyConfig = await this.sessionLauncher.getProxy(account)
+    } catch (error) {
+      this.dialogError = error instanceof Error
+        ? error.message
+        : 'Não foi possível abrir o cofre de proxies.'
+    } finally {
+      this.proxyLoading = false
+      if (this.activeDialog === 'proxy' && this.dialogAccountId === account.id) {
+        this.render()
+      }
+    }
+  }
+
+  private async saveProxyConfiguration(form: HTMLFormElement): Promise<void> {
+    const account = this.configuredAccounts.find(
+      (candidate) => candidate.id === this.dialogAccountId,
+    )
+    if (!account || !this.sessionLauncher.setProxy || this.proxySaving) return
+
+    const port = Number(this.valueOf(form, 'port'))
+    const password = this.valueOf(form, 'password')
+    const enabled = form.elements.namedItem('enabled') instanceof HTMLInputElement
+      && (form.elements.namedItem('enabled') as HTMLInputElement).checked
+    const protocol = this.valueOf(form, 'protocol') as SessionProxyInput['protocol']
+
+    this.proxySaving = true
+    this.dialogError = null
+    this.proxyTestResult = null
+    try {
+      this.proxyConfig = await this.sessionLauncher.setProxy(account, {
+        enabled,
+        host: this.valueOf(form, 'host'),
+        password: password || undefined,
+        port,
+        preservePassword: Boolean(this.proxyConfig?.hasPassword && !password),
+        protocol,
+        username: this.valueOf(form, 'username'),
+      })
+      this.proxyTestResult = {
+        latencyMs: 0,
+        message: enabled ? 'Proxy salvo e aplicado.' : 'Proxy salvo, mas desativado.',
+        ok: true,
+        route: enabled ? `${protocol.toUpperCase()} ${this.proxyConfig.host}:${this.proxyConfig.port}` : 'DIRECT',
+      }
+    } catch (error) {
+      this.dialogError = error instanceof Error ? error.message : 'Não foi possível salvar o proxy.'
+    } finally {
+      this.proxySaving = false
+      this.render()
+    }
+  }
+
+  private async testProxyConfiguration(button: HTMLButtonElement): Promise<void> {
+    const account = this.configuredAccounts.find(
+      (candidate) => candidate.id === this.dialogAccountId,
+    )
+    if (!account || !this.sessionLauncher.testProxy) return
+    button.disabled = true
+    button.textContent = 'Validando…'
+    this.dialogError = null
+    try {
+      this.proxyTestResult = await this.sessionLauncher.testProxy(account)
+    } catch (error) {
+      this.proxyTestResult = null
+      this.dialogError = error instanceof Error
+        ? error.message
+        : 'Abra esta conta para validar a rota configurada.'
+    }
+    this.render()
+  }
+
+  private async removeProxyConfiguration(button: HTMLButtonElement): Promise<void> {
+    const account = this.configuredAccounts.find(
+      (candidate) => candidate.id === this.dialogAccountId,
+    )
+    if (!account || !this.sessionLauncher.removeProxy) return
+    button.disabled = true
+    this.dialogError = null
+    try {
+      await this.sessionLauncher.removeProxy(account)
+      this.proxyConfig = null
+      this.proxyTestResult = {
+        latencyMs: 0,
+        message: 'Proxy removido. A conta voltou para a conexão direta.',
+        ok: true,
+        route: 'DIRECT',
+      }
+    } catch (error) {
+      this.dialogError = error instanceof Error ? error.message : 'Não foi possível remover o proxy.'
+    }
+    this.render()
+  }
+
+  private async refreshResourceUsage(): Promise<void> {
+    if (!this.sessionLauncher.getResourceUsage || this.resourceUsageLoading) return
+    this.resourceUsageLoading = true
+    this.render()
+    this.activateSettingsTab('accounts')
+    try {
+      this.resourceUsage = await this.sessionLauncher.getResourceUsage()
+      this.dialogError = null
+    } catch {
+      this.dialogError = 'Não foi possível medir a memória das sessões.'
+    } finally {
+      this.resourceUsageLoading = false
+      if (this.activeDialog === 'settings') {
+        this.render()
+        this.activateSettingsTab('accounts')
+      }
+    }
+  }
+
+  private activateSettingsTab(tabName: string): void {
+    this.root.querySelectorAll<HTMLButtonElement>('[data-settings-tab]').forEach((tab) => {
+      tab.classList.toggle('is-active', tab.dataset.settingsTab === tabName)
+    })
+    this.root.querySelectorAll<HTMLElement>('[data-settings-panel]').forEach((panel) => {
+      panel.hidden = panel.dataset.settingsPanel !== tabName
+    })
+  }
+
   private resolveSessionLaunchTarget(
     account: ConfiguredAccount,
   ): AccountSessionLaunchTarget | null {
@@ -5751,7 +6059,12 @@ export class AuthApp {
       const launchUrl = normalizeSafeGameUrl(account.customLaunchUrl)
 
       return launchUrl
-        ? { game: null, kind: 'custom', launchUrl }
+        ? {
+            allowProxy: this.permissionService.canUseFeature('account_proxy'),
+            game: null,
+            kind: 'custom',
+            launchUrl,
+          }
         : null
     }
 
@@ -5761,7 +6074,12 @@ export class AuthApp {
     const launchUrl = normalizeSafeGameUrl(game?.launch_url)
 
     return game && launchUrl
-      ? { game, kind: 'preset', launchUrl }
+      ? {
+          allowProxy: this.permissionService.canUseFeature('account_proxy'),
+          game,
+          kind: 'preset',
+          launchUrl,
+        }
       : null
   }
 

@@ -1,4 +1,5 @@
 import {
+  app,
   session,
   WebContentsView,
   type BrowserWindow,
@@ -7,7 +8,11 @@ import {
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { SESSION_PRELOAD_CHANNELS } from './contracts.js'
+import {
+  SESSION_PRELOAD_CHANNELS,
+  type SessionProxyConfig,
+} from './contracts.js'
+import { proxyRules } from './proxy-config-store.js'
 import type {
   NativeSessionView,
   NativeSessionViewFactory,
@@ -95,7 +100,22 @@ export function createNativeSessionViewFactory(
     let frameRateLimit = 0
     let parked = true
     let currentBounds = { height: 720, width: 1_280, x: 0, y: 0 }
+    let proxyCredentials: Pick<SessionProxyConfig, 'password' | 'username'> | null = null
     const popupWindows = new Set<BrowserWindow>()
+
+    const handleProxyLogin = (
+      event: Electron.Event,
+      _details: Electron.AuthenticationResponseDetails,
+      authInfo: Electron.AuthInfo,
+      callback: (username?: string, password?: string) => void,
+    ): void => {
+      if (!authInfo.isProxy || !proxyCredentials?.username) {
+        return
+      }
+
+      event.preventDefault()
+      callback(proxyCredentials.username, proxyCredentials.password)
+    }
 
     const reportBlockedDestination = (url: string): void => {
       onEvent({
@@ -167,6 +187,7 @@ export function createNativeSessionViewFactory(
     view.webContents.on('did-create-window', (popupWindow) => {
       popupWindows.add(popupWindow)
       popupWindow.setMenuBarVisibility(false)
+      popupWindow.webContents.on('login', handleProxyLogin)
       popupWindow.webContents.setWindowOpenHandler(handleWindowOpen)
       popupWindow.webContents.on('will-attach-webview', (event) => event.preventDefault())
       popupWindow.webContents.on('will-navigate', (event, url) => {
@@ -179,6 +200,7 @@ export function createNativeSessionViewFactory(
       popupWindow.once('closed', () => popupWindows.delete(popupWindow))
     })
     view.webContents.on('will-attach-webview', (event) => event.preventDefault())
+    view.webContents.on('login', handleProxyLogin)
     view.webContents.on('will-navigate', (event, url) => {
       if (!isAllowedSessionUrl(url, allowInsecureLoopback)) {
         event.preventDefault()
@@ -272,6 +294,21 @@ export function createNativeSessionViewFactory(
         }
       },
 
+      async getResourceUsage(): Promise<{ privateKb: number; sharedKb: number }> {
+        if (view.webContents.isDestroyed()) {
+          return { privateKb: 0, sharedKb: 0 }
+        }
+        const processId = view.webContents.getOSProcessId()
+        const usage = app.getAppMetrics().find((metric) => metric.pid === processId)?.memory
+        return {
+          privateKb: Math.max(0, usage?.privateBytes ?? usage?.workingSetSize ?? 0),
+          sharedKb: Math.max(
+            0,
+            (usage?.workingSetSize ?? 0) - (usage?.privateBytes ?? usage?.workingSetSize ?? 0),
+          ),
+        }
+      },
+
       loadURL(url): Promise<void> {
         return view.webContents.loadURL(url)
       },
@@ -312,6 +349,34 @@ export function createNativeSessionViewFactory(
       setMuted(muted): void {
         if (!view.webContents.isDestroyed()) {
           view.webContents.setAudioMuted(muted)
+        }
+      },
+
+      async setProxy(config): Promise<void> {
+        proxyCredentials = config?.enabled && config.username
+          ? { password: config.password, username: config.username }
+          : null
+        await isolatedSession.setProxy(config?.enabled
+          ? {
+              mode: 'fixed_servers',
+              proxyBypassRules: '<local>',
+              proxyRules: proxyRules(config),
+            }
+          : { mode: 'direct' })
+        await isolatedSession.closeAllConnections()
+      },
+
+      async testProxy(targetUrl): Promise<import('./contracts.js').SessionProxyTestResult> {
+        const startedAt = Date.now()
+        const route = await isolatedSession.resolveProxy(targetUrl)
+        const routed = route.trim().toUpperCase() !== 'DIRECT'
+        return {
+          latencyMs: Math.max(0, Date.now() - startedAt),
+          message: routed
+            ? 'Rota do proxy aplicada a esta conta.'
+            : 'Esta conta está usando conexão direta.',
+          ok: routed,
+          route,
         }
       },
 

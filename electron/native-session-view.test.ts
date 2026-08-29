@@ -13,6 +13,7 @@ const electronMocks = vi.hoisted(() => {
     const handlers = new Map<string, EventHandler>()
     return {
       clearCache: vi.fn(async () => undefined),
+      closeAllConnections: vi.fn(async () => undefined),
       clearStorageData: vi.fn(async () => undefined),
       handlers,
       on: vi.fn((event: string, handler: EventHandler) => {
@@ -21,6 +22,7 @@ const electronMocks = vi.hoisted(() => {
       setDevicePermissionHandler: vi.fn(),
       setPermissionCheckHandler: vi.fn(),
       setPermissionRequestHandler: vi.fn(),
+      setProxy: vi.fn(async () => undefined),
     }
   }
 
@@ -39,12 +41,14 @@ const electronMocks = vi.hoisted(() => {
     readonly webContents = {
       close: vi.fn(),
       focus: vi.fn(),
+      getOSProcessId: vi.fn(() => 42),
       isDestroyed: vi.fn(() => false),
       loadURL: vi.fn(async () => undefined),
       on: vi.fn((event: string, handler: EventHandler) => {
         this.handlers.set(event, handler)
       }),
       reload: vi.fn(),
+      resolveProxy: vi.fn(async () => 'PROXY proxy.example.com:1080'),
       send: vi.fn(),
       setAudioMuted: vi.fn(),
       setBackgroundThrottling: vi.fn(),
@@ -96,6 +100,12 @@ const electronMocks = vi.hoisted(() => {
 })
 
 vi.mock('electron', () => ({
+  app: {
+    getAppMetrics: vi.fn(() => [{
+      memory: { privateBytes: 128_000, workingSetSize: 144_000 },
+      pid: 42,
+    }]),
+  },
   session: {
     fromPartition: electronMocks.fromPartition,
   },
@@ -253,6 +263,56 @@ describe('createNativeSessionViewFactory', () => {
     view.webContents.isDestroyed.mockReturnValue(true)
     nativeView.setZoomFactor(1)
     expect(view.webContents.setZoomFactor).toHaveBeenCalledOnce()
+  })
+
+  it('applies one proxy per partition and answers only proxy authentication', async () => {
+    const { hostWindow } = createHostWindow()
+    const factory = createNativeSessionViewFactory(hostWindow, false)
+    const nativeView = factory({
+      accountId: 'account-proxy',
+      onEvent: vi.fn(),
+      partition: 'persist:altgrid-account-account-proxy',
+    })
+    const view = electronMocks.views[0]!
+    const partition = electronMocks.partitions.get(
+      'persist:altgrid-account-account-proxy',
+    )!
+
+    await nativeView.setProxy({
+      enabled: true,
+      host: 'proxy.example.com',
+      password: 'secret',
+      port: 1080,
+      protocol: 'socks5',
+      username: 'founder',
+    })
+
+    expect(partition.setProxy).toHaveBeenCalledWith({
+      mode: 'fixed_servers',
+      proxyBypassRules: '<local>',
+      proxyRules: 'socks5://proxy.example.com:1080',
+    })
+    expect(partition.closeAllConnections).toHaveBeenCalledOnce()
+
+    const callback = vi.fn()
+    const proxyEvent = { preventDefault: vi.fn() }
+    view.handlers.get('login')?.(
+      proxyEvent,
+      {},
+      { isProxy: true },
+      callback,
+    )
+    expect(proxyEvent.preventDefault).toHaveBeenCalledOnce()
+    expect(callback).toHaveBeenCalledWith('founder', 'secret')
+
+    callback.mockClear()
+    view.handlers.get('login')?.(
+      { preventDefault: vi.fn() },
+      {},
+      { isProxy: false },
+      callback,
+    )
+    expect(callback).not.toHaveBeenCalled()
   })
 
   it('sends the best-effort FPS budget without using offscreen frame APIs', () => {

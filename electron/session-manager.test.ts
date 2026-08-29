@@ -16,6 +16,7 @@ interface FakeView extends NativeSessionView {
   destroy: Mock<(force: boolean) => void>
   emit(event: NativeSessionEvent): void
   focus: Mock<() => void>
+  getResourceUsage: Mock<() => Promise<{ privateKb: number; sharedKb: number }>>
   loadURL: Mock<(url: string) => Promise<void>>
   reload: Mock<() => void>
   stop: Mock<() => void>
@@ -23,8 +24,10 @@ interface FakeView extends NativeSessionView {
   setEcoMode: Mock<(enabled: boolean) => void>
   setFrameRateLimit: Mock<(fps: number) => void>
   setMuted: Mock<(muted: boolean) => void>
+  setProxy: Mock<(config: import('./contracts.js').SessionProxyConfig | null) => Promise<void>>
   setVisible: Mock<(visible: boolean) => void>
   setZoomFactor: Mock<(factor: number) => void>
+  testProxy: Mock<(targetUrl: string) => Promise<import('./contracts.js').SessionProxyTestResult>>
 }
 
 function createHarness(
@@ -40,6 +43,7 @@ function createHarness(
       destroy: vi.fn(),
       emit: (event) => context.onEvent(event),
       focus: vi.fn(),
+      getResourceUsage: vi.fn(async () => ({ privateKb: 128_000, sharedKb: 16_000 })),
       loadURL: vi.fn(async () => undefined),
       reload: vi.fn(),
       stop: vi.fn(),
@@ -47,8 +51,15 @@ function createHarness(
       setEcoMode: vi.fn(),
       setFrameRateLimit: vi.fn(),
       setMuted: vi.fn(),
+      setProxy: vi.fn(async () => undefined),
       setVisible: vi.fn(),
       setZoomFactor: vi.fn(),
+      testProxy: vi.fn(async () => ({
+        latencyMs: 1,
+        message: 'Rota aplicada.',
+        ok: true,
+        route: 'PROXY proxy.example.com:8080',
+      })),
     }
     contexts.set(context.accountId, context)
     views.set(context.accountId, view)
@@ -82,6 +93,51 @@ describe('SessionManager', () => {
     expect(first.partition).not.toBe(second.partition)
     expect(harness.contexts.get('account-1')?.accountId).toBe('account-1')
     expect(harness.createView).toHaveBeenCalledTimes(2)
+  })
+
+  it('applies an isolated proxy before the first account load', async () => {
+    const harness = createHarness()
+    const proxy = {
+      enabled: true,
+      host: 'proxy.example.com',
+      password: 'secret',
+      port: 1080,
+      protocol: 'socks5' as const,
+      username: 'founder',
+    }
+
+    await harness.manager.createSession(
+      'account-proxy',
+      'https://game.example/',
+      proxy,
+    )
+
+    const view = harness.views.get('account-proxy')!
+    expect(view.setProxy).toHaveBeenCalledWith(proxy)
+    expect(view.setProxy.mock.invocationCallOrder[0]).toBeLessThan(
+      view.loadURL.mock.invocationCallOrder[0]!,
+    )
+  })
+
+  it('reconnects an open account after changing its proxy', async () => {
+    const harness = createHarness()
+    await harness.manager.createSession('account-proxy', 'https://game.example/')
+    const view = harness.views.get('account-proxy')!
+    view.loadURL.mockClear()
+
+    await harness.manager.setSessionProxy('account-proxy', {
+      enabled: true,
+      host: 'proxy.example.com',
+      password: '',
+      port: 8080,
+      protocol: 'http',
+      username: '',
+    })
+
+    expect(view.setProxy).toHaveBeenLastCalledWith(expect.objectContaining({
+      host: 'proxy.example.com',
+    }))
+    expect(view.loadURL).toHaveBeenCalledWith('https://game.example/')
   })
 
   it('does not recreate or reload while showing, hiding, resizing, or muting', async () => {
@@ -345,6 +401,17 @@ describe('SessionManager', () => {
     expect(harness.manager.getSessions()).toEqual([])
   })
 
+  it('reports private memory independently for every active account', async () => {
+    const harness = createHarness()
+    await harness.manager.createSession('account-memory-a', 'https://game.example/')
+    await harness.manager.createSession('account-memory-b', 'https://game.example/')
+
+    await expect(harness.manager.getResourceUsage()).resolves.toEqual([
+      { accountId: 'account-memory-a', privateKb: 128_000, sharedKb: 16_000 },
+      { accountId: 'account-memory-b', privateKb: 128_000, sharedKb: 16_000 },
+    ])
+  })
+
   it('does not leave startup blocked indefinitely when a game never loads', async () => {
     const harness = createHarness(false, 5)
     harness.createView.mockImplementationOnce((context) => {
@@ -353,6 +420,7 @@ describe('SessionManager', () => {
         destroy: vi.fn(),
         emit: (event) => context.onEvent(event),
         focus: vi.fn(),
+        getResourceUsage: vi.fn(async () => ({ privateKb: 128_000, sharedKb: 16_000 })),
         loadURL: vi.fn(() => new Promise<void>(() => undefined)),
         reload: vi.fn(),
         stop: vi.fn(),
@@ -360,8 +428,15 @@ describe('SessionManager', () => {
         setEcoMode: vi.fn(),
         setFrameRateLimit: vi.fn(),
         setMuted: vi.fn(),
+        setProxy: vi.fn(async () => undefined),
         setVisible: vi.fn(),
         setZoomFactor: vi.fn(),
+        testProxy: vi.fn(async () => ({
+          latencyMs: 1,
+          message: 'Rota aplicada.',
+          ok: true,
+          route: 'PROXY proxy.example.com:8080',
+        })),
       }
       harness.views.set(context.accountId, view)
       return view

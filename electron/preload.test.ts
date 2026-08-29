@@ -51,4 +51,49 @@ describe('desktop preload performance bridge', () => {
       60,
     )
   })
+
+  it('exposes proxy operations through dedicated IPC channels', async () => {
+    const api = electronMocks.exposeInMainWorld.mock.calls[0]?.[1] as
+      | AltgridDesktopApi
+      | undefined
+
+    await api!.sessions.createSession('account-1', 'https://game.example/', true)
+    expect(electronMocks.invoke).toHaveBeenCalledWith(
+      'altgrid:sessions:create',
+      'account-1',
+      'https://game.example/',
+      true,
+    )
+
+    await api!.sessions.getProxy('account-1')
+    expect(electronMocks.invoke).toHaveBeenCalledWith(
+      'altgrid:sessions:get-proxy',
+      'account-1',
+    )
+
+    await api!.sessions.getResourceUsage()
+    expect(electronMocks.invoke).toHaveBeenCalledWith(
+      'altgrid:sessions:get-resource-usage',
+    )
+
+    await api!.sessions.setProxy('account-1', {
+      enabled: true,
+      host: 'proxy.example',
+      password: 'secret',
+      port: 8080,
+      protocol: 'http',
+      username: 'founder',
+    })
+    expect(electronMocks.invoke).toHaveBeenCalledWith(
+      'altgrid:sessions:set-proxy',
+      'account-1',
+      expect.objectContaining({ host: 'proxy.example' }),
+    )
+
+    await api!.sessions.testProxy('account-1')
+    expect(electronMocks.invoke).toHaveBeenCalledWith(
+      'altgrid:sessions:test-proxy',
+      'account-1',
+    )
+  })
 })

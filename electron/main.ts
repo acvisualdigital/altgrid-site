@@ -9,17 +9,23 @@ import {
   ipcMain,
   net,
   protocol,
+  safeStorage,
   shell,
   type IpcMainInvokeEvent,
 } from 'electron'
 
-import { IPC_CHANNELS, type SessionBounds } from './contracts.js'
+import {
+  IPC_CHANNELS,
+  type SessionBounds,
+  type SessionProxyInput,
+} from './contracts.js'
 import { hasMaintenanceShutdownArgument } from './lifecycle-policy.js'
 import {
   clearNativeSessionPartition,
   createNativeSessionViewFactory,
 } from './native-session-view.js'
 import { SessionManager } from './session-manager.js'
+import { ProxyConfigStore } from './proxy-config-store.js'
 import { configureShellSecurity } from './shell-security.js'
 import { UpdaterService } from './updater-service.js'
 import {
@@ -52,6 +58,7 @@ const singleInstanceLock = app.requestSingleInstanceLock()
 
 let mainWindow: BrowserWindow | null = null
 let sessionManager: SessionManager | null = null
+let proxyConfigStore: ProxyConfigStore | null = null
 let updaterService: UpdaterService | null = null
 let shellEntryUrl: string | null = null
 let pendingRecoveryDeepLink = findTrustedRecoveryDeepLink(process.argv)
@@ -146,6 +153,16 @@ function requireUpdater(event: IpcMainInvokeEvent): UpdaterService {
   return updaterService
 }
 
+function requireProxyStore(event: IpcMainInvokeEvent): ProxyConfigStore {
+  requireShellSender(event)
+
+  if (!proxyConfigStore) {
+    throw new Error('O cofre de proxies ainda não está disponível.')
+  }
+
+  return proxyConfigStore
+}
+
 function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.app.getPlatform, (event) => {
     requireShellSender(event)
@@ -166,9 +183,16 @@ function registerIpcHandlers(): void {
     return true
   })
 
-  ipcMain.handle(IPC_CHANNELS.sessions.create, (event, accountId, url) => (
-    requireSessionManager(event).createSession(accountId, url)
-  ))
+  ipcMain.handle(
+    IPC_CHANNELS.sessions.create,
+    (event, accountId, url, useStoredProxy = false) => {
+      const manager = requireSessionManager(event)
+      const proxy = useStoredProxy
+        ? requireProxyStore(event).get(accountId)
+        : null
+      return manager.createSession(accountId, url, proxy?.enabled ? proxy : null)
+    },
+  )
   ipcMain.handle(IPC_CHANNELS.sessions.clearData, (event, accountId) => (
     requireSessionManager(event).clearSessionData(accountId)
   ))
@@ -210,6 +234,72 @@ function registerIpcHandlers(): void {
   ))
   ipcMain.handle(IPC_CHANNELS.sessions.getAll, (event) => (
     requireSessionManager(event).getSessions()
+  ))
+  ipcMain.handle(IPC_CHANNELS.sessions.getResourceUsage, (event) => (
+    requireSessionManager(event).getResourceUsage()
+  ))
+  ipcMain.handle(IPC_CHANNELS.sessions.getProxy, (event, accountId) => {
+    const config = requireProxyStore(event).get(accountId)
+    return config
+      ? {
+          enabled: config.enabled,
+          hasPassword: Boolean(config.password),
+          host: config.host,
+          port: config.port,
+          protocol: config.protocol,
+          username: config.username,
+        }
+      : null
+  })
+  ipcMain.handle(
+    IPC_CHANNELS.sessions.setProxy,
+    async (event, accountId, input: SessionProxyInput) => {
+      const manager = requireSessionManager(event)
+      const store = requireProxyStore(event)
+      const previous = store.get(accountId)
+      const summary = store.set(accountId, input)
+      const config = store.get(accountId)
+
+      try {
+        if (manager.getSessions().some((candidate) => candidate.accountId === accountId)) {
+          await manager.setSessionProxy(accountId, config)
+        }
+      } catch (error) {
+        if (previous) {
+          store.set(accountId, previous)
+        } else {
+          store.remove(accountId)
+        }
+        throw error
+      }
+
+      return summary
+    },
+  )
+  ipcMain.handle(IPC_CHANNELS.sessions.removeProxy, async (event, accountId) => {
+    const manager = requireSessionManager(event)
+    const store = requireProxyStore(event)
+    const previous = store.get(accountId)
+    const removed = store.remove(accountId)
+
+    try {
+      if (manager.getSessions().some((candidate) => candidate.accountId === accountId)) {
+        await manager.setSessionProxy(accountId, null)
+      }
+    } catch (error) {
+      if (previous) {
+        store.set(accountId, previous)
+      }
+      throw error
+    }
+
+    return removed
+  })
+  ipcMain.handle(IPC_CHANNELS.sessions.testProxy, (event, accountId) => (
+    requireSessionManager(event).testSessionProxy(
+      accountId,
+      'https://altgrid-api.altgrid.workers.dev/health',
+    )
   ))
 
   ipcMain.handle(IPC_CHANNELS.updater.getState, (event) => (
@@ -345,6 +435,10 @@ async function createMainWindow(): Promise<void> {
   })
 
   mainWindow = browserWindow
+  proxyConfigStore = new ProxyConfigStore(
+    join(app.getPath('userData'), 'proxy-config.v1.json'),
+    safeStorage,
+  )
   sessionManager = new SessionManager({
     allowInsecureLoopback: !app.isPackaged,
     clearPartitionData: clearNativeSessionPartition,
@@ -372,6 +466,7 @@ async function createMainWindow(): Promise<void> {
     sessionManager?.destroyAll()
     updaterService = null
     sessionManager = null
+    proxyConfigStore = null
     mainWindow = null
     shellEntryUrl = null
   })

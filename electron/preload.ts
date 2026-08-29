@@ -5,6 +5,10 @@ import {
   type AltgridDesktopApi,
   type SessionBounds,
   type SessionEvent,
+  type SessionProxyInput,
+  type SessionProxySummary,
+  type SessionProxyTestResult,
+  type SessionResourceUsage,
   type SessionSnapshot,
   type UpdateState,
 } from './contracts.js'
@@ -28,8 +32,13 @@ const api: AltgridDesktopApi = Object.freeze({
     closeSession: (accountId: string) => (
       invoke<boolean>(IPC_CHANNELS.sessions.close, accountId)
     ),
-    createSession: (accountId: string, url: string) => (
-      invoke<SessionSnapshot>(IPC_CHANNELS.sessions.create, accountId, url)
+    createSession: (accountId: string, url: string, useStoredProxy = false) => (
+      invoke<SessionSnapshot>(
+        IPC_CHANNELS.sessions.create,
+        accountId,
+        url,
+        useStoredProxy,
+      )
     ),
     destroySession: (accountId: string) => (
       invoke<boolean>(IPC_CHANNELS.sessions.destroy, accountId)
@@ -39,6 +48,12 @@ const api: AltgridDesktopApi = Object.freeze({
     ),
     getSessions: () => (
       invoke<SessionSnapshot[]>(IPC_CHANNELS.sessions.getAll)
+    ),
+    getProxy: (accountId: string) => (
+      invoke<SessionProxySummary | null>(IPC_CHANNELS.sessions.getProxy, accountId)
+    ),
+    getResourceUsage: () => (
+      invoke<SessionResourceUsage[]>(IPC_CHANNELS.sessions.getResourceUsage)
     ),
     hideSession: (accountId: string) => (
       invoke<SessionSnapshot>(IPC_CHANNELS.sessions.hide, accountId)
@@ -59,6 +74,9 @@ const api: AltgridDesktopApi = Object.freeze({
     reloadSession: (accountId: string) => (
       invoke<SessionSnapshot>(IPC_CHANNELS.sessions.reload, accountId)
     ),
+    removeProxy: (accountId: string) => (
+      invoke<boolean>(IPC_CHANNELS.sessions.removeProxy, accountId)
+    ),
     resizeSession: (accountId: string, bounds: SessionBounds) => (
       invoke<SessionSnapshot>(IPC_CHANNELS.sessions.resize, accountId, bounds)
     ),
@@ -70,8 +88,14 @@ const api: AltgridDesktopApi = Object.freeze({
     setFrameRate: (accountId: string, fps: number) => (
       invoke<SessionSnapshot>(IPC_CHANNELS.sessions.setFrameRate, accountId, fps)
     ),
+    setProxy: (accountId: string, input: SessionProxyInput) => (
+      invoke<SessionProxySummary>(IPC_CHANNELS.sessions.setProxy, accountId, input)
+    ),
     showSession: (accountId: string) => (
       invoke<SessionSnapshot>(IPC_CHANNELS.sessions.show, accountId)
+    ),
+    testProxy: (accountId: string) => (
+      invoke<SessionProxyTestResult>(IPC_CHANNELS.sessions.testProxy, accountId)
     ),
   }),
   updater: Object.freeze({

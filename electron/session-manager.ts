@@ -1,6 +1,9 @@
 import type {
   SessionBounds,
   SessionEvent,
+  SessionProxyConfig,
+  SessionProxyTestResult,
+  SessionResourceUsage,
   SessionSnapshot,
   SessionStatus,
 } from './contracts.js'
@@ -64,6 +67,7 @@ export interface NativeSessionView {
   attach(): void
   destroy(force: boolean): void
   focus(): void
+  getResourceUsage(): Promise<Omit<SessionResourceUsage, 'accountId'>>
   loadURL(url: string): Promise<void>
   reload(): void
   stop(): void
@@ -71,6 +75,8 @@ export interface NativeSessionView {
   setEcoMode(enabled: boolean): void
   setFrameRateLimit(fps: number): void
   setMuted(muted: boolean): void
+  setProxy(config: SessionProxyConfig | null): Promise<void>
+  testProxy(targetUrl: string): Promise<SessionProxyTestResult>
   setVisible(visible: boolean): void
   setZoomFactor(factor: number): void
 }
@@ -209,7 +215,11 @@ export class SessionManager {
     return () => this.listeners.delete(listener)
   }
 
-  async createSession(accountId: unknown, inputUrl: unknown): Promise<SessionSnapshot> {
+  async createSession(
+    accountId: unknown,
+    inputUrl: unknown,
+    proxyConfig: SessionProxyConfig | null = null,
+  ): Promise<SessionSnapshot> {
     const normalizedId = normalizeAccountId(accountId)
     const existing = this.records.get(normalizedId)
 
@@ -244,6 +254,7 @@ export class SessionManager {
       // This preserves the WebContents and its persistent authenticated partition.
       view.setEcoMode(this.ecoModeEnabled)
       view.setFrameRateLimit(this.effectiveFrameRate(record))
+      await view.setProxy(proxyConfig?.enabled ? proxyConfig : null)
       view.attach()
       view.setBounds(record.bounds)
       view.setZoomFactor(computeAutoFitZoom(record.bounds.width))
@@ -341,6 +352,36 @@ export class SessionManager {
     record.view.reload()
     this.emit({ accountId: record.accountId, session: snapshot(record), type: 'loading' })
     return snapshot(record)
+  }
+
+  async setSessionProxy(
+    accountId: unknown,
+    proxyConfig: SessionProxyConfig | null,
+  ): Promise<SessionSnapshot> {
+    const record = this.requireRecord(accountId)
+    await record.view.setProxy(proxyConfig?.enabled ? proxyConfig : null)
+    record.status = 'loading'
+    this.emit({ accountId: record.accountId, session: snapshot(record), type: 'loading' })
+
+    try {
+      await this.loadWithTimeout(record.view, record.url)
+    } catch {
+      if (this.records.get(record.accountId) === record) {
+        record.status = 'load-failed'
+        this.emit({
+          accountId: record.accountId,
+          detail: 'O proxy não conseguiu carregar esta conta.',
+          session: snapshot(record),
+          type: 'load-failed',
+        })
+      }
+    }
+
+    return snapshot(record)
+  }
+
+  testSessionProxy(accountId: unknown, targetUrl: string): Promise<SessionProxyTestResult> {
+    return this.requireRecord(accountId).view.testProxy(targetUrl)
   }
 
   async navigateSession(accountId: unknown, inputUrl: unknown): Promise<SessionSnapshot> {
@@ -477,6 +518,13 @@ export class SessionManager {
 
   getSessions(): SessionSnapshot[] {
     return [...this.records.values()].map(snapshot)
+  }
+
+  async getResourceUsage(): Promise<SessionResourceUsage[]> {
+    return Promise.all([...this.records.values()].map(async (record) => ({
+      accountId: record.accountId,
+      ...await record.view.getResourceUsage(),
+    })))
   }
 
   destroyAll(): void {

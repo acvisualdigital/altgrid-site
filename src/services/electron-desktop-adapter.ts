@@ -2,6 +2,10 @@ import type {
   AltgridDesktopApi,
   SessionBounds,
   SessionEvent,
+  SessionProxyInput,
+  SessionProxySummary,
+  SessionProxyTestResult,
+  SessionResourceUsage,
   SessionSnapshot,
   UpdateState,
 } from '../../electron/contracts'
@@ -12,6 +16,7 @@ export interface DesktopAccountReference {
 }
 
 export interface DesktopSessionLaunchTarget {
+  allowProxy?: boolean
   launchUrl: string
 }
 
@@ -127,6 +132,10 @@ export class ElectronSessionLauncher {
     await this.api.focusSession(account.id)
   }
 
+  getResourceUsage(): Promise<SessionResourceUsage[]> {
+    return this.api.getResourceUsage()
+  }
+
   async open(
     account: DesktopAccountReference,
     target: DesktopSessionLaunchTarget | null,
@@ -135,7 +144,34 @@ export class ElectronSessionLauncher {
       throw new Error('Não foi possível determinar o endereço deste jogo.')
     }
 
-    await this.api.createSession(account.id, target.launchUrl)
+    const proxy = target.allowProxy
+      ? await this.api.getProxy(account.id)
+      : null
+
+    await this.api.createSession(
+      account.id,
+      target.launchUrl,
+      Boolean(proxy?.enabled),
+    )
+  }
+
+  getProxy(account: DesktopAccountReference): Promise<SessionProxySummary | null> {
+    return this.api.getProxy(account.id)
+  }
+
+  removeProxy(account: DesktopAccountReference): Promise<boolean> {
+    return this.api.removeProxy(account.id)
+  }
+
+  setProxy(
+    account: DesktopAccountReference,
+    input: SessionProxyInput,
+  ): Promise<SessionProxySummary> {
+    return this.api.setProxy(account.id, input)
+  }
+
+  testProxy(account: DesktopAccountReference): Promise<SessionProxyTestResult> {
+    return this.api.testProxy(account.id)
   }
 
   registerEscapeHandler(handler: () => void): () => void {
