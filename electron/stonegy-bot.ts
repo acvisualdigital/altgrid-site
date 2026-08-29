@@ -225,5 +225,8 @@ function readAsset(fileName: string): string {
   if (!contents.trim()) {
     throw new Error(`O arquivo ${fileName} do AltGrid Bot está vazio.`)
   }
-  return contents
+  // Git may materialize tracked JavaScript assets with CRLF on Windows runners.
+  // Normalize before applying the audited, exact startup patches so local and
+  // CI packages receive identical bot code.
+  return contents.replace(/\r\n?/g, '\n')
 }
