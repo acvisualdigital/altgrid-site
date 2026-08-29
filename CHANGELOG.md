@@ -9,6 +9,7 @@
 - Permite salvar, ativar, remover e validar a rota de cada conta sem afetar as demais sessões.
 - Adiciona diagnóstico real de memória por conta na área de configurações.
 - Mantém o perfil de desempenho adaptativo para contas em segundo plano.
+- Corrige a atualização interna para encerrar sessões e processos antes de iniciar o instalador, evitando os avisos de que o AltGrid ainda está aberto ou não pôde ser desinstalado.
 
 ### Windows e Android
 
