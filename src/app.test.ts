@@ -6,6 +6,7 @@ import {
   compareVersions,
   passwordRecoveryRedirectUrl,
   renderPlanBadge,
+  resolveChatScrollTop,
   type AccountSessionStatusEvent,
 } from './app'
 import {
@@ -111,6 +112,56 @@ describe('plan badges', () => {
 
     expect(badge).toContain('aria-label="Plano Founder, número 0042"')
     expect(badge).toContain('class="plan-badge__number">#0042</small>')
+  })
+})
+
+describe('chat scroll restoration', () => {
+  const current = (
+    scrollHeight: number,
+    clientHeight = 300,
+    loadingMore = false,
+    channelId = 'global',
+  ) => ({ channelId, clientHeight, loadingMore, scrollHeight })
+
+  it('opens a conversation and switches channels at the latest message', () => {
+    expect(resolveChatScrollTop(null, current(1_200))).toBe(900)
+    expect(resolveChatScrollTop({
+      channelId: 'global',
+      clientHeight: 300,
+      loadingMore: false,
+      scrollHeight: 1_200,
+      scrollTop: 420,
+    }, current(900, 300, false, 'huntera'))).toBe(600)
+  })
+
+  it('sticks to the latest messages when already near the bottom', () => {
+    expect(resolveChatScrollTop({
+      channelId: 'global',
+      clientHeight: 300,
+      loadingMore: false,
+      scrollHeight: 1_200,
+      scrollTop: 870,
+    }, current(1_320))).toBe(1_020)
+  })
+
+  it('does not pull the user away from older messages during a rerender', () => {
+    expect(resolveChatScrollTop({
+      channelId: 'global',
+      clientHeight: 300,
+      loadingMore: false,
+      scrollHeight: 1_200,
+      scrollTop: 420,
+    }, current(1_320))).toBe(420)
+  })
+
+  it('keeps the same visible message after prepending older history', () => {
+    expect(resolveChatScrollTop({
+      channelId: 'global',
+      clientHeight: 300,
+      loadingMore: true,
+      scrollHeight: 1_200,
+      scrollTop: 120,
+    }, current(1_800))).toBe(720)
   })
 })
 

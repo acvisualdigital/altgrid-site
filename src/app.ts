@@ -98,7 +98,46 @@ type BackendLoadStatus = 'error' | 'idle' | 'loading' | 'ready'
 type ServiceStatus = 'checking' | 'offline' | 'online' | 'unknown'
 type WorkspaceMode = 'account' | 'grid'
 const CHAT_GAME_SELECTION_STORAGE_KEY = 'altgrid.chat.visible-game-channels.v1'
+const CHAT_BOTTOM_THRESHOLD_PX = 48
 const RMT_DISCORD_URL = 'https://discord.gg/jqbWgSPVe'
+
+export interface ChatScrollSnapshot {
+  channelId: string
+  clientHeight: number
+  loadingMore: boolean
+  scrollHeight: number
+  scrollTop: number
+}
+
+export function resolveChatScrollTop(
+  previous: ChatScrollSnapshot | null,
+  current: Pick<ChatScrollSnapshot, 'channelId' | 'clientHeight' | 'loadingMore' | 'scrollHeight'>,
+): number {
+  const maximum = Math.max(0, current.scrollHeight - current.clientHeight)
+
+  if (!previous || previous.channelId !== current.channelId) {
+    return maximum
+  }
+
+  const distanceFromBottom = Math.max(
+    0,
+    previous.scrollHeight - previous.clientHeight - previous.scrollTop,
+  )
+
+  if (previous.loadingMore && !current.loadingMore) {
+    return Math.min(
+      maximum,
+      Math.max(0, previous.scrollTop + current.scrollHeight - previous.scrollHeight),
+    )
+  }
+
+  if (distanceFromBottom <= CHAT_BOTTOM_THRESHOLD_PX) {
+    return maximum
+  }
+
+  return Math.min(maximum, Math.max(0, previous.scrollTop))
+}
+
 type ApplicationBackend = Pick<BackendApi, 'getEntitlements' | 'getGames' | 'getMe'>
   & Partial<Pick<
     BackendApi,
@@ -1762,6 +1801,7 @@ export class AuthApp {
     this.focusCurrentView()
 
     if (authenticated) {
+      this.restoreChatScroll(this.root, null)
       this.ensureSessionSurfaceManager()
       this.ensureWorkspaceObserver()
       this.applyWorkspacePresentation()
@@ -1783,6 +1823,7 @@ export class AuthApp {
     )
     const gridControlsRegion = shell.querySelector<HTMLElement>('[data-grid-controls-region]')
     const chatRegion = shell.querySelector<HTMLElement>('[data-chat-region]')
+    const previousChatScroll = this.captureChatScroll(chatRegion)
     const overlayRegion = this.root.querySelector<HTMLElement>('[data-overlay-region]')
     const previousAccountScroller = toolbar?.querySelector<HTMLElement>(
       '[data-account-tabs-scroll]',
@@ -1827,6 +1868,7 @@ export class AuthApp {
     }
     if (chatRegion) {
       chatRegion.innerHTML = this.renderChat()
+      this.restoreChatScroll(chatRegion, previousChatScroll)
     }
     if (overlayRegion) {
       const signature = this.getDialogSignature()
@@ -1854,6 +1896,40 @@ export class AuthApp {
       this.focusCurrentView()
     }
     return true
+  }
+
+  private captureChatScroll(region: HTMLElement | null): ChatScrollSnapshot | null {
+    const scroller = region?.querySelector<HTMLElement>('[data-chat-messages]')
+
+    if (!scroller) {
+      return null
+    }
+
+    return {
+      channelId: scroller.dataset.chatChannelId ?? '',
+      clientHeight: scroller.clientHeight,
+      loadingMore: scroller.dataset.chatLoadingMore === 'true',
+      scrollHeight: scroller.scrollHeight,
+      scrollTop: scroller.scrollTop,
+    }
+  }
+
+  private restoreChatScroll(
+    region: HTMLElement,
+    previous: ChatScrollSnapshot | null,
+  ): void {
+    const scroller = region.querySelector<HTMLElement>('[data-chat-messages]')
+
+    if (!scroller) {
+      return
+    }
+
+    scroller.scrollTop = resolveChatScrollTop(previous, {
+      channelId: scroller.dataset.chatChannelId ?? '',
+      clientHeight: scroller.clientHeight,
+      loadingMore: scroller.dataset.chatLoadingMore === 'true',
+      scrollHeight: scroller.scrollHeight,
+    })
   }
 
   private getDialogSignature(): string {
@@ -2833,7 +2909,7 @@ export class AuthApp {
             `).join('') || '<small>Nenhum chat de jogo disponível.</small>'}
           </div>
         </details>
-        <div class="chat-messages" data-chat-messages aria-live="polite">
+        <div class="chat-messages" data-chat-messages data-chat-channel-id="${escapeHtml(state.selectedChannelId ?? '')}" data-chat-loading-more="${state.loadingMore}" aria-live="polite">
           ${state.hasMore ? `<button class="chat-load-more" data-chat-load-more type="button" ${state.loadingMore ? 'disabled' : ''}>${state.loadingMore ? 'Carregando…' : 'Mensagens anteriores'}</button>` : ''}
           ${state.loading
             ? '<span class="chat-loading"><i class="spinner spinner--green"></i> Carregando conversa…</span>'
