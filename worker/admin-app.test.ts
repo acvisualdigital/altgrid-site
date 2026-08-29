@@ -359,7 +359,7 @@ describe('administrative Worker API', () => {
   it('supports lifetime, license/device actions, config and product edits', async () => {
     adminRepository.admin = true
     const responses = await Promise.all([
-      api.fetch(request(`/v1/admin/users/${TARGET_ID}/lifetime`, 'POST', { plan: 'PRO' })),
+      api.fetch(request(`/v1/admin/users/${TARGET_ID}/lifetime`, 'POST', { plan: 'PRO_PLUS' })),
       api.fetch(request(`/v1/admin/licenses/${LICENSE_ID}/revoke`, 'POST', {})),
       api.fetch(request(`/v1/admin/devices/${DEVICE_ID}/revoke`, 'POST', {})),
       api.fetch(request(`/v1/admin/devices/${DEVICE_ID}/reset`, 'POST', {})),
@@ -381,6 +381,11 @@ describe('administrative Worker API', () => {
       currency: 'BRL',
       enabled: false,
     })
+    expect(adminRepository.calls).toContainEqual(expect.objectContaining({
+      action: 'license.activate_lifetime',
+      target: TARGET_ID,
+      value: expect.objectContaining({ plan: 'PRO_PLUS' }),
+    }))
 
     const clearPrice = await api.fetch(request(
       `/v1/admin/products/${PRODUCT_ID}`,

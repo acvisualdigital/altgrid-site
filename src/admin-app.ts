@@ -624,6 +624,9 @@ export class AdminApp {
   private renderUserDetail(user: AdminUserDetail): string {
     const activeLicenses = user.licenses.filter((license) => license.status === 'active')
     const chatRestricted = user.chat_status.banned || Boolean(user.chat_status.muted_until)
+    const selectedLifetimePlan = user.lifetime && user.plan !== 'FREE'
+      ? user.plan
+      : 'PRO'
     return `
       <aside class="admin-detail" aria-label="Detalhes de ${escapeHtml(user.email ?? user.id)}">
         <div class="admin-detail__heading">
@@ -654,7 +657,7 @@ export class AdminApp {
             <button class="button button--secondary button--compact" type="submit">Trocar</button>
           </form>
           <form data-user-action="lifetime" data-user-id="${escapeHtml(user.id)}">
-            <label>Lifetime <select name="plan">${this.renderPlanOptions('PRO', false)}</select></label>
+            <label>Lifetime <select name="plan">${this.renderPlanOptions(selectedLifetimePlan, false)}</select></label>
             <label>Nº Founder <input name="founder_number" type="number" min="1" max="1000000" value="${escapeHtml(user.founder_number ?? '')}" /></label>
             <button class="button button--secondary button--compact" type="submit">Ativar</button>
           </form>
@@ -1543,6 +1546,7 @@ export class AdminApp {
 
     const data = new FormData(form)
     this.error = null
+    this.notice = null
     form.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
       button.disabled = true
     })
@@ -1557,7 +1561,7 @@ export class AdminApp {
         await this.refreshSelectedUser(`${days} dias de PRO concedidos.`)
       } else if (action === 'set-plan') {
         const plan = String(data.get('plan')) as PlanCode
-        if (!['FREE', 'PRO', 'FOUNDER'].includes(plan)) {
+        if (!['FREE', 'PRO', 'PRO_PLUS', 'FOUNDER'].includes(plan)) {
           throw new Error('invalid plan')
         }
         const rawExpiration = String(data.get('expires_at') ?? '').trim()
@@ -1579,8 +1583,8 @@ export class AdminApp {
         })
         await this.refreshSelectedUser('Plano atualizado.')
       } else {
-        const plan = String(data.get('plan')) as 'FOUNDER' | 'PRO'
-        if (!['PRO', 'FOUNDER'].includes(plan)) {
+        const plan = String(data.get('plan')) as 'FOUNDER' | 'PRO_PLUS' | 'PRO'
+        if (!['PRO', 'PRO_PLUS', 'FOUNDER'].includes(plan)) {
           throw new Error('invalid lifetime plan')
         }
         const rawFounder = String(data.get('founder_number') ?? '').trim()

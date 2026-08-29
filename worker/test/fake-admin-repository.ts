@@ -166,7 +166,7 @@ export class FakeAdminRepository implements AdminRepository {
   async adminActivateLifetime(
     actor: string,
     target: string,
-    plan: 'PRO' | 'FOUNDER',
+    plan: 'PRO' | 'PRO_PLUS' | 'FOUNDER',
     founderNumber?: number | null,
   ): Promise<void> {
     this.record(actor, 'license.activate_lifetime', 'user', target, {

@@ -235,7 +235,7 @@ export async function readLifetimePlan(
   request: Request,
 ): Promise<AdminLifetimeInput> {
   const body = await readJsonObject(request, new Set(['plan', 'founder_number']))
-  const plan = planCode(body.plan, false) as 'PRO' | 'FOUNDER'
+  const plan = planCode(body.plan, false) as 'PRO' | 'PRO_PLUS' | 'FOUNDER'
   const founder = founderNumber(body.founder_number)
   if (plan !== 'FOUNDER' && founder != null) {
     throw validationError('founder_number requer o plano FOUNDER.')

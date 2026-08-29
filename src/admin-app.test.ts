@@ -192,6 +192,65 @@ describe('AdminApp', () => {
     app.destroy()
   })
 
+  it('activates PLUS lifetime and replaces any notice from the previous action', async () => {
+    const root = rootDouble()
+    const detail = {
+      chat_status: { banned: false, muted_until: null, reason: null },
+      created_at: user.created_at,
+      devices: [],
+      display_name: null,
+      email: user.email,
+      expires_at: null,
+      founder_number: null,
+      id: user.id,
+      license_status: 'active',
+      licenses: [],
+      lifetime: true,
+      payments: [],
+      plan: 'PRO_PLUS' as const,
+      referral_code: 'HUNT-ABCD2345',
+      referrals: [],
+    }
+    const activateAdminLifetime = vi.fn().mockResolvedValue({ ok: true })
+    const backend = backendDouble({
+      activateAdminLifetime,
+      getAdminUser: vi.fn().mockResolvedValue({ user: detail }),
+    })
+    const app = new AdminApp(root, authDouble(), backend)
+    const harness = app as unknown as {
+      error: string | null
+      notice: string | null
+      performUserAction(form: HTMLFormElement): Promise<void>
+      renderUserDetail(userDetail: typeof detail): string
+      selectedUser: typeof detail | null
+    }
+    harness.selectedUser = detail
+    harness.notice = 'Aviso anterior.'
+    class FormDataDouble {
+      get(key: string): string | null {
+        if (key === 'plan') return 'PRO_PLUS'
+        if (key === 'founder_number') return ''
+        return null
+      }
+    }
+    vi.stubGlobal('FormData', FormDataDouble)
+
+    try {
+      await harness.performUserAction({
+        dataset: { userAction: 'lifetime', userId: user.id },
+        querySelectorAll: () => [],
+      } as unknown as HTMLFormElement)
+
+      expect(activateAdminLifetime).toHaveBeenCalledWith(user.id, { plan: 'PRO_PLUS' })
+      expect(harness.error).toBeNull()
+      expect(harness.notice).toBe('Plano lifetime ativado.')
+      expect(harness.renderUserDetail(detail)).toContain('value="PRO_PLUS" selected')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    app.destroy()
+  })
+
   it('renders announcement management and chat moderation data from protected calls', async () => {
     const root = rootDouble()
     const backend = backendDouble({

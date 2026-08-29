@@ -344,7 +344,7 @@ export class SupabaseAdminRepository implements AdminRepository {
   adminActivateLifetime(
     actorUserId: string,
     targetUserId: string,
-    plan: 'PRO' | 'FOUNDER',
+    plan: 'PRO' | 'PRO_PLUS' | 'FOUNDER',
     founderNumber?: number | null,
   ): Promise<void> {
     return this.adminRpc('admin_activate_lifetime', {

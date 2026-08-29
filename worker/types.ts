@@ -303,7 +303,7 @@ export interface AdminRepository {
   adminActivateLifetime(
     actorUserId: string,
     targetUserId: string,
-    plan: Extract<PlanCode, 'PRO' | 'FOUNDER'>,
+    plan: Extract<PlanCode, 'PRO' | 'PRO_PLUS' | 'FOUNDER'>,
     founderNumber?: number | null,
   ): Promise<void>
   adminRevokeLicense(actorUserId: string, licenseId: string): Promise<void>

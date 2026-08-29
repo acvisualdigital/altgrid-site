@@ -319,7 +319,7 @@ export interface AdminSetPlanInput {
 }
 
 export interface AdminLifetimeInput {
-  plan: Extract<PlanCode, 'PRO' | 'FOUNDER'>
+  plan: Extract<PlanCode, 'PRO' | 'PRO_PLUS' | 'FOUNDER'>
   founder_number?: number | null
 }
 

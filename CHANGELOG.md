@@ -15,7 +15,8 @@
 - Impede downloads duplicados durante a verificação e inicia a instalação explicitamente após encerrar as sessões do AltGrid.
 - Adiciona escala de interface independente por conta, de 50% a 100% ou automática, para exibir mais itens do HUD em grades com várias telas.
 - Encerra conexões e processos auxiliares remanescentes antes de instalar a atualização, evitando arquivos antigos bloqueados pelo Windows.
-- Exibe corretamente o plano PLUS nos controles de plano temporário e vitalício do painel administrativo.
+- Exibe e permite ativar corretamente o plano PLUS nos controles de plano temporário e vitalício do painel administrativo.
+- Substitui os blocos e ícones padrão do pacote Microsoft Store pela identidade visual oficial do AltGrid.
 - Executa o bot em um mundo isolado e somente em páginas HTTPS do domínio oficial do Stonegy.
 - Restringe o envio de webhooks aos endpoints HTTPS oficiais do Discord e limita o tamanho dos dados enviados.
 - Mantém Android inalterado nesta atualização.
