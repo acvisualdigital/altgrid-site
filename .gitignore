@@ -7,6 +7,7 @@ release-final/
 store-release/
 .pnpm-store/
 .wrangler/
+.local-update-lab/
 
 .env
 .env.*

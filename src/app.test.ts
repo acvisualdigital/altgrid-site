@@ -175,6 +175,46 @@ describe('chat scroll restoration', () => {
 })
 
 describe('update dialog', () => {
+  it('refreshes download progress and readiness before login', () => {
+    installBrowser('https://app.example.com/')
+    const root = createRoot()
+    const auth = createAuthServiceDouble()
+    const app = new AuthApp(root, auth.service)
+    const state = app as unknown as {
+      activeDialog: 'update'
+      applyUpdateState(next: {
+        status: 'downloaded'
+        supported: true
+        version: string
+      }): void
+      render(): void
+      updateState: {
+        status: 'available'
+        supported: true
+        version: string
+      }
+    }
+
+    state.activeDialog = 'update'
+    state.updateState = {
+      status: 'available',
+      supported: true,
+      version: '1.2.201',
+    }
+    state.render()
+    expect(root.innerHTML).toContain('data-download-update')
+
+    state.applyUpdateState({
+      status: 'downloaded',
+      supported: true,
+      version: '1.2.201',
+    })
+
+    expect(root.innerHTML).toContain('Atualização verificada e pronta')
+    expect(root.innerHTML).toContain('data-install-update')
+    expect(root.innerHTML).not.toContain('data-download-update')
+  })
+
   it('shows the real unsupported reason instead of claiming the app is current', () => {
     installBrowser('https://app.example.com/')
     const root = createRoot()

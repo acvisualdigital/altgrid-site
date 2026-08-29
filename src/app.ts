@@ -939,7 +939,10 @@ export class AuthApp {
       })
     }
 
-    if (!this.destroyed && this.currentView === 'authenticated') {
+    if (
+      !this.destroyed
+      && (this.currentView === 'authenticated' || this.activeDialog === 'update')
+    ) {
       this.render()
     }
   }

@@ -1,6 +1,5 @@
 import { existsSync } from 'node:fs'
-import { spawn } from 'node:child_process'
-import { basename, extname, join, resolve } from 'node:path'
+import { extname, join, resolve } from 'node:path'
 
 import { app, type BrowserWindow } from 'electron'
 import electronUpdater, { type UpdateInfo } from 'electron-updater'
@@ -14,69 +13,6 @@ const PERIODIC_CHECK_INTERVAL_MS = 30 * 60 * 1_000
 const RETRY_DELAYS_MS = [1_000, 3_000] as const
 const MAX_RELEASE_NOTES_LENGTH = 4_000
 const GITHUB_SEGMENT_PATTERN = /^[a-zA-Z0-9_.-]{1,100}$/
-
-function powershellString(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`
-}
-
-function launchInstallerAfterApplicationExit(installerPath: string): boolean {
-  if (process.platform !== 'win32') {
-    return false
-  }
-
-  const systemRoot = process.env.SystemRoot?.trim()
-  if (!systemRoot) {
-    return false
-  }
-
-  const powershellPath = join(
-    systemRoot,
-    'System32',
-    'WindowsPowerShell',
-    'v1.0',
-    'powershell.exe',
-  )
-  if (!existsSync(powershellPath)) {
-    return false
-  }
-
-  const executablePath = resolve(process.execPath)
-  const executableName = basename(executablePath, extname(executablePath))
-  const script = `
-$ErrorActionPreference = 'SilentlyContinue'
-$mainProcessId = ${process.pid}
-$altGridExecutable = ${powershellString(executablePath)}
-$installer = ${powershellString(installerPath)}
-Wait-Process -Id $mainProcessId -Timeout 12 -ErrorAction SilentlyContinue
-$remaining = Get-Process -Name ${powershellString(executableName)} -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $altGridExecutable }
-if ($remaining) {
-  $remaining | Stop-Process -Force -ErrorAction SilentlyContinue
-  Start-Sleep -Milliseconds 750
-}
-Start-Process -FilePath $installer -ArgumentList @('--updated', '/S', '--force-run') -WindowStyle Hidden
-`.trim()
-  const encodedCommand = Buffer.from(script, 'utf16le').toString('base64')
-
-  try {
-    const helper = spawn(powershellPath, [
-      '-NoLogo',
-      '-NoProfile',
-      '-NonInteractive',
-      '-WindowStyle',
-      'Hidden',
-      '-EncodedCommand',
-      encodedCommand,
-    ], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    })
-    helper.unref()
-    return true
-  } catch {
-    return false
-  }
-}
 
 function releaseNotesAsText(releaseNotes: UpdateInfo['releaseNotes']): string | undefined {
   if (!releaseNotes) {
@@ -317,19 +253,9 @@ export class UpdaterService {
     }
 
     try {
-      // The helper is not an AltGrid.exe process. It waits for the complete
-      // Electron process tree to exit, removes only residual processes from the
-      // same executable path, then launches the SHA-512-validated installer.
-      if (
-        this.downloadedInstallerPath
-        && launchInstallerAfterApplicationExit(this.downloadedInstallerPath)
-      ) {
-        app.quit()
-        return true
-      }
-
-      // Locked-down Windows environments can disable PowerShell. Keep the
-      // updater's native, verified installer path as a safe fallback.
+      // electron-updater owns the downloaded, SHA-512-validated package and
+      // launches it through its native Windows hand-off. The NSIS update hook
+      // then waits for Chromium handles to settle before replacing files.
       autoUpdater.quitAndInstall(true, true)
       return true
     } catch {

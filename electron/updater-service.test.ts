@@ -6,9 +6,6 @@ type UpdaterListener = (...args: unknown[]) => void
 const fsMocks = vi.hoisted(() => ({
   existsSync: vi.fn<(path: string) => boolean>(() => false),
 }))
-const childProcessMocks = vi.hoisted(() => ({
-  spawn: vi.fn(() => ({ unref: vi.fn() })),
-}))
 const electronMocks = vi.hoisted(() => ({
   app: {
     getVersion: vi.fn(() => '1.0.0'),
@@ -51,9 +48,6 @@ const updaterMocks = vi.hoisted(() => {
 vi.mock('node:fs', () => ({
   existsSync: fsMocks.existsSync,
 }))
-vi.mock('node:child_process', () => ({
-  spawn: childProcessMocks.spawn,
-}))
 vi.mock('electron', () => ({
   app: electronMocks.app,
 }))
@@ -94,7 +88,6 @@ describe('UpdaterService', () => {
     delete process.env.ALTGRID_UPDATE_REPO
     delete process.env.PORTABLE_EXECUTABLE_FILE
     fsMocks.existsSync.mockReset().mockReturnValue(false)
-    childProcessMocks.spawn.mockClear()
     updaterMocks.listeners.clear()
     updaterMocks.autoUpdater.autoDownload = true
     updaterMocks.autoUpdater.allowPrerelease = false
@@ -308,7 +301,7 @@ describe('UpdaterService', () => {
     service.stop()
   })
 
-  it('uses a detached Windows helper to wait for remaining processes before installation', async () => {
+  it('hands the verified installer to electron-updater for native installation', async () => {
     electronMocks.app.isPackaged = true
     process.env.ALTGRID_UPDATE_OWNER = 'altgrid'
     process.env.ALTGRID_UPDATE_REPO = 'desktop'
@@ -322,9 +315,8 @@ describe('UpdaterService', () => {
     updaterMocks.emit('update-downloaded', { version: '2.1.0' })
 
     expect(service.quitAndInstall()).toBe(true)
-    expect(childProcessMocks.spawn).toHaveBeenCalledOnce()
-    expect(electronMocks.app.quit).toHaveBeenCalledOnce()
-    expect(updaterMocks.autoUpdater.quitAndInstall).not.toHaveBeenCalled()
+    expect(updaterMocks.autoUpdater.quitAndInstall).toHaveBeenCalledWith(true, true)
+    expect(electronMocks.app.quit).not.toHaveBeenCalled()
 
     service.stop()
   })

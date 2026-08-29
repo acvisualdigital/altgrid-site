@@ -7,6 +7,8 @@ const packageManifest = JSON.parse(
 
 export default defineConfig(({ mode }) => {
   const environment = loadEnv(mode, '.', '')
+  const buildVersion = environment.ALTGRID_BUILD_VERSION?.trim()
+    || packageManifest.version
 
   return {
     base: mode === 'desktop' || mode === 'android' ? './' : '/',
@@ -14,7 +16,7 @@ export default defineConfig(({ mode }) => {
       __API_BASE_URL__: JSON.stringify(
         environment.ALTGRID_API_BASE_URL ?? environment.API_BASE_URL ?? '',
       ),
-      __APP_VERSION__: JSON.stringify(packageManifest.version),
+      __APP_VERSION__: JSON.stringify(buildVersion),
       __LICENSE_KEY_ID__: JSON.stringify(
         environment.LICENSE_KEY_ID ?? 'altgrid-license-v1',
       ),
