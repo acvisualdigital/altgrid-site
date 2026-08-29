@@ -24,6 +24,7 @@ function snapshot(
     muted: false,
     partition: `persist:${accountId}`,
     status: 'ready',
+    stonegyBotEnabled: false,
     url: 'https://game.example/',
     visible,
   }
@@ -56,6 +57,11 @@ function createSessionApi() {
     setFrameRate: vi.fn(async (accountId: string, fps: number) => ({
       ...snapshot(accountId, true),
       frameRate: fps,
+    })),
+    setInterfaceZoom: vi.fn(async (accountId: string) => snapshot(accountId, true)),
+    setStonegyBot: vi.fn(async (accountId: string, enabled: boolean) => ({
+      ...snapshot(accountId, true),
+      stonegyBotEnabled: enabled,
     })),
     setProxy: vi.fn(async (_accountId, input) => ({
       enabled: input.enabled,
@@ -168,6 +174,7 @@ describe('ElectronSessionLauncher', () => {
     await launcher.setMuted({ id: 'account-1' }, true)
     await expect(launcher.setEcoMode(true, 20)).resolves.toBe(true)
     await launcher.setFrameRate({ id: 'account-1' }, 45)
+    await launcher.setInterfaceScale({ id: 'account-1' }, 0.55)
     await launcher.clearData({ id: 'account-1' })
     await launcher.close({ id: 'account-1' })
 
@@ -175,12 +182,14 @@ describe('ElectronSessionLauncher', () => {
       'account-1',
       'https://game.example/',
       false,
+      false,
     )
     expect(harness.api.focusSession).toHaveBeenCalledWith('account-1')
     expect(harness.api.reloadSession).toHaveBeenCalledWith('account-1')
     expect(harness.api.muteSession).toHaveBeenCalledWith('account-1', true)
     expect(harness.api.setEcoMode).toHaveBeenCalledWith(true, 20)
     expect(harness.api.setFrameRate).toHaveBeenCalledWith('account-1', 45)
+    expect(harness.api.setInterfaceZoom).toHaveBeenCalledWith('account-1', 0.55)
     expect(harness.api.clearData).toHaveBeenCalledWith('account-1')
     expect(harness.api.closeSession).toHaveBeenCalledWith('account-1')
     await expect(launcher.open({ id: 'account-2' }, null)).rejects.toThrow(
@@ -210,6 +219,7 @@ describe('ElectronSessionLauncher', () => {
       'account-1',
       'https://game.example/',
       true,
+      false,
     )
   })
 

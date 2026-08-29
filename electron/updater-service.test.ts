@@ -6,6 +6,9 @@ type UpdaterListener = (...args: unknown[]) => void
 const fsMocks = vi.hoisted(() => ({
   existsSync: vi.fn<(path: string) => boolean>(() => false),
 }))
+const childProcessMocks = vi.hoisted(() => ({
+  spawn: vi.fn(() => ({ unref: vi.fn() })),
+}))
 const electronMocks = vi.hoisted(() => ({
   app: {
     getVersion: vi.fn(() => '1.0.0'),
@@ -21,6 +24,7 @@ const updaterMocks = vi.hoisted(() => {
     autoInstallOnAppQuit: true,
     checkForUpdates: vi.fn(async () => null),
     downloadUpdate: vi.fn(async () => [] as string[]),
+    disableDifferentialDownload: false,
     logger: {} as unknown,
     off: vi.fn((event: string, listener: UpdaterListener) => {
       listeners.get(event)?.delete(listener)
@@ -46,6 +50,9 @@ const updaterMocks = vi.hoisted(() => {
 
 vi.mock('node:fs', () => ({
   existsSync: fsMocks.existsSync,
+}))
+vi.mock('node:child_process', () => ({
+  spawn: childProcessMocks.spawn,
 }))
 vi.mock('electron', () => ({
   app: electronMocks.app,
@@ -87,10 +94,12 @@ describe('UpdaterService', () => {
     delete process.env.ALTGRID_UPDATE_REPO
     delete process.env.PORTABLE_EXECUTABLE_FILE
     fsMocks.existsSync.mockReset().mockReturnValue(false)
+    childProcessMocks.spawn.mockClear()
     updaterMocks.listeners.clear()
     updaterMocks.autoUpdater.autoDownload = true
     updaterMocks.autoUpdater.allowPrerelease = false
     updaterMocks.autoUpdater.autoInstallOnAppQuit = true
+    updaterMocks.autoUpdater.disableDifferentialDownload = false
     updaterMocks.autoUpdater.logger = {}
     updaterMocks.autoUpdater.checkForUpdates.mockReset().mockResolvedValue(null)
     updaterMocks.autoUpdater.downloadUpdate.mockReset().mockResolvedValue([])
@@ -146,8 +155,9 @@ describe('UpdaterService', () => {
     expect(updaterMocks.autoUpdater.checkForUpdates).not.toHaveBeenCalled()
     expect(updaterMocks.autoUpdater.downloadUpdate).not.toHaveBeenCalled()
     expect(updaterMocks.autoUpdater.quitAndInstall).not.toHaveBeenCalled()
-    expect(updaterMocks.autoUpdater.autoDownload).toBe(true)
-    expect(updaterMocks.autoUpdater.autoInstallOnAppQuit).toBe(true)
+    expect(updaterMocks.autoUpdater.autoDownload).toBe(false)
+    expect(updaterMocks.autoUpdater.autoInstallOnAppQuit).toBe(false)
+    expect(updaterMocks.autoUpdater.disableDifferentialDownload).toBe(true)
 
     service.stop()
   })
@@ -216,6 +226,9 @@ describe('UpdaterService', () => {
     process.env.ALTGRID_UPDATE_REPO = 'desktop'
     const { browserWindow, send } = createWindow()
     const service = new UpdaterService(browserWindow)
+    const installerPath = 'C:\\Updates\\AltGrid-Setup-2.1.0.exe'
+    updaterMocks.autoUpdater.downloadUpdate.mockResolvedValue([installerPath])
+    fsMocks.existsSync.mockImplementation((path) => path === installerPath)
     const listener = vi.fn()
     service.subscribe(listener)
 
@@ -255,13 +268,63 @@ describe('UpdaterService', () => {
       version: '2.1.0',
     })
     expect(service.quitAndInstall()).toBe(true)
-    expect(electronMocks.app.quit).toHaveBeenCalledOnce()
-    expect(updaterMocks.autoUpdater.quitAndInstall).not.toHaveBeenCalled()
+    expect(electronMocks.app.quit).not.toHaveBeenCalled()
+    expect(updaterMocks.autoUpdater.quitAndInstall).toHaveBeenCalledWith(true, true)
     expect(listener).toHaveBeenCalled()
     expect(send).toHaveBeenLastCalledWith(
       IPC_CHANNELS.updater.event,
       service.getState(),
     )
+
+    service.stop()
+  })
+
+  it('retries a full installer download without requiring repeated user clicks', async () => {
+    vi.useFakeTimers()
+    electronMocks.app.isPackaged = true
+    process.env.ALTGRID_UPDATE_OWNER = 'altgrid'
+    process.env.ALTGRID_UPDATE_REPO = 'desktop'
+    updaterMocks.autoUpdater.downloadUpdate
+      .mockRejectedValueOnce(new Error('temporary network failure'))
+      .mockRejectedValueOnce(new Error('temporary network failure'))
+      .mockResolvedValueOnce(['C:\\Updates\\AltGrid-Setup-2.1.0.exe'])
+    fsMocks.existsSync.mockImplementation((path) => (
+      path === 'C:\\Updates\\AltGrid-Setup-2.1.0.exe'
+    ))
+    const service = new UpdaterService(createWindow().browserWindow)
+
+    updaterMocks.emit('update-available', { version: '2.1.0' })
+    const download = service.downloadUpdate()
+    await vi.runAllTimersAsync()
+    await download
+
+    expect(updaterMocks.autoUpdater.downloadUpdate).toHaveBeenCalledTimes(3)
+    expect(updaterMocks.autoUpdater.disableDifferentialDownload).toBe(true)
+    expect(service.getState()).toMatchObject({
+      status: 'downloading',
+      version: '2.1.0',
+    })
+
+    service.stop()
+  })
+
+  it('uses a detached Windows helper to wait for remaining processes before installation', async () => {
+    electronMocks.app.isPackaged = true
+    process.env.ALTGRID_UPDATE_OWNER = 'altgrid'
+    process.env.ALTGRID_UPDATE_REPO = 'desktop'
+    const installerPath = 'C:\\Updates\\AltGrid-Setup-2.1.0.exe'
+    updaterMocks.autoUpdater.downloadUpdate.mockResolvedValue([installerPath])
+    fsMocks.existsSync.mockReturnValue(true)
+    const service = new UpdaterService(createWindow().browserWindow)
+
+    updaterMocks.emit('update-available', { version: '2.1.0' })
+    await service.downloadUpdate()
+    updaterMocks.emit('update-downloaded', { version: '2.1.0' })
+
+    expect(service.quitAndInstall()).toBe(true)
+    expect(childProcessMocks.spawn).toHaveBeenCalledOnce()
+    expect(electronMocks.app.quit).toHaveBeenCalledOnce()
+    expect(updaterMocks.autoUpdater.quitAndInstall).not.toHaveBeenCalled()
 
     service.stop()
   })

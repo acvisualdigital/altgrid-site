@@ -4,6 +4,7 @@ export interface ConfiguredAccount {
   gameSlug: string
   customLaunchUrl?: string
   createdAt: string
+  stonegyBotEnabled?: boolean
 }
 
 export interface AddConfiguredAccountInput {
@@ -56,6 +57,10 @@ function isConfiguredAccount(value: unknown): value is ConfiguredAccount {
     && (
       account.customLaunchUrl === undefined
       || typeof account.customLaunchUrl === 'string'
+    )
+    && (
+      account.stonegyBotEnabled === undefined
+      || typeof account.stonegyBotEnabled === 'boolean'
     )
     && typeof account.createdAt === 'string'
   )
@@ -128,6 +133,24 @@ export class ConfiguredAccountService {
     }
 
     const updated = { ...accounts[index]!, displayName: nextName }
+    accounts[index] = updated
+    this.write(this.keyFor(userId), JSON.stringify(accounts))
+    return { ...updated }
+  }
+
+  setStonegyBotEnabled(
+    userId: string,
+    accountId: string,
+    enabled: boolean,
+  ): ConfiguredAccount | null {
+    const accounts = this.list(userId)
+    const index = accounts.findIndex((account) => account.id === accountId)
+
+    if (index < 0) {
+      return null
+    }
+
+    const updated = { ...accounts[index]!, stonegyBotEnabled: enabled }
     accounts[index] = updated
     this.write(this.keyFor(userId), JSON.stringify(accounts))
     return { ...updated }

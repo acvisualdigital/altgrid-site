@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { spawn } from 'node:child_process'
+import { basename, extname, join, resolve } from 'node:path'
 
 import { app, type BrowserWindow } from 'electron'
 import electronUpdater, { type UpdateInfo } from 'electron-updater'
@@ -10,8 +11,72 @@ const { autoUpdater } = electronUpdater
 
 const STARTUP_CHECK_DELAY_MS = 5_000
 const PERIODIC_CHECK_INTERVAL_MS = 30 * 60 * 1_000
+const RETRY_DELAYS_MS = [1_000, 3_000] as const
 const MAX_RELEASE_NOTES_LENGTH = 4_000
 const GITHUB_SEGMENT_PATTERN = /^[a-zA-Z0-9_.-]{1,100}$/
+
+function powershellString(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`
+}
+
+function launchInstallerAfterApplicationExit(installerPath: string): boolean {
+  if (process.platform !== 'win32') {
+    return false
+  }
+
+  const systemRoot = process.env.SystemRoot?.trim()
+  if (!systemRoot) {
+    return false
+  }
+
+  const powershellPath = join(
+    systemRoot,
+    'System32',
+    'WindowsPowerShell',
+    'v1.0',
+    'powershell.exe',
+  )
+  if (!existsSync(powershellPath)) {
+    return false
+  }
+
+  const executablePath = resolve(process.execPath)
+  const executableName = basename(executablePath, extname(executablePath))
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$mainProcessId = ${process.pid}
+$altGridExecutable = ${powershellString(executablePath)}
+$installer = ${powershellString(installerPath)}
+Wait-Process -Id $mainProcessId -Timeout 12 -ErrorAction SilentlyContinue
+$remaining = Get-Process -Name ${powershellString(executableName)} -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $altGridExecutable }
+if ($remaining) {
+  $remaining | Stop-Process -Force -ErrorAction SilentlyContinue
+  Start-Sleep -Milliseconds 750
+}
+Start-Process -FilePath $installer -ArgumentList @('--updated', '/S', '--force-run') -WindowStyle Hidden
+`.trim()
+  const encodedCommand = Buffer.from(script, 'utf16le').toString('base64')
+
+  try {
+    const helper = spawn(powershellPath, [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-WindowStyle',
+      'Hidden',
+      '-EncodedCommand',
+      encodedCommand,
+    ], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    helper.unref()
+    return true
+  } catch {
+    return false
+  }
+}
 
 function releaseNotesAsText(releaseNotes: UpdateInfo['releaseNotes']): string | undefined {
   if (!releaseNotes) {
@@ -43,10 +108,13 @@ export class UpdaterService {
   private state: UpdateState
   private readonly supported: boolean
   private readonly portable: boolean
+  private operationInProgress = false
+  private downloadedInstallerPath: string | null = null
   private readonly handleCheckingForUpdate = (): void => {
     this.setState({ status: 'checking', supported: this.supported })
   }
   private readonly handleUpdateAvailable = (info: UpdateInfo): void => {
+    this.downloadedInstallerPath = null
     this.setState({
       releaseNotes: releaseNotesAsText(info.releaseNotes),
       status: 'available',
@@ -78,6 +146,13 @@ export class UpdaterService {
     })
   }
   private readonly handleError = (): void => {
+    // electron-updater also emits `error` before rejecting the active promise.
+    // Let the retry loop decide whether the operation actually failed instead
+    // of briefly replacing progress with a misleading "try again" state.
+    if (this.operationInProgress) {
+      return
+    }
+
     this.setState({
       message: 'Não foi possível verificar ou baixar a atualização.',
       status: 'error',
@@ -90,13 +165,19 @@ export class UpdaterService {
     this.supported = this.configureProvider()
     this.state = { status: 'idle', supported: this.supported }
 
-    autoUpdater.autoDownload = true
+    // Verification must never start a second, implicit download. The user starts
+    // one controlled transfer from the UI and that transfer owns its retries.
+    autoUpdater.autoDownload = false
     // Beta installations follow the prerelease channel until 1.0.0 is shipped.
     // Stable installations remain on stable releases only.
     autoUpdater.allowPrerelease = app.getVersion().includes('-')
-    // A downloaded NSIS update is applied on a normal app exit when the user
-    // chooses "Instalar depois". Active game sessions are not interrupted early.
-    autoUpdater.autoInstallOnAppQuit = true
+    // Differential updates are more sensitive to stale blockmaps and HTTP range
+    // failures. AltGrid deliberately downloads the complete, SHA-512-validated
+    // NSIS installer for a predictable Windows update path.
+    autoUpdater.disableDifferentialDownload = true
+    // Installation is explicit; a normal close must never unexpectedly replace
+    // the application or race the teardown of active game sessions.
+    autoUpdater.autoInstallOnAppQuit = false
     autoUpdater.logger = null
 
     autoUpdater.on('checking-for-update', this.handleCheckingForUpdate)
@@ -172,21 +253,30 @@ export class UpdaterService {
 
     this.setState({ status: 'checking', supported: true })
 
+    this.operationInProgress = true
     try {
-      await autoUpdater.checkForUpdates()
+      await this.withRetries(() => autoUpdater.checkForUpdates())
     } catch {
       this.setState({
-        message: 'Não foi possível verificar atualizações.',
+        message: 'Não foi possível verificar atualizações após tentativas automáticas. Confira a conexão e tente novamente mais tarde.',
         status: 'error',
         supported: true,
       })
+    } finally {
+      this.operationInProgress = false
     }
 
     return this.getState()
   }
 
   async downloadUpdate(): Promise<UpdateState> {
-    if (!this.supported || this.state.status !== 'available') {
+    if (
+      !this.supported
+      || (
+        this.state.status !== 'available'
+        && !(this.state.status === 'error' && Boolean(this.state.version))
+      )
+    ) {
       return this.getState()
     }
 
@@ -196,15 +286,26 @@ export class UpdaterService {
       version: this.state.version,
     })
 
+    this.operationInProgress = true
     try {
-      await autoUpdater.downloadUpdate()
+      const downloadedFiles = await this.withRetries(() => autoUpdater.downloadUpdate())
+      const installerPath = downloadedFiles.find((filePath) => (
+        extname(filePath).toLowerCase() === '.exe'
+        && existsSync(filePath)
+      ))
+      if (!installerPath) {
+        throw new Error('O instalador baixado não foi encontrado.')
+      }
+      this.downloadedInstallerPath = resolve(installerPath)
     } catch {
       this.setState({
-        message: 'Não foi possível baixar a atualização.',
+        message: 'O instalador completo não pôde ser baixado após tentativas automáticas. O AltGrid preservou o download anterior; tente novamente quando a conexão estiver estável.',
         status: 'error',
         supported: true,
         version: this.state.version,
       })
+    } finally {
+      this.operationInProgress = false
     }
 
     return this.getState()
@@ -215,12 +316,49 @@ export class UpdaterService {
       return false
     }
 
-    // autoInstallOnAppQuit applies the downloaded package after Electron has
-    // fully released its BrowserWindows, WebContents and session partitions.
-    // Starting NSIS directly here races those processes and can make the old
-    // uninstaller report that AltGrid is still open.
-    app.quit()
-    return true
+    try {
+      // The helper is not an AltGrid.exe process. It waits for the complete
+      // Electron process tree to exit, removes only residual processes from the
+      // same executable path, then launches the SHA-512-validated installer.
+      if (
+        this.downloadedInstallerPath
+        && launchInstallerAfterApplicationExit(this.downloadedInstallerPath)
+      ) {
+        app.quit()
+        return true
+      }
+
+      // Locked-down Windows environments can disable PowerShell. Keep the
+      // updater's native, verified installer path as a safe fallback.
+      autoUpdater.quitAndInstall(true, true)
+      return true
+    } catch {
+      this.setState({
+        message: 'O instalador foi baixado, mas o Windows não permitiu iniciá-lo. Feche o AltGrid e tente novamente.',
+        status: 'error',
+        supported: true,
+        version: this.state.version,
+      })
+      return false
+    }
+  }
+
+  private async withRetries<T>(operation: () => Promise<T>): Promise<T> {
+    let lastError: unknown
+
+    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+      try {
+        return await operation()
+      } catch (error) {
+        lastError = error
+        const delay = RETRY_DELAYS_MS[attempt]
+        if (delay !== undefined) {
+          await new Promise<void>((resolveRetry) => setTimeout(resolveRetry, delay))
+        }
+      }
+    }
+
+    throw lastError
   }
 
   private configureProvider(): boolean {

@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-import { SESSION_PRELOAD_CHANNELS } from './contracts.js'
+import {
+  SESSION_PRELOAD_CHANNELS,
+  STONEGY_BOT_WORLD_ID,
+} from './contracts.js'
 
 interface FrameBudgetState {
   callbacks: Map<number, (timestamp: number) => void>
@@ -17,6 +20,20 @@ type FrameBudgetGlobal = typeof globalThis & {
   cancelAnimationFrame?: (id: number) => void
   requestAnimationFrame?: (callback: (timestamp: number) => void) => number
 }
+
+contextBridge.exposeInIsolatedWorld(
+  STONEGY_BOT_WORLD_ID,
+  'altgridStoner',
+  Object.freeze({
+    sendDiscordWebhook: (webhook: unknown, payload: unknown) => (
+      ipcRenderer.invoke(
+        SESSION_PRELOAD_CHANNELS.stonegyDiscordWebhook,
+        webhook,
+        payload,
+      )
+    ),
+  }),
+)
 
 function applyFrameRateLimit(frameRate: number): void {
   contextBridge.executeInMainWorld({

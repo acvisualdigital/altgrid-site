@@ -7,6 +7,7 @@ import {
   passwordRecoveryRedirectUrl,
   renderPlanBadge,
   resolveChatScrollTop,
+  stonegyBotMenuLabel,
   type AccountSessionStatusEvent,
 } from './app'
 import {
@@ -115,6 +116,14 @@ describe('plan badges', () => {
   })
 })
 
+describe('AltGrid Bot account menu', () => {
+  it('reflects the saved bot state immediately', () => {
+    expect(stonegyBotMenuLabel(true, false)).toBe('Ativar AltGrid Bot')
+    expect(stonegyBotMenuLabel(true, true)).toBe('Desativar AltGrid Bot')
+    expect(stonegyBotMenuLabel(false, true)).toBe('AltGrid Bot · plano pago')
+  })
+})
+
 describe('chat scroll restoration', () => {
   const current = (
     scrollHeight: number,
@@ -191,6 +200,36 @@ describe('update dialog', () => {
 
     expect(root.innerHTML).toContain('A versão Portátil não pode se atualizar sozinha.')
     expect(root.innerHTML).not.toContain('Você já está usando a versão mais recente.')
+  })
+
+  it('retries a failed installer download without discarding the available version', () => {
+    installBrowser('https://app.example.com/')
+    const root = createRoot()
+    const auth = createAuthServiceDouble()
+    const app = new AuthApp(root, auth.service)
+    const state = app as unknown as {
+      activeDialog: 'update'
+      render(): void
+      updateState: {
+        message: string
+        status: 'error'
+        supported: true
+        version: string
+      }
+    }
+
+    state.activeDialog = 'update'
+    state.updateState = {
+      message: 'O instalador completo não pôde ser baixado.',
+      status: 'error',
+      supported: true,
+      version: '1.2.1',
+    }
+    state.render()
+
+    expect(root.innerHTML).toContain('data-download-update')
+    expect(root.innerHTML).toContain('Tentar baixar novamente')
+    expect(root.innerHTML).not.toContain('data-check-update')
   })
 })
 
@@ -1251,12 +1290,104 @@ describe('AuthApp session lifecycle', () => {
       game: null,
       kind: 'custom',
       launchUrl: 'https://custom.example.com/play',
+      stonegyBotEnabled: false,
     })
     expect(harness.resolveSessionLaunchTarget({
       ...customAccount,
       customLaunchUrl: 'javascript:alert(1)',
     })).toBeNull()
 
+  })
+
+  it('persists a per-account interface scale and offers automatic fit', async () => {
+    installBrowser('https://app.example.com/')
+    installLocalStorage()
+    const auth = createAuthServiceDouble()
+    const setInterfaceScale = vi.fn().mockResolvedValue(undefined)
+    const account: ConfiguredAccount = {
+      createdAt: '2026-08-25T12:00:00.000Z',
+      displayName: 'Conta HUD',
+      gameSlug: 'huntera',
+      id: 'account-hud',
+    }
+    const app = new AuthApp(createRoot(), auth.service, {
+      sessionLauncher: { setInterfaceScale },
+    })
+    const harness = app as unknown as {
+      renderSessionCard(account: ConfiguredAccount): string
+      sessionInterfaceScaleFor(accountId: string): number | null
+      updateSessionInterfaceScale(
+        account: ConfiguredAccount,
+        scale: number | null,
+        select: HTMLSelectElement,
+      ): Promise<void>
+    }
+    const select = {
+      disabled: false,
+      isConnected: true,
+      value: '55',
+    } as HTMLSelectElement
+
+    expect(harness.renderSessionCard(account)).toContain('Escala da interface')
+    await harness.updateSessionInterfaceScale(account, 0.55, select)
+
+    expect(setInterfaceScale).toHaveBeenCalledWith(account, 0.55)
+    expect(JSON.parse(localStorage.getItem('altgrid.preference.session-interface-scale.v1') ?? '{}'))
+      .toEqual({ 'account-hud': 0.55 })
+
+    const restored = new AuthApp(createRoot(), auth.service, {
+      sessionLauncher: { setInterfaceScale },
+    }) as unknown as { sessionInterfaceScaleFor(accountId: string): number | null }
+    expect(restored.sessionInterfaceScaleFor(account.id)).toBe(0.55)
+
+    await harness.updateSessionInterfaceScale(account, null, select)
+    expect(select.value).toBe('')
+  })
+
+  it('reopens a saved Stonegy account with its paid AltGrid Bot preference enabled', () => {
+    installBrowser('https://app.example.com/')
+    const auth = createAuthServiceDouble()
+    const permissions = new PermissionService({
+      account_limit: 5,
+      expires_at: null,
+      features: { stonegy_bot: true },
+      founder_number: null,
+      lifetime: false,
+      plan: 'PRO',
+    })
+    const app = new AuthApp(createRoot(), auth.service, {
+      permissionService: permissions,
+    })
+    const stonegy: PublicGame = {
+      developer_referral_url: null,
+      icon_url: null,
+      id: 'game-stonegy',
+      launch_url: 'https://stonegy-online.com/play',
+      metadata: {},
+      name: 'Stonegy',
+      slug: 'stonegy',
+      sort_order: 1,
+    }
+    const account: ConfiguredAccount = {
+      createdAt: '2026-08-29T00:00:00.000Z',
+      displayName: 'Stonegy salva',
+      gameSlug: 'stonegy',
+      id: 'stonegy-saved-account',
+      stonegyBotEnabled: true,
+    }
+    const harness = app as unknown as {
+      games: PublicGame[]
+      resolveSessionLaunchTarget(account: ConfiguredAccount): {
+        launchUrl: string
+        stonegyBotEnabled?: boolean
+      } | null
+    }
+    harness.games = [stonegy]
+
+    expect(harness.resolveSessionLaunchTarget(account)).toMatchObject({
+      launchUrl: 'https://stonegy-online.com/play',
+      stonegyBotEnabled: true,
+    })
   })
 
   it('renders Founder proxy controls without exposing the stored password', () => {

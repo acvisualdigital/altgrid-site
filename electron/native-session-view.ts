@@ -17,6 +17,14 @@ import type {
   NativeSessionView,
   NativeSessionViewFactory,
 } from './session-manager.js'
+import {
+  isStonegyUrl,
+  loadStonegyBotScripts,
+  STONEGY_BOT_RETRY_DELAYS_MS,
+  STONEGY_BOT_VERSION,
+  stonegyBotProbeScript,
+  stonegyBotWorldId,
+} from './stonegy-bot.js'
 import { isAllowedSessionUrl } from './url-policy.js'
 
 const hardenedSessions = new WeakSet<Session>()
@@ -82,7 +90,7 @@ export function createNativeSessionViewFactory(
   hostWindow: BrowserWindow,
   allowInsecureLoopback: boolean,
 ): NativeSessionViewFactory {
-  return ({ accountId, onEvent, partition }): NativeSessionView => {
+  return ({ accountId, onEvent, partition, stonegyBotEnabled: initialStonegyBotEnabled = false }): NativeSessionView => {
     const isolatedSession = session.fromPartition(partition, { cache: true })
 
     if (!hardenedSessions.has(isolatedSession)) {
@@ -101,7 +109,123 @@ export function createNativeSessionViewFactory(
     let parked = true
     let currentBounds = { height: 720, width: 1_280, x: 0, y: 0 }
     let proxyCredentials: Pick<SessionProxyConfig, 'password' | 'username'> | null = null
+    let stonegyBotEnabled = initialStonegyBotEnabled
+    let stonegyBotGeneration = 0
+    let stonegyBotQueue = Promise.resolve()
+    let stonegyBotReadyGeneration = -1
+    const stonegyBotTimers = new Set<ReturnType<typeof setTimeout>>()
     const popupWindows = new Set<BrowserWindow>()
+
+    const clearStonegyBotTimers = (): void => {
+      for (const timer of stonegyBotTimers) {
+        clearTimeout(timer)
+      }
+      stonegyBotTimers.clear()
+    }
+
+    const stonegyBotCanRun = (generation: number): boolean => (
+      generation === stonegyBotGeneration
+      && !destroyed
+      && stonegyBotEnabled
+      && !view.webContents.isDestroyed()
+      && isStonegyUrl(view.webContents.getURL())
+    )
+
+    const probeStonegyBot = async (generation: number): Promise<boolean> => {
+      if (!stonegyBotCanRun(generation)) {
+        return false
+      }
+      const result = await view.webContents.executeJavaScriptInIsolatedWorld(
+        stonegyBotWorldId(),
+        stonegyBotProbeScript(),
+      )
+      return result === true
+    }
+
+    const reportStonegyBotReady = (generation: number): void => {
+      if (!stonegyBotCanRun(generation) || stonegyBotReadyGeneration === generation) {
+        return
+      }
+      stonegyBotReadyGeneration = generation
+      clearStonegyBotTimers()
+      onEvent({
+        detail: `AltGrid Bot ${STONEGY_BOT_VERSION} ativo.`,
+        type: 'stonegy-bot-ready',
+      })
+    }
+
+    const injectStonegyBot = async (
+      generation: number,
+      attempt: number,
+    ): Promise<void> => {
+      if (
+        !stonegyBotCanRun(generation)
+        || stonegyBotReadyGeneration === generation
+      ) {
+        return
+      }
+
+      try {
+        if (await probeStonegyBot(generation)) {
+          reportStonegyBotReady(generation)
+          return
+        }
+
+        // Reexecute on selected attempts when a slow SPA transition discarded
+        // the first bootstrap before its controls reached the document.
+        if ([0, 2, 4, 6].includes(attempt)) {
+          await view.webContents.executeJavaScriptInIsolatedWorld(
+            stonegyBotWorldId(),
+            loadStonegyBotScripts(),
+          )
+        }
+
+        if (await probeStonegyBot(generation)) {
+          reportStonegyBotReady(generation)
+          return
+        }
+
+        if (attempt === STONEGY_BOT_RETRY_DELAYS_MS.length - 1) {
+          onEvent({
+            detail: 'AltGrid Bot não mostrou os controles após várias tentativas. Recarregue a conta.',
+            type: 'stonegy-bot-failed',
+          })
+        }
+      } catch (error) {
+        if (
+          stonegyBotCanRun(generation)
+          && attempt === STONEGY_BOT_RETRY_DELAYS_MS.length - 1
+        ) {
+          onEvent({
+            detail: error instanceof Error
+              ? `AltGrid Bot não iniciou: ${error.message}`
+              : 'AltGrid Bot não iniciou.',
+            type: 'stonegy-bot-failed',
+          })
+        }
+      }
+    }
+
+    const scheduleStonegyBotInjection = (): void => {
+      stonegyBotGeneration += 1
+      stonegyBotReadyGeneration = -1
+      clearStonegyBotTimers()
+      const generation = stonegyBotGeneration
+
+      if (!stonegyBotCanRun(generation)) {
+        return
+      }
+
+      STONEGY_BOT_RETRY_DELAYS_MS.forEach((delay, attempt) => {
+        const timer = setTimeout(() => {
+          stonegyBotTimers.delete(timer)
+          stonegyBotQueue = stonegyBotQueue
+            .then(() => injectStonegyBot(generation, attempt))
+            .catch(() => undefined)
+        }, delay)
+        stonegyBotTimers.add(timer)
+      })
+    }
 
     const handleProxyLogin = (
       event: Electron.Event,
@@ -223,6 +347,7 @@ export function createNativeSessionViewFactory(
       }
     })
     view.webContents.on('did-start-loading', () => onEvent({ type: 'loading' }))
+    view.webContents.on('dom-ready', scheduleStonegyBotInjection)
     view.webContents.on('focus', () => onEvent({ type: 'focused' }))
     view.webContents.on('did-finish-load', () => {
       applyFrameRateLimit()
@@ -233,6 +358,7 @@ export function createNativeSessionViewFactory(
     })
     view.webContents.on('did-navigate-in-page', (_event, url) => {
       onEvent({ type: 'navigated', url })
+      scheduleStonegyBotInjection()
     })
     view.webContents.on(
       'did-fail-load',
@@ -267,6 +393,8 @@ export function createNativeSessionViewFactory(
         }
 
         destroyed = true
+        stonegyBotGeneration += 1
+        clearStonegyBotTimers()
         view.setVisible(false)
 
         for (const popupWindow of popupWindows) {
@@ -284,7 +412,14 @@ export function createNativeSessionViewFactory(
         if (!view.webContents.isDestroyed()) {
           // Session storage lives in the persistent partition, so closing the
           // WebContents immediately does not discard the game's authenticated state.
+          view.webContents.stop()
           view.webContents.close({ waitForBeforeUnload: false })
+        }
+
+        if (force) {
+          // Abort keep-alive sockets owned by this account. Persistent cookies
+          // and storage remain intact, but network/audio helpers can terminate.
+          void isolatedSession.closeAllConnections().catch(() => undefined)
         }
       },
 
@@ -364,6 +499,16 @@ export function createNativeSessionViewFactory(
             }
           : { mode: 'direct' })
         await isolatedSession.closeAllConnections()
+      },
+
+      setStonegyBotEnabled(enabled): void {
+        if (destroyed || view.webContents.isDestroyed()) {
+          return
+        }
+        stonegyBotEnabled = enabled
+        stonegyBotGeneration += 1
+        clearStonegyBotTimers()
+        view.webContents.reload()
       },
 
       async testProxy(targetUrl): Promise<import('./contracts.js').SessionProxyTestResult> {

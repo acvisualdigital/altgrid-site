@@ -40,7 +40,14 @@ const electronMocks = vi.hoisted(() => {
     readonly handlers = new Map<string, EventHandler>()
     readonly webContents = {
       close: vi.fn(),
+      executeJavaScriptInIsolatedWorld: vi.fn(
+        async (
+          _worldId: number,
+          _scripts: Array<{ code?: string; url?: string }>,
+        ): Promise<unknown> => undefined,
+      ),
       focus: vi.fn(),
+      getURL: vi.fn(() => 'https://game.example/'),
       getOSProcessId: vi.fn(() => 42),
       isDestroyed: vi.fn(() => false),
       loadURL: vi.fn(async () => undefined),
@@ -340,6 +347,109 @@ describe('createNativeSessionViewFactory', () => {
     expect('setFrameRate' in view.webContents).toBe(false)
   })
 
+  it('injects the STONER bot only in the isolated world on official Stonegy pages', async () => {
+    const { hostWindow } = createHostWindow()
+    const onEvent = vi.fn()
+    const factory = createNativeSessionViewFactory(hostWindow, false)
+    factory({
+      accountId: 'account-stonegy',
+      onEvent,
+      partition: 'persist:altgrid-account-account-stonegy',
+      stonegyBotEnabled: true,
+    })
+    const view = electronMocks.views[0]!
+    view.webContents.getURL.mockReturnValue('https://stonegy-online.com/play')
+    let botInjected = false
+    view.webContents.executeJavaScriptInIsolatedWorld.mockImplementation(
+      async (_worldId: number, scripts: Array<{ url?: string }>) => {
+        if (scripts.some((script) => script.url === 'altgrid://stoner/stoner-bot.js')) {
+          botInjected = true
+          return undefined
+        }
+        return scripts.some((script) => script.url === 'altgrid://stoner/probe.js')
+          ? botInjected
+          : undefined
+      },
+    )
+
+    view.handlers.get('dom-ready')?.()
+    await vi.waitFor(() => {
+      expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'stonegy-bot-ready',
+      }))
+    })
+
+    expect(view.webContents.executeJavaScriptInIsolatedWorld)
+      .toHaveBeenCalledWith(10_007, expect.arrayContaining([
+        expect.objectContaining({ url: 'altgrid://stoner/stoner-bot.js' }),
+      ]))
+    expect(view.webContents.executeJavaScriptInIsolatedWorld)
+      .toHaveBeenCalledWith(10_007, [expect.objectContaining({
+        url: 'altgrid://stoner/probe.js',
+      })])
+  })
+
+  it('retries a saved STONER bot until its controls actually appear', async () => {
+    vi.useFakeTimers()
+    try {
+      const { hostWindow } = createHostWindow()
+      const onEvent = vi.fn()
+      const factory = createNativeSessionViewFactory(hostWindow, false)
+      factory({
+        accountId: 'account-stonegy-reopen',
+        onEvent,
+        partition: 'persist:altgrid-account-account-stonegy-reopen',
+        stonegyBotEnabled: true,
+      })
+      const view = electronMocks.views[0]!
+      view.webContents.getURL.mockReturnValue('https://stonegy-online.com/play')
+      let injectionCount = 0
+      view.webContents.executeJavaScriptInIsolatedWorld.mockImplementation(
+        async (_worldId: number, scripts: Array<{ url?: string }>) => {
+          if (scripts.some((script) => script.url === 'altgrid://stoner/stoner-bot.js')) {
+            injectionCount += 1
+            return undefined
+          }
+          return scripts.some((script) => script.url === 'altgrid://stoner/probe.js')
+            ? injectionCount >= 2
+            : undefined
+        },
+      )
+
+      view.handlers.get('dom-ready')?.()
+      await vi.advanceTimersByTimeAsync(1_500)
+
+      expect(injectionCount).toBe(2)
+      expect(onEvent).toHaveBeenCalledTimes(1)
+      expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'stonegy-bot-ready',
+      }))
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('never injects the STONER bot on deceptive or unrelated hosts', async () => {
+    const { hostWindow } = createHostWindow()
+    const factory = createNativeSessionViewFactory(hostWindow, false)
+    factory({
+      accountId: 'account-fake-stonegy',
+      onEvent: vi.fn(),
+      partition: 'persist:altgrid-account-account-fake-stonegy',
+      stonegyBotEnabled: true,
+    })
+    const view = electronMocks.views[0]!
+    view.webContents.getURL.mockReturnValue(
+      'https://stonegy-online.com.evil.example/play',
+    )
+
+    view.handlers.get('dom-ready')?.()
+    await Promise.resolve()
+
+    expect(view.webContents.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+  })
+
   it('reports focus from the native game surface', () => {
     const { hostWindow } = createHostWindow()
     const onEvent = vi.fn()
@@ -437,7 +547,8 @@ describe('createNativeSessionViewFactory', () => {
     expect(addChildView).toHaveBeenCalledOnce()
     expect(removeChildView).toHaveBeenCalledOnce()
     expect(view.webContents.focus).toHaveBeenCalledOnce()
-    expect(view.webContents.stop).toHaveBeenCalledOnce()
+    // One explicit stop plus the defensive stop performed during destruction.
+    expect(view.webContents.stop).toHaveBeenCalledTimes(2)
     expect(view.webContents.close).toHaveBeenCalledOnce()
     expect(view.webContents.close).toHaveBeenCalledWith({
       waitForBeforeUnload: false,

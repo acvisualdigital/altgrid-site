@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.2.2
+
+### Windows
+
+- Integra o AltGrid Bot diretamente nas contas do Stonegy, sem instalação manual de extensão.
+- Libera o recurso para os planos PRO, PLUS e FOUNDER, mantendo o FREE sem automação.
+- Permite ativar ou desativar o bot individualmente pelo menu de cada conta e preserva a preferência local.
+- Corrige o estado visual do botão de ativação, que podia continuar mostrando a ação anterior em uma conta aberta.
+- Ignora a Venda Rápida no primeiro ciclo iniciado na cidade e preserva a preferência permanente de venda automática.
+- Recupera automaticamente o fluxo que parar na seleção, reaplicando a hunt e confirmando sua entrada.
+- Substitui o nome e a imagem herdados da extensão pela identidade do AltGrid Bot.
+- Substitui o atualizador diferencial do Windows pelo download controlado do instalador completo, com verificação de integridade e novas tentativas automáticas.
+- Impede downloads duplicados durante a verificação e inicia a instalação explicitamente após encerrar as sessões do AltGrid.
+- Adiciona escala de interface independente por conta, de 50% a 100% ou automática, para exibir mais itens do HUD em grades com várias telas.
+- Encerra conexões e processos auxiliares remanescentes antes de instalar a atualização, evitando arquivos antigos bloqueados pelo Windows.
+- Exibe corretamente o plano PLUS nos controles de plano temporário e vitalício do painel administrativo.
+- Executa o bot em um mundo isolado e somente em páginas HTTPS do domínio oficial do Stonegy.
+- Restringe o envio de webhooks aos endpoints HTTPS oficiais do Discord e limita o tamanho dos dados enviados.
+- Mantém Android inalterado nesta atualização.
+
 ## 1.2.0
 
 ### Windows

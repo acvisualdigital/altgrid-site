@@ -195,4 +195,31 @@ describe('ConfiguredAccountService', () => {
       id: 'legacy-account',
     }])
   })
+
+  it('persists the AltGrid Bot preference only on the requested account', () => {
+    const storage = new MemoryStorage()
+    let nextId = 0
+    const service = new ConfiguredAccountService({
+      createId: () => 'account-' + ++nextId,
+      storage,
+    })
+    const first = service.add('user-a', {
+      displayName: 'Stonegy 1',
+      gameSlug: 'stonegy',
+    })
+    const second = service.add('user-a', {
+      displayName: 'Stonegy 2',
+      gameSlug: 'stonegy',
+    })
+
+    expect(service.setStonegyBotEnabled('user-a', first.id, true))
+      .toMatchObject({ id: first.id, stonegyBotEnabled: true })
+    expect(service.list('user-a')).toEqual([
+      { ...first, stonegyBotEnabled: true },
+      second,
+    ])
+    expect(new ConfiguredAccountService({ storage }).list('user-a')[0])
+      .toMatchObject({ id: first.id, stonegyBotEnabled: true })
+    expect(service.setStonegyBotEnabled('user-a', 'missing', true)).toBeNull()
+  })
 })

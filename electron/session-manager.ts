@@ -17,6 +17,8 @@ const DEFAULT_LOAD_TIMEOUT_MS = 30_000
 // gives their layout more effective CSS space so buttons/bars stop clipping.
 const AUTO_FIT_REFERENCE_WIDTH = 960
 const AUTO_FIT_MIN_ZOOM = 0.67
+const MIN_INTERFACE_ZOOM = 0.5
+const MAX_INTERFACE_ZOOM = 1
 const MAX_FRAME_RATE = 240
 const DEFAULT_ECO_SECONDARY_FRAME_RATE = 20
 const MIN_ECO_SECONDARY_FRAME_RATE = 10
@@ -37,6 +39,21 @@ function normalizeFrameRate(input: unknown): number {
 
   // 0 means unlimited/auto; anything else is clamped to a sane, positive range.
   return Math.min(Math.max(Math.round(input), 0), MAX_FRAME_RATE)
+}
+
+function normalizeInterfaceZoom(input: unknown): number | null {
+  if (input === null || input === undefined || input === 0) {
+    return null
+  }
+  if (typeof input !== 'number' || !Number.isFinite(input)) {
+    throw new TypeError('A escala da interface é inválida.')
+  }
+
+  const normalized = Math.round(input * 100) / 100
+  if (normalized < MIN_INTERFACE_ZOOM || normalized > MAX_INTERFACE_ZOOM) {
+    throw new RangeError('A escala da interface deve ficar entre 50% e 100%.')
+  }
+  return normalized
 }
 
 function normalizeEcoSecondaryFrameRate(input: unknown): number {
@@ -60,7 +77,15 @@ const DEFAULT_SESSION_BOUNDS: SessionBounds = {
 
 export type NativeSessionEvent =
   | { type: 'escape' | 'focused' | 'loading' | 'ready' }
-  | { type: 'crashed' | 'load-failed' | 'popup-blocked'; detail?: string }
+  | {
+      type:
+        | 'crashed'
+        | 'load-failed'
+        | 'popup-blocked'
+        | 'stonegy-bot-failed'
+        | 'stonegy-bot-ready'
+      detail?: string
+    }
   | { type: 'navigated'; url: string }
 
 export interface NativeSessionView {
@@ -76,6 +101,7 @@ export interface NativeSessionView {
   setFrameRateLimit(fps: number): void
   setMuted(muted: boolean): void
   setProxy(config: SessionProxyConfig | null): Promise<void>
+  setStonegyBotEnabled(enabled: boolean): void
   testProxy(targetUrl: string): Promise<SessionProxyTestResult>
   setVisible(visible: boolean): void
   setZoomFactor(factor: number): void
@@ -85,6 +111,7 @@ export interface NativeSessionViewContext {
   accountId: string
   onEvent(event: NativeSessionEvent): void
   partition: string
+  stonegyBotEnabled?: boolean
 }
 
 export type NativeSessionViewFactory = (
@@ -103,8 +130,10 @@ interface SessionRecord {
   bounds: SessionBounds
   frameRate: number
   muted: boolean
+  interfaceZoom: number | null
   partition: string
   status: SessionStatus
+  stonegyBotEnabled: boolean
   url: string
   view: NativeSessionView
   visible: boolean
@@ -184,6 +213,7 @@ function snapshot(record: SessionRecord): SessionSnapshot {
     muted: record.muted,
     partition: record.partition,
     status: record.status,
+    stonegyBotEnabled: record.stonegyBotEnabled,
     url: record.url,
     visible: record.visible,
   }
@@ -219,11 +249,19 @@ export class SessionManager {
     accountId: unknown,
     inputUrl: unknown,
     proxyConfig: SessionProxyConfig | null = null,
+    stonegyBotEnabled: unknown = false,
   ): Promise<SessionSnapshot> {
     const normalizedId = normalizeAccountId(accountId)
+    if (typeof stonegyBotEnabled !== 'boolean') {
+      throw new TypeError('O estado do AltGrid Bot deve ser booleano.')
+    }
     const existing = this.records.get(normalizedId)
 
     if (existing) {
+      if (existing.stonegyBotEnabled !== stonegyBotEnabled) {
+        existing.stonegyBotEnabled = stonegyBotEnabled
+        existing.view.setStonegyBotEnabled(stonegyBotEnabled)
+      }
       return snapshot(existing)
     }
 
@@ -233,6 +271,7 @@ export class SessionManager {
     const view = this.createView({
       accountId: normalizedId,
       partition,
+      stonegyBotEnabled,
       onEvent: (event) => this.handleNativeEvent(normalizedId, event),
     })
 
@@ -240,9 +279,11 @@ export class SessionManager {
       accountId: normalizedId,
       bounds: { ...DEFAULT_SESSION_BOUNDS },
       frameRate: 0,
+      interfaceZoom: null,
       muted: false,
       partition,
       status: 'loading' satisfies SessionStatus,
+      stonegyBotEnabled,
       url,
       view,
       visible: false,
@@ -257,7 +298,7 @@ export class SessionManager {
       await view.setProxy(proxyConfig?.enabled ? proxyConfig : null)
       view.attach()
       view.setBounds(record.bounds)
-      view.setZoomFactor(computeAutoFitZoom(record.bounds.width))
+      view.setZoomFactor(this.effectiveInterfaceZoom(record))
       view.setVisible(false)
     } catch {
       this.records.delete(normalizedId)
@@ -342,7 +383,7 @@ export class SessionManager {
 
     record.bounds = bounds
     record.view.setBounds(bounds)
-    record.view.setZoomFactor(computeAutoFitZoom(bounds.width))
+    record.view.setZoomFactor(this.effectiveInterfaceZoom(record))
     return snapshot(record)
   }
 
@@ -434,6 +475,36 @@ export class SessionManager {
 
     record.view.setFrameRateLimit(this.effectiveFrameRate(record, fps))
     record.frameRate = fps
+    return snapshot(record)
+  }
+
+  setInterfaceZoom(accountId: unknown, inputZoom: unknown): SessionSnapshot {
+    const record = this.requireRecord(accountId)
+    const zoom = normalizeInterfaceZoom(inputZoom)
+
+    if (record.interfaceZoom === zoom) {
+      return snapshot(record)
+    }
+
+    record.interfaceZoom = zoom
+    record.view.setZoomFactor(this.effectiveInterfaceZoom(record))
+    return snapshot(record)
+  }
+
+  setStonegyBot(accountId: unknown, enabled: unknown): SessionSnapshot {
+    if (typeof enabled !== 'boolean') {
+      throw new TypeError('O estado do AltGrid Bot deve ser booleano.')
+    }
+
+    const record = this.requireRecord(accountId)
+    if (record.stonegyBotEnabled === enabled) {
+      return snapshot(record)
+    }
+
+    record.stonegyBotEnabled = enabled
+    record.status = 'loading'
+    record.view.setStonegyBotEnabled(enabled)
+    this.emit({ accountId: record.accountId, session: snapshot(record), type: 'loading' })
     return snapshot(record)
   }
 
@@ -639,6 +710,10 @@ export class SessionManager {
     return desiredFrameRate === 0
       ? ecoSecondaryFrameRate
       : Math.min(desiredFrameRate, ecoSecondaryFrameRate)
+  }
+
+  private effectiveInterfaceZoom(record: SessionRecord): number {
+    return record.interfaceZoom ?? computeAutoFitZoom(record.bounds.width)
   }
 
   private updateFocusedAccount(accountId: string | null): void {

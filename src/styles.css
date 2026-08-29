@@ -2109,7 +2109,8 @@ form {
   font-size: 9px;
 }
 
-.menu-item--field input {
+.menu-item--field input,
+.menu-item--field select {
   width: 58px;
   min-height: 28px;
   padding: 4px 6px;
@@ -2121,7 +2122,13 @@ form {
   text-align: right;
 }
 
-.menu-item--field input:focus-visible {
+.menu-item--field select {
+  width: 82px;
+  text-align: left;
+}
+
+.menu-item--field input:focus-visible,
+.menu-item--field select:focus-visible {
   outline: 1px solid var(--green);
   border-color: var(--green-dark);
 }

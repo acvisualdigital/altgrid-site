@@ -733,8 +733,10 @@ export class AdminApp {
   }
 
   private renderPlanOptions(selected: PlanCode, includeFree: boolean): string {
-    return (includeFree ? ['FREE', 'PRO', 'FOUNDER'] : ['PRO', 'FOUNDER'])
-      .map((plan) => `<option value="${plan}" ${plan === selected ? 'selected' : ''}>${plan}</option>`)
+    return (includeFree
+      ? ['FREE', 'PRO', 'PRO_PLUS', 'FOUNDER']
+      : ['PRO', 'PRO_PLUS', 'FOUNDER'])
+      .map((plan) => `<option value="${plan}" ${plan === selected ? 'selected' : ''}>${plan === 'PRO_PLUS' ? 'PLUS' : plan}</option>`)
       .join('')
   }
 

@@ -107,6 +107,28 @@ type WorkspaceMode = 'account' | 'grid'
 const CHAT_GAME_SELECTION_STORAGE_KEY = 'altgrid.chat.visible-game-channels.v1'
 const CHAT_BOTTOM_THRESHOLD_PX = 48
 const RMT_DISCORD_URL = 'https://discord.gg/jqbWgSPVe'
+const STONEGY_BOT_FEATURE = 'stonegy_bot'
+
+export function isStonegyLaunchUrl(input: unknown): boolean {
+  if (typeof input !== 'string') {
+    return false
+  }
+
+  try {
+    const url = new URL(input)
+    return url.protocol === 'https:' && (
+      url.hostname === 'stonegy-online.com'
+      || url.hostname.endsWith('.stonegy-online.com')
+    )
+  } catch {
+    return false
+  }
+}
+
+export function stonegyBotMenuLabel(entitled: boolean, enabled: boolean): string {
+  if (!entitled) return 'AltGrid Bot · plano pago'
+  return enabled ? 'Desativar AltGrid Bot' : 'Ativar AltGrid Bot'
+}
 
 export interface ChatScrollSnapshot {
   channelId: string
@@ -189,8 +211,13 @@ export interface AccountSessionLauncher {
   removeProxy?(account: ConfiguredAccount): Promise<boolean>
   setEcoMode(enabled: boolean, backgroundFps: EcoBackgroundFps): Promise<boolean> | boolean
   setFrameRate(account: ConfiguredAccount, fps: number): Promise<void> | void
+  setInterfaceScale?(
+    account: ConfiguredAccount,
+    scale: number | null,
+  ): Promise<void> | void
   setFullscreen?(enabled: boolean): Promise<void> | void
   setMuted(account: ConfiguredAccount, muted: boolean): Promise<void> | void
+  setStonegyBot?(account: ConfiguredAccount, enabled: boolean): Promise<void> | void
   setProxy?(
     account: ConfiguredAccount,
     input: SessionProxyInput,
@@ -201,7 +228,15 @@ export interface AccountSessionLauncher {
 export interface AccountSessionStatusEvent {
   accountId: string
   detail?: string
-  type: 'closed' | 'crashed' | 'focused' | 'load-failed' | 'loading' | 'ready'
+  type:
+    | 'closed'
+    | 'crashed'
+    | 'focused'
+    | 'load-failed'
+    | 'loading'
+    | 'ready'
+    | 'stonegy-bot-failed'
+    | 'stonegy-bot-ready'
 }
 
 export interface AccountSessionLaunchTarget {
@@ -209,6 +244,7 @@ export interface AccountSessionLaunchTarget {
   kind: 'custom' | 'preset'
   launchUrl: string
   game: PublicGame | null
+  stonegyBotEnabled?: boolean
 }
 
 export interface AuthAppOptions {
@@ -254,6 +290,7 @@ const APP_VERSION = __APP_VERSION__
 const ECO_MODE_STORAGE_KEY = 'altgrid.preference.eco-mode.v1'
 const ECO_BACKGROUND_FPS_STORAGE_KEY = 'altgrid.preference.eco-background-fps.v1'
 const SESSION_FPS_STORAGE_KEY = 'altgrid.preference.session-fps.v1'
+const SESSION_INTERFACE_SCALE_STORAGE_KEY = 'altgrid.preference.session-interface-scale.v1'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'altgrid.preference.sidebar-collapsed.v1'
 const REFERRAL_CODE_STORAGE_KEY = 'altgrid.referral-code.v1'
 
@@ -568,6 +605,7 @@ export class AuthApp {
   private readonly mobileSessionMode: boolean
   private readonly ecoModeSupported: boolean
   private readonly frameRateControlSupported: boolean
+  private readonly interfaceScaleControlSupported: boolean
   private readonly updater: AppUpdater | null
   private readonly gridLayoutService: GridLayoutService
   private activeDialog: ActiveDialog = null
@@ -637,6 +675,7 @@ export class AuthApp {
   private readonly sessionIssues = new Map<string, string>()
   private readonly mutedAccountIds = new Set<string>()
   private readonly sessionFrameRates = new Map<string, number>()
+  private readonly sessionInterfaceScales = new Map<string, number>()
   private sessionSurfaceManager: SessionSurfaceManager | null = null
   private focusedAccountId: string | null = null
   private dialogReturnFocus:
@@ -670,10 +709,15 @@ export class AuthApp {
       && typeof sessionLauncher?.setEcoMode === 'function'
     this.frameRateControlSupported = !this.mobileSessionMode
       && typeof sessionLauncher?.setFrameRate === 'function'
+    this.interfaceScaleControlSupported = !this.mobileSessionMode
+      && typeof sessionLauncher?.setInterfaceScale === 'function'
     this.ecoModeRequested = this.readEcoModePreference()
     this.ecoBackgroundFps = this.readEcoBackgroundFpsPreference()
     this.readSessionFrameRatePreferences().forEach((fps, accountId) => {
       this.sessionFrameRates.set(accountId, fps)
+    })
+    this.readSessionInterfaceScalePreferences().forEach((scale, accountId) => {
+      this.sessionInterfaceScales.set(accountId, scale)
     })
     try {
       this.sidebarCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true'
@@ -711,8 +755,14 @@ export class AuthApp {
         sessionLauncher?.setEcoMode?.(enabled, backgroundFps) ?? false
       ),
       setFrameRate: (account, fps) => sessionLauncher?.setFrameRate?.(account, fps),
+      setInterfaceScale: sessionLauncher?.setInterfaceScale
+        ? (account, scale) => sessionLauncher.setInterfaceScale!(account, scale)
+        : undefined,
       setFullscreen: (enabled) => sessionLauncher?.setFullscreen?.(enabled),
       setMuted: (account, muted) => sessionLauncher?.setMuted?.(account, muted),
+      setStonegyBot: sessionLauncher?.setStonegyBot
+        ? (account, enabled) => sessionLauncher.setStonegyBot!(account, enabled)
+        : undefined,
       setProxy: sessionLauncher?.setProxy
         ? (account, input) => sessionLauncher.setProxy!(account, input)
         : undefined,
@@ -1029,6 +1079,16 @@ export class AuthApp {
           }
         }
       }
+      return
+    }
+
+    if (event.type === 'stonegy-bot-failed') {
+      this.showSessionAlert(event.detail ?? 'Não foi possível iniciar o AltGrid Bot.')
+      return
+    }
+
+    if (event.type === 'stonegy-bot-ready') {
+      this.showSessionAlert(event.detail ?? 'AltGrid Bot ativo nesta conta.')
       return
     }
 
@@ -2680,6 +2740,43 @@ export class AuthApp {
     return this.sessionFrameRates.get(accountId) ?? 0
   }
 
+  private readSessionInterfaceScalePreferences(): Map<string, number> {
+    try {
+      const parsed = JSON.parse(
+        localStorage.getItem(SESSION_INTERFACE_SCALE_STORAGE_KEY) ?? '{}',
+      ) as unknown
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return new Map()
+      }
+
+      return new Map(Object.entries(parsed).flatMap(([accountId, value]) => (
+        typeof value === 'number'
+          && Number.isFinite(value)
+          && value >= 0.5
+          && value <= 1
+          ? [[accountId, Math.round(value * 100) / 100] as const]
+          : []
+      )))
+    } catch {
+      return new Map()
+    }
+  }
+
+  private storeSessionInterfaceScalePreferences(): void {
+    try {
+      localStorage.setItem(
+        SESSION_INTERFACE_SCALE_STORAGE_KEY,
+        JSON.stringify(Object.fromEntries(this.sessionInterfaceScales)),
+      )
+    } catch {
+      // Native zoom remains usable for the current run.
+    }
+  }
+
+  private sessionInterfaceScaleFor(accountId: string): number | null {
+    return this.sessionInterfaceScales.get(accountId) ?? null
+  }
+
   private syncEcoMode(): Promise<void> {
     const target = this.ecoModeSupported
       && this.ecoModeRequested
@@ -2776,6 +2873,34 @@ export class AuthApp {
     } finally {
       if (input.isConnected) {
         input.disabled = false
+      }
+    }
+  }
+
+  private async updateSessionInterfaceScale(
+    account: ConfiguredAccount,
+    scale: number | null,
+    select: HTMLSelectElement,
+  ): Promise<void> {
+    const previous = this.sessionInterfaceScaleFor(account.id)
+    select.disabled = true
+
+    try {
+      await this.sessionLauncher.setInterfaceScale?.(account, scale)
+      if (scale === null) {
+        this.sessionInterfaceScales.delete(account.id)
+      } else {
+        this.sessionInterfaceScales.set(account.id, scale)
+      }
+      this.storeSessionInterfaceScalePreferences()
+      select.value = scale === null ? '' : String(Math.round(scale * 100))
+      this.showSessionAlert('')
+    } catch {
+      select.value = previous === null ? '' : String(Math.round(previous * 100))
+      this.showSessionAlert('Não foi possível alterar a escala desta conta.')
+    } finally {
+      if (select.isConnected) {
+        select.disabled = false
       }
     }
   }
@@ -3124,6 +3249,7 @@ export class AuthApp {
   private renderSessionCard(account: ConfiguredAccount): string {
     const muted = this.mutedAccountIds.has(account.id)
     const frameRate = this.sessionFrameRateFor(account.id)
+    const interfaceScale = this.sessionInterfaceScaleFor(account.id)
     const mobileFullscreen = this.mobileSessionMode
       && this.screensOnly
       && this.maximizedAccountId === account.id
@@ -3142,10 +3268,18 @@ export class AuthApp {
               <button class="menu-item" data-reload-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Recarregar</button>
               <button class="menu-item" data-maximize-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">${this.mobileSessionMode ? (mobileFullscreen ? 'Sair da tela cheia' : 'Tela cheia · zoom automático') : 'Maximizar'}</button>
               <button class="menu-item" data-toggle-session-mute data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">${muted ? 'Ativar som' : 'Silenciar'}</button>
+              ${this.renderStonegyBotMenuItem(account)}
               ${this.proxyControlAvailable() ? `<button class="menu-item" data-proxy-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Proxy exclusivo</button>` : ''}
               ${this.frameRateControlSupported ? `<label class="menu-item menu-item--field">
                 <span>FPS desta conta<small>0 ou vazio = Auto</small></span>
                 <input data-session-frame-rate data-account-id="${escapeHtml(account.id)}" type="number" inputmode="numeric" min="0" max="240" step="1" value="${frameRate === 0 ? '' : frameRate}" placeholder="Auto" aria-label="FPS de ${escapeHtml(account.displayName)}" />
+              </label>` : ''}
+              ${this.interfaceScaleControlSupported ? `<label class="menu-item menu-item--field">
+                <span>Escala da interface<small>Menor mostra mais itens do HUD</small></span>
+                <select data-session-interface-scale data-account-id="${escapeHtml(account.id)}" aria-label="Escala da interface de ${escapeHtml(account.displayName)}">
+                  <option value="" ${interfaceScale === null ? 'selected' : ''}>Automático</option>
+                  ${[50, 55, 60, 67, 75, 80, 90, 100].map((percent) => `<option value="${percent}" ${interfaceScale === percent / 100 ? 'selected' : ''}>${percent}%</option>`).join('')}
+                </select>
               </label>` : ''}
               <button class="menu-item" data-close-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Fechar</button>
               <button class="menu-item menu-item--danger" data-clear-session-data data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Limpar dados</button>
@@ -3184,6 +3318,7 @@ export class AuthApp {
                 <summary aria-label="Opções de ${escapeHtml(account.displayName)}">⋯</summary>
                 <div class="menu-popover menu-popover--up" role="menu">
                   <button class="menu-item" data-rename-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Renomear</button>
+                  ${this.renderStonegyBotMenuItem(account)}
                   ${this.proxyControlAvailable() ? `<button class="menu-item" data-proxy-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Proxy exclusivo</button>` : ''}
                   <button class="menu-item menu-item--danger" data-clear-session-data data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Limpar dados</button>
                   <button class="menu-item menu-item--danger" data-delete-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Excluir configuração</button>
@@ -3286,7 +3421,9 @@ export class AuthApp {
         const game = card.querySelector<HTMLElement>('[data-session-game]')
         const surface = card.querySelector<HTMLElement>('[data-session-surface-id]')
         const muteButton = card.querySelector<HTMLButtonElement>('[data-toggle-session-mute]')
+        const stonegyBotButton = card.querySelector<HTMLButtonElement>('[data-stonegy-bot-account]')
         const frameRateInput = card.querySelector<HTMLInputElement>('[data-session-frame-rate]')
+        const interfaceScaleSelect = card.querySelector<HTMLSelectElement>('[data-session-interface-scale]')
 
         if (name) {
           name.textContent = account.displayName
@@ -3309,9 +3446,21 @@ export class AuthApp {
             ? 'Ativar som'
             : 'Silenciar'
         }
+        if (stonegyBotButton) {
+          stonegyBotButton.textContent = stonegyBotMenuLabel(
+            this.permissionService.canUseFeature(STONEGY_BOT_FEATURE),
+            account.stonegyBotEnabled === true,
+          )
+        }
         if (frameRateInput && document.activeElement !== frameRateInput) {
           const frameRate = this.sessionFrameRateFor(account.id)
           frameRateInput.value = frameRate === 0 ? '' : String(frameRate)
+        }
+        if (interfaceScaleSelect && document.activeElement !== interfaceScaleSelect) {
+          const interfaceScale = this.sessionInterfaceScaleFor(account.id)
+          interfaceScaleSelect.value = interfaceScale === null
+            ? ''
+            : String(Math.round(interfaceScale * 100))
         }
         const menuTrigger = card.querySelector<HTMLElement>('.session-menu__trigger')
         menuTrigger?.setAttribute('aria-label', `Opções de ${account.displayName}`)
@@ -4010,13 +4159,13 @@ export class AuthApp {
         content = '<p class="update-state"><i class="spinner spinner--green"></i> Verificando atualizações…</p>'
         actions = ''
       } else if (state.status === 'available') {
-        content = `<div class="update-summary"><strong>Nova versão disponível</strong><span>${version}</span>${notes ? `<ul>${notes}</ul>` : ''}</div>`
-        actions = '<button class="button button--primary" data-download-update type="button">Atualizar</button>'
+        content = `<div class="update-summary"><strong>Nova versão disponível</strong><span>${version}</span>${notes ? `<ul>${notes}</ul>` : ''}<small>O AltGrid baixará o instalador completo e verificará sua integridade automaticamente.</small></div>`
+        actions = '<button class="button button--primary" data-download-update type="button">Baixar atualização</button>'
       } else if (state.status === 'downloading') {
         content = `<div class="update-summary"><strong>Baixando atualização</strong><span>Você pode continuar usando o AltGrid.</span><progress max="100" value="${progress}">${progress}%</progress><small>${Math.round(progress)}%</small></div>`
         actions = ''
       } else if (state.status === 'downloaded') {
-        content = `<div class="update-summary"><strong>Atualização pronta</strong><span>${version}</span>${notes ? `<ul>${notes}</ul>` : ''}<small>Instale agora ou escolha instalar depois. O Windows aplica a atualização ao fechar o AltGrid; no Android, o sistema pedirá sua confirmação.</small></div>`
+        content = `<div class="update-summary"><strong>Atualização verificada e pronta</strong><span>${version}</span>${notes ? `<ul>${notes}</ul>` : ''}<small>No Windows, o AltGrid fechará as sessões, instalará a versão completa e abrirá novamente. No Android, o sistema pedirá sua confirmação.</small></div>`
         actions = '<button class="button button--primary" data-install-update type="button">Instalar atualização</button>'
       } else if (state.status === 'not_available') {
         if (!state.supported && state.message) {
@@ -4028,7 +4177,9 @@ export class AuthApp {
         }
       } else if (state.status === 'error') {
         content = `<div class="form-alert is-visible" role="alert">${escapeHtml(state.message ?? 'Não foi possível verificar atualizações.')}</div>`
-        actions = '<button class="button button--primary" data-check-update type="button">Tentar novamente</button>'
+        actions = state.version
+          ? '<button class="button button--primary" data-download-update type="button">Tentar baixar novamente</button>'
+          : '<button class="button button--primary" data-check-update type="button">Verificar novamente</button>'
       }
 
       return `
@@ -4407,6 +4558,20 @@ export class AuthApp {
 
           button.closest('details')?.removeAttribute('open')
           void this.openProxyDialog(account)
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-stonegy-bot-account]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const account = this.accountFromAction(button)
+          if (!account) {
+            return
+          }
+
+          button.closest('details')?.removeAttribute('open')
+          void this.toggleStonegyBot(account, button)
         })
       })
 
@@ -5061,6 +5226,32 @@ export class AuthApp {
       })
 
     this.root
+      .querySelectorAll<HTMLSelectElement>('[data-session-interface-scale]')
+      .forEach((select) => {
+        if (select.dataset.actionBound === 'true') {
+          return
+        }
+
+        select.dataset.actionBound = 'true'
+        select.addEventListener('change', () => {
+          const account = this.accountFromAction(select)
+          if (!account) {
+            return
+          }
+
+          const scale = select.value === '' ? null : Number(select.value) / 100
+          if (scale !== null && (!Number.isFinite(scale) || scale < 0.5 || scale > 1)) {
+            const previous = this.sessionInterfaceScaleFor(account.id)
+            select.value = previous === null ? '' : String(Math.round(previous * 100))
+            this.showSessionAlert('Escolha uma escala entre 50% e 100%.')
+            return
+          }
+
+          void this.updateSessionInterfaceScale(account, scale, select)
+        })
+      })
+
+    this.root
       .querySelectorAll<HTMLButtonElement>('[data-clear-session-data]')
       .forEach((button) => {
         this.bindButtonOnce(button, () => {
@@ -5390,6 +5581,17 @@ export class AuthApp {
       this.paymentLoading = false
       this.render()
     }
+  }
+
+  private renderStonegyBotMenuItem(account: ConfiguredAccount): string {
+    if (!this.stonegyBotControlSupported() || !this.isStonegyAccount(account)) {
+      return ''
+    }
+
+    const entitled = this.permissionService.canUseFeature(STONEGY_BOT_FEATURE)
+    const label = stonegyBotMenuLabel(entitled, account.stonegyBotEnabled === true)
+
+    return `<button class="menu-item" data-stonegy-bot-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">${label}</button>`
   }
 
   private startPaymentPolling(): void {
@@ -5892,6 +6094,8 @@ export class AuthApp {
       this.configuredAccounts = this.accountService.list(userId)
       this.sessionFrameRates.delete(accountId)
       this.storeSessionFrameRatePreferences()
+      this.sessionInterfaceScales.delete(accountId)
+      this.storeSessionInterfaceScalePreferences()
       this.mutedAccountIds.delete(accountId)
       this.sessionIssues.delete(accountId)
       this.maximizedAccountId = this.maximizedAccountId === accountId
@@ -5913,6 +6117,81 @@ export class AuthApp {
       && typeof this.sessionLauncher.getProxy === 'function'
       && typeof this.sessionLauncher.setProxy === 'function'
       && this.permissionService.canUseFeature('account_proxy')
+  }
+
+  private stonegyBotControlSupported(): boolean {
+    return !this.mobileSessionMode
+      && typeof this.sessionLauncher.setStonegyBot === 'function'
+  }
+
+  private isStonegyAccount(account: ConfiguredAccount): boolean {
+    const launchUrl = account.gameSlug === CUSTOM_GAME_SLUG
+      ? normalizeSafeGameUrl(account.customLaunchUrl)
+      : normalizeSafeGameUrl(this.games.find(
+          (candidate) => candidate.slug === account.gameSlug,
+        )?.launch_url)
+
+    return isStonegyLaunchUrl(launchUrl)
+  }
+
+  private async toggleStonegyBot(
+    account: ConfiguredAccount,
+    button: HTMLButtonElement,
+  ): Promise<void> {
+    if (!this.stonegyBotControlSupported() || !this.isStonegyAccount(account)) {
+      this.showSessionAlert('O AltGrid Bot está disponível somente para Stonegy no Windows.')
+      return
+    }
+
+    if (!this.permissionService.canUseFeature(STONEGY_BOT_FEATURE)) {
+      this.dialogReturnFocus = { accountId: account.id, type: 'account' }
+      this.dialogAccountId = account.id
+      this.activeDialog = 'plans'
+      this.render()
+      return
+    }
+
+    const userId = this.session?.user.id
+    if (!userId) {
+      return
+    }
+
+    const previous = account.stonegyBotEnabled === true
+    const enabled = !previous
+    button.disabled = true
+    button.textContent = enabled ? 'Desativar AltGrid Bot' : 'Ativar AltGrid Bot'
+
+    try {
+      const updated = this.accountService.setStonegyBotEnabled(
+        userId,
+        account.id,
+        enabled,
+      )
+      if (!updated) {
+        throw new Error('Conta não encontrada.')
+      }
+      account.stonegyBotEnabled = enabled
+      this.configuredAccounts = this.accountService.list(userId)
+
+      if (this.permissionService.isSessionActive(account.id)) {
+        await Promise.resolve(this.sessionLauncher.setStonegyBot!(updated, enabled))
+      }
+
+      this.render()
+      this.showSessionAlert(enabled
+        ? 'AltGrid Bot ativado. A conta será recarregada para iniciar o bot.'
+        : 'AltGrid Bot desativado. A conta será recarregada sem o bot.')
+    } catch {
+      this.accountService.setStonegyBotEnabled(userId, account.id, previous)
+      account.stonegyBotEnabled = previous
+      this.configuredAccounts = this.accountService.list(userId)
+      this.render()
+      this.showSessionAlert('Não foi possível alterar o AltGrid Bot nesta conta.')
+    } finally {
+      if (button.isConnected) {
+        button.disabled = false
+      }
+    }
   }
 
   private async openProxyDialog(account: ConfiguredAccount): Promise<void> {
@@ -6059,11 +6338,14 @@ export class AuthApp {
       const launchUrl = normalizeSafeGameUrl(account.customLaunchUrl)
 
       return launchUrl
-        ? {
+          ? {
             allowProxy: this.permissionService.canUseFeature('account_proxy'),
             game: null,
             kind: 'custom',
             launchUrl,
+            stonegyBotEnabled: account.stonegyBotEnabled === true
+              && this.permissionService.canUseFeature(STONEGY_BOT_FEATURE)
+              && isStonegyLaunchUrl(launchUrl),
           }
         : null
     }
@@ -6079,6 +6361,9 @@ export class AuthApp {
           game,
           kind: 'preset',
           launchUrl,
+          stonegyBotEnabled: account.stonegyBotEnabled === true
+            && this.permissionService.canUseFeature(STONEGY_BOT_FEATURE)
+            && isStonegyLaunchUrl(launchUrl),
         }
       : null
   }
@@ -6177,7 +6462,7 @@ export class AuthApp {
         this.activeDialog = 'free-limit'
       } else if (result === 'opened' || result === 'already_open') {
         this.focusedAccountId = accountId
-        let frameRateApplied = true
+        let sessionPreferencesApplied = true
         if (this.frameRateControlSupported) {
           await Promise.resolve(
             this.sessionLauncher.setFrameRate(
@@ -6185,12 +6470,22 @@ export class AuthApp {
               this.sessionFrameRateFor(account.id),
             ),
           ).catch(() => {
-            frameRateApplied = false
+            sessionPreferencesApplied = false
           })
         }
-        this.showSessionAlert(frameRateApplied
+        if (this.interfaceScaleControlSupported) {
+          await Promise.resolve(
+            this.sessionLauncher.setInterfaceScale?.(
+              account,
+              this.sessionInterfaceScaleFor(account.id),
+            ),
+          ).catch(() => {
+            sessionPreferencesApplied = false
+          })
+        }
+        this.showSessionAlert(sessionPreferencesApplied
           ? ''
-          : 'A conta abriu, mas não foi possível aplicar o limite de FPS.')
+          : 'A conta abriu, mas não foi possível aplicar todas as preferências de exibição.')
       }
 
       this.render()

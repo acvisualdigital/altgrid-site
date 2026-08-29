@@ -188,6 +188,7 @@ describe('AdminApp', () => {
     expect(root.innerHTML).toContain('Pagamento confirmado')
     expect(root.innerHTML).toContain('Qualificada')
     expect(root.innerHTML).toContain('Recompensada')
+    expect(root.innerHTML.match(/value="PRO_PLUS"/g)).toHaveLength(2)
     app.destroy()
   })
 

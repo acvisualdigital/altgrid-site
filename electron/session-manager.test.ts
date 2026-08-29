@@ -52,6 +52,7 @@ function createHarness(
       setFrameRateLimit: vi.fn(),
       setMuted: vi.fn(),
       setProxy: vi.fn(async () => undefined),
+      setStonegyBotEnabled: vi.fn(),
       setVisible: vi.fn(),
       setZoomFactor: vi.fn(),
       testProxy: vi.fn(async () => ({
@@ -117,6 +118,26 @@ describe('SessionManager', () => {
     expect(view.setProxy.mock.invocationCallOrder[0]).toBeLessThan(
       view.loadURL.mock.invocationCallOrder[0]!,
     )
+  })
+
+  it('persists and toggles the STONER bot state on the native account view', async () => {
+    const harness = createHarness()
+
+    const created = await harness.manager.createSession(
+      'account-stonegy',
+      'https://stonegy-online.com/play',
+      null,
+      true,
+    )
+
+    expect(created.stonegyBotEnabled).toBe(true)
+    expect(harness.contexts.get('account-stonegy')?.stonegyBotEnabled).toBe(true)
+
+    harness.manager.setStonegyBot('account-stonegy', false)
+
+    const view = harness.views.get('account-stonegy')!
+    expect(view.setStonegyBotEnabled).toHaveBeenCalledWith(false)
+    expect(harness.manager.getSessions()[0]?.stonegyBotEnabled).toBe(false)
   })
 
   it('reconnects an open account after changing its proxy', async () => {
@@ -224,6 +245,23 @@ describe('SessionManager', () => {
 
     harness.manager.resizeSession('account-1', { x: 0, y: 0, width: 1_920, height: 1_080 })
     expect(view.setZoomFactor).toHaveBeenLastCalledWith(1)
+  })
+
+  it('keeps a manual interface scale across grid resizes and restores automatic fit', async () => {
+    const harness = createHarness()
+    await harness.manager.createSession('account-1', 'https://game.example/')
+    const view = harness.views.get('account-1')!
+    view.setZoomFactor.mockClear()
+
+    harness.manager.setInterfaceZoom('account-1', 0.5)
+    expect(view.setZoomFactor).toHaveBeenLastCalledWith(0.5)
+
+    harness.manager.resizeSession('account-1', { x: 0, y: 0, width: 1_920, height: 1_080 })
+    expect(view.setZoomFactor).toHaveBeenLastCalledWith(0.5)
+
+    harness.manager.setInterfaceZoom('account-1', null)
+    expect(view.setZoomFactor).toHaveBeenLastCalledWith(1)
+    expect(() => harness.manager.setInterfaceZoom('account-1', 0.49)).toThrow(RangeError)
   })
 
   it('applies Eco Mode to existing sessions and new sessions without reloading', async () => {
@@ -429,6 +467,7 @@ describe('SessionManager', () => {
         setFrameRateLimit: vi.fn(),
         setMuted: vi.fn(),
         setProxy: vi.fn(async () => undefined),
+        setStonegyBotEnabled: vi.fn(),
         setVisible: vi.fn(),
         setZoomFactor: vi.fn(),
         testProxy: vi.fn(async () => ({

@@ -50,6 +50,13 @@ describe('desktop preload performance bridge', () => {
       'account-1',
       60,
     )
+
+    await api!.sessions.setInterfaceZoom('account-1', 0.55)
+    expect(electronMocks.invoke).toHaveBeenCalledWith(
+      'altgrid:sessions:set-interface-zoom',
+      'account-1',
+      0.55,
+    )
   })
 
   it('exposes proxy operations through dedicated IPC channels', async () => {
@@ -62,6 +69,14 @@ describe('desktop preload performance bridge', () => {
       'altgrid:sessions:create',
       'account-1',
       'https://game.example/',
+      true,
+      false,
+    )
+
+    await api!.sessions.setStonegyBot('account-1', true)
+    expect(electronMocks.invoke).toHaveBeenCalledWith(
+      'altgrid:sessions:set-stonegy-bot',
+      'account-1',
       true,
     )
 

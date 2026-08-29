@@ -57,6 +57,7 @@ export interface SessionSnapshot {
   muted: boolean
   partition: string
   status: SessionStatus
+  stonegyBotEnabled: boolean
   url: string
   visible: boolean
 }
@@ -71,6 +72,8 @@ export type SessionEventType =
   | 'crashed'
   | 'load-failed'
   | 'popup-blocked'
+  | 'stonegy-bot-failed'
+  | 'stonegy-bot-ready'
 
 export interface SessionEvent {
   accountId: string
@@ -110,6 +113,7 @@ export interface AltgridDesktopApi {
       accountId: string,
       url: string,
       useStoredProxy?: boolean,
+      stonegyBotEnabled?: boolean,
     ): Promise<SessionSnapshot>
     destroySession(accountId: string): Promise<boolean>
     focusSession(accountId: string): Promise<SessionSnapshot>
@@ -128,6 +132,8 @@ export interface AltgridDesktopApi {
     ): Promise<SessionSnapshot>
     setEcoMode(enabled: boolean, secondaryFps?: number): Promise<boolean>
     setFrameRate(accountId: string, fps: number): Promise<SessionSnapshot>
+    setInterfaceZoom(accountId: string, zoom: number | null): Promise<SessionSnapshot>
+    setStonegyBot(accountId: string, enabled: boolean): Promise<SessionSnapshot>
     setProxy(
       accountId: string,
       input: SessionProxyInput,
@@ -168,6 +174,8 @@ export const IPC_CHANNELS = Object.freeze({
     resize: 'altgrid:sessions:resize',
     setEcoMode: 'altgrid:sessions:set-eco-mode',
     setFrameRate: 'altgrid:sessions:set-frame-rate',
+    setInterfaceZoom: 'altgrid:sessions:set-interface-zoom',
+    setStonegyBot: 'altgrid:sessions:set-stonegy-bot',
     setProxy: 'altgrid:sessions:set-proxy',
     show: 'altgrid:sessions:show',
     testProxy: 'altgrid:sessions:test-proxy',
@@ -183,4 +191,7 @@ export const IPC_CHANNELS = Object.freeze({
 
 export const SESSION_PRELOAD_CHANNELS = Object.freeze({
   setFrameRateLimit: 'altgrid:session-preload:set-frame-rate-limit',
+  stonegyDiscordWebhook: 'altgrid:session-preload:stoner-discord-webhook',
 })
+
+export const STONEGY_BOT_WORLD_ID = 10_007

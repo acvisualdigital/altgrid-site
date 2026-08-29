@@ -32,12 +32,18 @@ const api: AltgridDesktopApi = Object.freeze({
     closeSession: (accountId: string) => (
       invoke<boolean>(IPC_CHANNELS.sessions.close, accountId)
     ),
-    createSession: (accountId: string, url: string, useStoredProxy = false) => (
+    createSession: (
+      accountId: string,
+      url: string,
+      useStoredProxy = false,
+      stonegyBotEnabled = false,
+    ) => (
       invoke<SessionSnapshot>(
         IPC_CHANNELS.sessions.create,
         accountId,
         url,
         useStoredProxy,
+        stonegyBotEnabled,
       )
     ),
     destroySession: (accountId: string) => (
@@ -87,6 +93,12 @@ const api: AltgridDesktopApi = Object.freeze({
     ),
     setFrameRate: (accountId: string, fps: number) => (
       invoke<SessionSnapshot>(IPC_CHANNELS.sessions.setFrameRate, accountId, fps)
+    ),
+    setInterfaceZoom: (accountId: string, zoom: number | null) => (
+      invoke<SessionSnapshot>(IPC_CHANNELS.sessions.setInterfaceZoom, accountId, zoom)
+    ),
+    setStonegyBot: (accountId: string, enabled: boolean) => (
+      invoke<SessionSnapshot>(IPC_CHANNELS.sessions.setStonegyBot, accountId, enabled)
     ),
     setProxy: (accountId: string, input: SessionProxyInput) => (
       invoke<SessionProxySummary>(IPC_CHANNELS.sessions.setProxy, accountId, input)

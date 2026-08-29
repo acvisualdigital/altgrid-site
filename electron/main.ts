@@ -16,6 +16,7 @@ import {
 
 import {
   IPC_CHANNELS,
+  SESSION_PRELOAD_CHANNELS,
   type SessionBounds,
   type SessionProxyInput,
 } from './contracts.js'
@@ -25,6 +26,10 @@ import {
   createNativeSessionViewFactory,
 } from './native-session-view.js'
 import { SessionManager } from './session-manager.js'
+import {
+  isStonegyUrl,
+  normalizeDiscordWebhookRequest,
+} from './stonegy-bot.js'
 import { ProxyConfigStore } from './proxy-config-store.js'
 import { configureShellSecurity } from './shell-security.js'
 import { UpdaterService } from './updater-service.js'
@@ -62,8 +67,21 @@ let proxyConfigStore: ProxyConfigStore | null = null
 let updaterService: UpdaterService | null = null
 let shellEntryUrl: string | null = null
 let pendingRecoveryDeepLink = findTrustedRecoveryDeepLink(process.argv)
+let forcedExitTimer: NodeJS.Timeout | null = null
+
+function armForcedExitFallback(): void {
+  if (forcedExitTimer) {
+    return
+  }
+
+  // If a renderer, GPU or network child refuses to leave, do not keep an
+  // invisible AltGrid process tree alive indefinitely. Normal exits complete
+  // before this watchdog fires.
+  forcedExitTimer = setTimeout(() => app.exit(0), 5_000)
+}
 
 function prepareForApplicationExit(): void {
+  armForcedExitFallback()
   updaterService?.stop()
   sessionManager?.destroyAll()
 }
@@ -185,12 +203,17 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.sessions.create,
-    (event, accountId, url, useStoredProxy = false) => {
+    (event, accountId, url, useStoredProxy = false, stonegyBotEnabled = false) => {
       const manager = requireSessionManager(event)
       const proxy = useStoredProxy
         ? requireProxyStore(event).get(accountId)
         : null
-      return manager.createSession(accountId, url, proxy?.enabled ? proxy : null)
+      return manager.createSession(
+        accountId,
+        url,
+        proxy?.enabled ? proxy : null,
+        stonegyBotEnabled,
+      )
     },
   )
   ipcMain.handle(IPC_CHANNELS.sessions.clearData, (event, accountId) => (
@@ -231,6 +254,12 @@ function registerIpcHandlers(): void {
   ))
   ipcMain.handle(IPC_CHANNELS.sessions.setFrameRate, (event, accountId, fps) => (
     requireSessionManager(event).setFrameRate(accountId, fps)
+  ))
+  ipcMain.handle(IPC_CHANNELS.sessions.setInterfaceZoom, (event, accountId, zoom) => (
+    requireSessionManager(event).setInterfaceZoom(accountId, zoom)
+  ))
+  ipcMain.handle(IPC_CHANNELS.sessions.setStonegyBot, (event, accountId, enabled) => (
+    requireSessionManager(event).setStonegyBot(accountId, enabled)
   ))
   ipcMain.handle(IPC_CHANNELS.sessions.getAll, (event) => (
     requireSessionManager(event).getSessions()
@@ -302,6 +331,32 @@ function registerIpcHandlers(): void {
     )
   ))
 
+  ipcMain.handle(
+    SESSION_PRELOAD_CHANNELS.stonegyDiscordWebhook,
+    async (event, webhook, payload) => {
+      if (
+        event.senderFrame !== event.sender.mainFrame
+        || !isStonegyUrl(event.senderFrame.url)
+      ) {
+        throw new Error('Webhook rejeitado: origem não confiável.')
+      }
+
+      const request = normalizeDiscordWebhookRequest(webhook, payload)
+      const response = await net.fetch(request.url, {
+        body: request.body,
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+        redirect: 'error',
+      })
+
+      return {
+        error: response.ok ? '' : `Discord respondeu HTTP ${response.status}.`,
+        ok: response.ok,
+        status: response.status,
+      }
+    },
+  )
+
   ipcMain.handle(IPC_CHANNELS.updater.getState, (event) => (
     requireUpdater(event).getState()
   ))
@@ -311,9 +366,13 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.updater.download, (event) => (
     requireUpdater(event).downloadUpdate()
   ))
-  ipcMain.handle(IPC_CHANNELS.updater.install, (event) => (
-    requireUpdater(event).quitAndInstall()
-  ))
+  ipcMain.handle(IPC_CHANNELS.updater.install, (event) => {
+    const updater = requireUpdater(event)
+    // Release native game views before electron-updater closes the shell and
+    // starts NSIS. This removes the old race with lingering session processes.
+    sessionManager?.destroyAll()
+    return updater.quitAndInstall()
+  })
 }
 
 function resolveDevelopmentUrl(): string | null {
@@ -459,6 +518,7 @@ async function createMainWindow(): Promise<void> {
   })
 
   browserWindow.once('ready-to-show', () => browserWindow.show())
+  browserWindow.on('close', prepareForApplicationExit)
   browserWindow.on('closed', () => {
     shellCanReceiveSessionEvents = false
     unsubscribeSessionEvents()

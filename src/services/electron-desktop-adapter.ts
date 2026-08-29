@@ -18,12 +18,20 @@ export interface DesktopAccountReference {
 export interface DesktopSessionLaunchTarget {
   allowProxy?: boolean
   launchUrl: string
+  stonegyBotEnabled?: boolean
 }
 
 export interface DesktopSessionStatusEvent {
   accountId: string
   detail?: string
-  type: 'crashed' | 'focused' | 'load-failed' | 'loading' | 'ready'
+  type:
+    | 'crashed'
+    | 'focused'
+    | 'load-failed'
+    | 'loading'
+    | 'ready'
+    | 'stonegy-bot-failed'
+    | 'stonegy-bot-ready'
 }
 
 export interface ElectronDesktopIntegration {
@@ -152,6 +160,7 @@ export class ElectronSessionLauncher {
       account.id,
       target.launchUrl,
       Boolean(proxy?.enabled),
+      target.stonegyBotEnabled === true,
     )
   }
 
@@ -205,6 +214,17 @@ export class ElectronSessionLauncher {
     await this.api.setFrameRate(account.id, fps)
   }
 
+  async setInterfaceScale(
+    account: DesktopAccountReference,
+    scale: number | null,
+  ): Promise<void> {
+    await this.api.setInterfaceZoom(account.id, scale)
+  }
+
+  async setStonegyBot(account: DesktopAccountReference, enabled: boolean): Promise<void> {
+    await this.api.setStonegyBot(account.id, enabled)
+  }
+
   dispose(): void {
     this.escapeHandlers.clear()
     this.statusHandlers.clear()
@@ -233,7 +253,15 @@ export class ElectronSessionLauncher {
 function isStatusEvent(event: SessionEvent): event is SessionEvent & {
   type: DesktopSessionStatusEvent['type']
 } {
-  return ['crashed', 'focused', 'load-failed', 'loading', 'ready'].includes(event.type)
+  return [
+    'crashed',
+    'focused',
+    'load-failed',
+    'loading',
+    'ready',
+    'stonegy-bot-failed',
+    'stonegy-bot-ready',
+  ].includes(event.type)
 }
 
 function desktopApiFromWindow(): AltgridDesktopApi | null {
