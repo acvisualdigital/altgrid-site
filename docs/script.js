@@ -42,7 +42,7 @@ const showConsentBanner = () => {
   banner.innerHTML = `
     <div class="consent-banner__copy">
       <strong>Sua privacidade importa</strong>
-      <p>Usamos a tag do Google para medir visitas e downloads. Você escolhe se permite essa medição.</p>
+      <p>Usamos serviços do Google para medir visitas, downloads e exibir anúncios. Você escolhe se permite essa utilização.</p>
       <a href="privacy.html">Saiba mais</a>
     </div>
     <div class="consent-banner__actions">
