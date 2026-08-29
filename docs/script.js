@@ -61,6 +61,7 @@ if ('IntersectionObserver' in window) {
 
 const RELEASE_API = 'https://api.github.com/repos/acvisualdigital/altgrid-releases/releases/latest'
 const METRICS_API = 'https://altgrid-api.altgrid.workers.dev/v1/app/metrics'
+const METRICS_REFRESH_INTERVAL_MS = 60_000
 
 const findAsset = (assets, pattern) => assets.find((asset) => pattern.test(asset.name))
 
@@ -118,6 +119,10 @@ const applyPublicMetrics = async () => {
 }
 
 applyPublicMetrics()
+window.setInterval(applyPublicMetrics, METRICS_REFRESH_INTERVAL_MS)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') applyPublicMetrics()
+})
 
 const referralCode = (new URLSearchParams(window.location.search).get('ref') ?? '')
   .trim()
