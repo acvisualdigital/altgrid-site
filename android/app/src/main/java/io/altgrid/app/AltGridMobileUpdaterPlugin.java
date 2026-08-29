@@ -74,7 +74,7 @@ public class AltGridMobileUpdaterPlugin extends Plugin {
     public void downloadUpdate(PluginCall call) {
         String version = normalizedValue(call.getString("version"));
         String url = normalizedValue(call.getString("url"));
-        Long expectedSize = call.getLong("expectedSize");
+        Long expectedSize = exactLong(call.getData().opt("expectedSize"));
         String expectedSha256 = normalizedValue(call.getString("expectedSha256"));
 
         if (!isValidVersion(version)
@@ -503,6 +503,22 @@ public class AltGridMobileUpdaterPlugin extends Plugin {
         return !value.isEmpty()
             && value.length() <= 80
             && VERSION_PATTERN.matcher(value).matches();
+    }
+
+    static Long exactLong(Object value) {
+        if (!(value instanceof Number)) {
+            return null;
+        }
+
+        double numeric = ((Number) value).doubleValue();
+        if (!Double.isFinite(numeric)
+            || numeric != Math.rint(numeric)
+            || numeric < Long.MIN_VALUE
+            || numeric > Long.MAX_VALUE) {
+            return null;
+        }
+
+        return ((Number) value).longValue();
     }
 
     private static String normalizedValue(String value) {

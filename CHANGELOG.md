@@ -20,6 +20,7 @@
 
 ### Android
 
+- Corrige a validação do tamanho do APK recebido pelo atualizador interno, que podia exibir “Os dados da atualização Android são inválidos” antes do download.
 - Mantém as sessões em desempenho normal: Eco Mode, diagnóstico de RAM e proxy por conta não são ativados no Android.
 - Preserva o zoom automático e o enquadramento móvel normalizado entre diferentes tamanhos de tela.
 
