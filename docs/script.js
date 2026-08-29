@@ -2,6 +2,74 @@ const menuToggle = document.querySelector('.menu-toggle')
 const siteNav = document.querySelector('#site-nav')
 const header = document.querySelector('[data-header]')
 const year = document.querySelector('#year')
+const CONSENT_STORAGE_KEY = 'altgrid.google-consent.v1'
+
+const updateGoogleConsent = (choice) => {
+  if (typeof window.gtag !== 'function') return
+  const state = choice === 'granted' ? 'granted' : 'denied'
+  window.gtag('consent', 'update', {
+    ad_storage: state,
+    analytics_storage: state,
+    ad_user_data: state,
+    ad_personalization: state,
+  })
+}
+
+const readConsentChoice = () => {
+  try {
+    const choice = localStorage.getItem(CONSENT_STORAGE_KEY)
+    return choice === 'granted' || choice === 'denied' ? choice : null
+  } catch {
+    return null
+  }
+}
+
+const saveConsentChoice = (choice) => {
+  try {
+    localStorage.setItem(CONSENT_STORAGE_KEY, choice)
+  } catch {
+    // Mantém a escolha durante a página atual quando o armazenamento está bloqueado.
+  }
+  updateGoogleConsent(choice)
+}
+
+const showConsentBanner = () => {
+  document.querySelector('.consent-banner')?.remove()
+
+  const banner = document.createElement('aside')
+  banner.className = 'consent-banner'
+  banner.setAttribute('aria-label', 'Preferências de privacidade')
+  banner.innerHTML = `
+    <div class="consent-banner__copy">
+      <strong>Sua privacidade importa</strong>
+      <p>Usamos a tag do Google para medir visitas e downloads. Você escolhe se permite essa medição.</p>
+      <a href="privacy.html">Saiba mais</a>
+    </div>
+    <div class="consent-banner__actions">
+      <button class="button button-secondary" type="button" data-consent="denied">Recusar</button>
+      <button class="button button-primary" type="button" data-consent="granted">Aceitar</button>
+    </div>
+  `
+  document.body.append(banner)
+
+  banner.querySelectorAll('[data-consent]').forEach((button) => {
+    button.addEventListener('click', () => {
+      saveConsentChoice(button.dataset.consent)
+      banner.remove()
+    })
+  })
+}
+
+const storedConsentChoice = readConsentChoice()
+if (storedConsentChoice) updateGoogleConsent(storedConsentChoice)
+else showConsentBanner()
+
+const consentSettings = document.createElement('button')
+consentSettings.className = 'consent-settings'
+consentSettings.type = 'button'
+consentSettings.textContent = 'Privacidade'
+consentSettings.addEventListener('click', showConsentBanner)
+document.body.append(consentSettings)
 
 const closeMenu = () => {
   siteNav?.classList.remove('is-open')
@@ -24,6 +92,18 @@ window.addEventListener('scroll', updateHeader, { passive: true })
 updateHeader()
 
 if (year) year.textContent = String(new Date().getFullYear())
+
+document.querySelectorAll('.download-windows, .download-android').forEach((link) => {
+  link.addEventListener('click', () => {
+    if (typeof window.gtag !== 'function') return
+    const platform = link.classList.contains('download-windows') ? 'windows' : 'android'
+    window.gtag('event', 'altgrid_download', {
+      platform,
+      link_url: link.href,
+      transport_type: 'beacon',
+    })
+  })
+})
 
 document.querySelectorAll('.faq-item button').forEach((button) => {
   button.addEventListener('click', () => {

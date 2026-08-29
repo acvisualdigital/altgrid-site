@@ -246,6 +246,15 @@ h1, h2, h3, p { margin-top: 0; }
 .site-footer a:hover { color: var(--green); }
 .footer-meta { justify-items: end; text-align: right; }
 .noscript { position: fixed; right: 16px; bottom: 16px; z-index: 100; max-width: 420px; padding: 13px 16px; color: var(--text); background: var(--surface-3); border: 1px solid var(--line); border-radius: 10px; }
+.consent-banner { position: fixed; right: 22px; bottom: 22px; left: 22px; z-index: 150; display: flex; align-items: center; justify-content: space-between; gap: 28px; width: min(960px, calc(100vw - 44px)); padding: 22px; margin-inline: auto; color: var(--text); background: rgba(8, 15, 12, 0.98); border: 1px solid rgba(76, 255, 143, 0.35); border-radius: 18px; box-shadow: 0 24px 70px rgba(0, 0, 0, 0.58); }
+.consent-banner__copy { display: grid; gap: 6px; }
+.consent-banner__copy strong { font-size: 1rem; }
+.consent-banner__copy p { max-width: 650px; margin: 0; color: var(--muted); font-size: 0.8rem; line-height: 1.55; }
+.consent-banner__copy a { width: fit-content; color: var(--green); font-size: 0.75rem; text-decoration: underline; text-underline-offset: 3px; }
+.consent-banner__actions { display: flex; flex: 0 0 auto; gap: 10px; }
+.consent-banner__actions .button { min-height: 42px; padding-inline: 18px; }
+.consent-settings { position: fixed; right: 14px; bottom: 14px; z-index: 110; padding: 8px 11px; color: var(--muted); background: rgba(8, 15, 12, 0.9); border: 1px solid var(--line); border-radius: 9px; font-size: 0.68rem; cursor: pointer; }
+.consent-settings:hover { color: var(--green); border-color: rgba(76, 255, 143, 0.35); }
 .referral-invitation { position: fixed; right: 22px; bottom: 22px; z-index: 120; display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 14px; width: min(520px, calc(100vw - 30px)); padding: 20px; border: 1px solid rgba(76, 255, 143, 0.4); border-radius: 18px; color: var(--text); background: radial-gradient(circle at 10% 10%, rgba(37, 230, 111, 0.2), transparent 30%), linear-gradient(145deg, #102219, #111820); box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48); }
 .referral-invitation__close { position: absolute; top: 8px; right: 10px; width: 30px; height: 30px; color: var(--muted); background: transparent; font-size: 23px; cursor: pointer; }
 .referral-invitation__icon { display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid rgba(76, 255, 143, 0.4); border-radius: 13px; color: var(--green); background: rgba(37, 230, 111, 0.1); font-size: 22px; }
@@ -321,6 +330,9 @@ h1, h2, h3, p { margin-top: 0; }
 }
 
 @media (max-width: 580px) {
+  .consent-banner { right: 15px; bottom: 15px; left: 15px; align-items: stretch; flex-direction: column; width: auto; gap: 16px; padding: 18px; }
+  .consent-banner__actions { width: 100%; }
+  .consent-banner__actions .button { flex: 1; }
   .hero h1 { font-size: clamp(3rem, 16vw, 4.6rem); }
   .hero-actions { flex-direction: column; }
   .hero-actions .button { width: 100%; justify-content: center; }
