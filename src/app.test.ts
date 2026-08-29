@@ -588,7 +588,7 @@ describe('AuthApp session lifecycle', () => {
     app.destroy()
   })
 
-  it('links the profile menu to the protected administrative route', async () => {
+  it('hides the administrative route until the server confirms access', async () => {
     installBrowser('https://app.example.com/')
     const root = createRoot()
     const auth = createAuthServiceDouble()
@@ -598,10 +598,31 @@ describe('AuthApp session lifecycle', () => {
     await app.start()
 
     await vi.waitFor(() => {
-      expect(root.innerHTML).toContain('Painel administrativo')
-      expect(root.innerHTML).toContain('href="/admin"')
+      expect(root.innerHTML).not.toContain('Painel administrativo')
+      expect(root.innerHTML).not.toContain('href="/admin"')
       expect(root.innerHTML).not.toContain('data-grant-admin')
     })
+    app.destroy()
+  })
+
+  it('shows the administrative route only after server authorization', () => {
+    installBrowser('https://app.example.com/')
+    const root = createRoot()
+    const auth = createAuthServiceDouble()
+    const app = new AuthApp(root, auth.service)
+    const state = app as unknown as {
+      adminAccess: boolean
+      currentView: 'authenticated'
+      session: Session
+      render(): void
+    }
+    state.currentView = 'authenticated'
+    state.session = session
+    state.adminAccess = true
+    state.render()
+
+    expect(root.innerHTML).toContain('Painel administrativo')
+    expect(root.innerHTML).toContain('href="/admin"')
     app.destroy()
   })
 

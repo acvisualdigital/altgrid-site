@@ -107,6 +107,7 @@ type ApplicationBackend = Pick<BackendApi, 'getEntitlements' | 'getGames' | 'get
     | 'getAppMetrics'
     | 'getAnnouncements'
     | 'getHealth'
+    | 'getAdminSession'
     | 'getPayment'
     | 'getProducts'
     | 'getReferralProgram'
@@ -516,6 +517,7 @@ export class AuthApp {
   private backendLoadInFlight: Promise<void> | null = null
   private backendStateRevision = 0
   private backendUserId: string | null = null
+  private adminAccess = false
   private freePlanPromptShown = false
   private configuredAccounts: ConfiguredAccount[] = []
   private games: PublicGame[] = []
@@ -1124,6 +1126,7 @@ export class AuthApp {
       this.appConfig = {}
       this.offlineLicenseSource = null
       this.backendLoadInFlight = null
+      this.adminAccess = false
       this.freePlanPromptShown = false
       this.me = null
       this.games = this.gamePresetService?.getCachedGames() ?? []
@@ -1170,6 +1173,7 @@ export class AuthApp {
     this.appConfig = {}
     this.offlineLicenseSource = null
     this.backendLoadInFlight = null
+    this.adminAccess = false
     this.me = null
     this.games = []
     this.announcements = []
@@ -1469,6 +1473,7 @@ export class AuthApp {
         productsResult,
         healthResult,
         configResult,
+        adminResult,
       ] =
         await Promise.allSettled([
           backendApi.getMe(),
@@ -1485,6 +1490,7 @@ export class AuthApp {
             ?? Promise.resolve({ products: [] }),
           backendApi.getHealth?.() ?? Promise.resolve(null),
           backendApi.getAppConfig?.() ?? Promise.resolve(null),
+          backendApi.getAdminSession?.() ?? Promise.resolve(null),
         ])
 
       if (
@@ -1511,7 +1517,11 @@ export class AuthApp {
           && result.reason.status === 401,
       )
 
-      if (unauthorized) {
+      const adminUnauthorized = adminResult.status === 'rejected'
+        && adminResult.reason instanceof BackendApiError
+        && adminResult.reason.status === 401
+
+      if (unauthorized || adminUnauthorized) {
         this.session = null
         this.clearAuthenticatedState()
         this.currentView = 'login'
@@ -1564,6 +1574,9 @@ export class AuthApp {
       if (configResult.status === 'fulfilled' && configResult.value) {
         this.appConfig = configResult.value.config
       }
+
+      this.adminAccess = adminResult.status === 'fulfilled'
+        && adminResult.value !== null
 
       this.backendLoadStatus =
         entitlementsResult.status === 'fulfilled'
@@ -2365,7 +2378,7 @@ export class AuthApp {
               <button class="menu-item" data-open-dialog="settings" type="button"><span><i aria-hidden="true">⚙</i>Configurações</span><b aria-hidden="true">›</b></button>
             </div>
             <div class="sidebar-profile-popover__footer-actions">
-              <a class="menu-item" href="/admin"><span><i aria-hidden="true">▣</i>Painel administrativo</span><b aria-hidden="true">↗</b></a>
+              ${this.adminAccess ? '<a class="menu-item" href="/admin"><span><i aria-hidden="true">▣</i>Painel administrativo</span><b aria-hidden="true">↗</b></a>' : ''}
               <button class="menu-item menu-item--danger" id="logout-button" type="button"><span><i aria-hidden="true">↪</i>Sair</span></button>
             </div>
           </div>
