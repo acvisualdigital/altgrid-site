@@ -178,7 +178,8 @@ jobs:
             $releaseTag,
             "--repo", $releaseRepo,
             "--title", "AltGrid $releaseTag",
-            "--target", "main"
+            "--target", "main",
+            "--notes-file", "release-notes/$releaseTag.md"
           )
           if ($env:ALTGRID_RELEASE_TYPE -eq "prerelease") {
             $releaseArgs += "--prerelease"

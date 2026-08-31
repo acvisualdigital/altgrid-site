@@ -77,7 +77,7 @@ if ('IntersectionObserver' in window) {
 const RELEASE_API = 'https://api.github.com/repos/acvisualdigital/altgrid-releases/releases/latest'
 const METRICS_API = 'https://altgrid-api.altgrid.workers.dev/v1/app/metrics'
 const METRICS_REFRESH_INTERVAL_MS = 60_000
-const PAGE_RELEASE_VERSION = '1.5.0'
+const PAGE_RELEASE_VERSION = '1.5.1'
 
 const findAsset = (assets, pattern) => assets.find((asset) => pattern.test(asset.name))
 const versionParts = (version) => version.split('.').map((part) => Number.parseInt(part, 10) || 0)
@@ -104,6 +104,7 @@ const applyLatestRelease = async () => {
     const release = await response.json()
     const assets = Array.isArray(release.assets) ? release.assets : []
     const windows = findAsset(assets, /^(?:AltGrid-Setup-.*|AltGrid-win-x64-Setup)\.exe$/i)
+    const android = findAsset(assets, /^AltGrid-Android-.*\.apk$/i)
     const releaseVersion = String(release.tag_name ?? '').replace(/^v/i, '')
     const canApplyRelease = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(releaseVersion)
       && isSameOrNewerVersion(releaseVersion.split(/[-+]/, 1)[0], PAGE_RELEASE_VERSION)
@@ -111,6 +112,13 @@ const applyLatestRelease = async () => {
     if (windows?.browser_download_url && canApplyRelease) {
       document.querySelectorAll('.download-windows').forEach((link) => {
         link.href = windows.browser_download_url
+      })
+    }
+    if (android?.browser_download_url && canApplyRelease) {
+      document.querySelectorAll('.download-android').forEach((link) => {
+        link.href = android.browser_download_url
+        const version = link.querySelector('small')
+        if (version) version.textContent = `Baixar APK ${releaseVersion}`
       })
     }
     if (canApplyRelease) {

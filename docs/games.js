@@ -321,7 +321,12 @@ const renderMember = () => {
 
 const iconElement = (game, className) => {
   const icon = document.createElement('div'); icon.className = className
-  if (safeImageUrl(game.icon_url)) { const image = new Image(); image.src = safeImageUrl(game.icon_url); image.alt = `Ícone de ${game.name}`; image.loading = 'lazy'; icon.append(image) } else icon.textContent = game.name.slice(0, 2).toUpperCase()
+  const fallbackLabel = game.name.slice(0, 2).toUpperCase()
+  if (safeImageUrl(game.icon_url)) {
+    const image = new Image(); image.src = safeImageUrl(game.icon_url); image.alt = `Ícone de ${game.name}`; image.loading = className === 'hero-game__icon' ? 'eager' : 'lazy'
+    image.addEventListener('error', () => { image.remove(); icon.textContent = fallbackLabel }, { once: true })
+    icon.append(image)
+  } else icon.textContent = fallbackLabel
   return icon
 }
 
@@ -532,8 +537,11 @@ document.querySelector('#year').textContent = String(new Date().getFullYear())
 authForm.addEventListener('submit', async (event) => { event.preventDefault(); if (!supabase) return; authMessage.textContent = 'Entrando…'; const data = new FormData(authForm); const { error } = await supabase.auth.signInWithPassword({ email: String(data.get('email') ?? '').trim(), password: String(data.get('password') ?? '') }); if (error) { authMessage.textContent = 'Não foi possível entrar. Confira seu e-mail e senha.'; return } authDialog.close(); authForm.reset(); authMessage.textContent = '' })
 document.querySelector('[data-google-login]').addEventListener('click', async () => { if (!supabase) return; authMessage.textContent = 'Abrindo o Google…'; const redirectTo = new URL('games.html', window.location.href).href; const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo } }); if (error) authMessage.textContent = 'Não foi possível abrir o login do Google.' })
 
-if (supabase) { const { data } = await supabase.auth.getSession(); state.session = data.session; readLocalState(); renderMember(); supabase.auth.onAuthStateChange((_event, session) => { state.session = session; readLocalState(); renderMember(); renderAll(); if (session && state.publisherIntent) { const intent = state.publisherIntent; state.publisherIntent = null; queueMicrotask(() => openPublisher(intent.type, intent)) } }) } else { readLocalState(); renderMember() }
+readLocalState()
+renderMember()
+const catalogLoad = loadCatalog()
+if (supabase) { const { data } = await supabase.auth.getSession(); state.session = data.session; readLocalState(); renderMember(); supabase.auth.onAuthStateChange((_event, session) => { state.session = session; readLocalState(); renderMember(); renderAll(); if (session && state.publisherIntent) { const intent = state.publisherIntent; state.publisherIntent = null; queueMicrotask(() => openPublisher(intent.type, intent)) } }) }
 if (window.location.hash === '#entrar' && !state.session) { openAuth(); window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}`) }
-await loadCatalog()
+await catalogLoad
 await loadSpotlight()
 setInterval(renderVoteAgenda, 30000)
