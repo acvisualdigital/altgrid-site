@@ -575,6 +575,7 @@ document.querySelector('[data-clear-filters]').addEventListener('click', () => {
 document.querySelectorAll('[data-ranking-mode]').forEach((button) => button.addEventListener('click', () => { state.rankingMode = button.dataset.rankingMode; document.querySelectorAll('[data-ranking-mode]').forEach((item) => item.classList.toggle('is-active', item === button)); renderStats() }))
 document.querySelector('[data-only-released]').addEventListener('click', () => filterByStatus('Lançado'))
 document.querySelectorAll('[data-open-auth]').forEach((button) => button.addEventListener('click', openAuth))
+document.querySelector('[data-auth-close]').addEventListener('click', () => { authDialog.close(); authMessage.textContent = '' })
 document.querySelector('[data-close-game]').addEventListener('click', closeGame); gameDialog.addEventListener('cancel', (event) => { event.preventDefault(); closeGame() })
 document.querySelector('[data-detail-claim]').addEventListener('click', () => { if (state.activeGame) openPublisher('claim', { gameSlug: state.activeGame.slug }) })
 document.querySelectorAll('[data-publisher-open]').forEach((button) => button.addEventListener('click', () => openPublisher(button.dataset.publisherOpen, { planCode: button.dataset.publisherPlan })))
