@@ -28,7 +28,7 @@ const previewCatalog = [
   ['baiak', 'Baiak', 'https://baiakidle.com/', 'https://baiakidle.com/img/baiak-idle.png'],
 ].map(([slug, name, launch_url, icon_url], sort_order) => ({ id: `preview-${slug}`, slug, name, launch_url, developer_referral_url: null, icon_url, sort_order, metadata: {}, preview: true }))
 
-const state = { games: [], query: '', category: 'all', status: 'all', sort: 'votes', favoritesOnly: false, rankingMode: 'votes', session: null, favorites: new Set(), social: {}, activeGame: null, publisherIntent: null }
+const state = { games: [], query: '', category: 'all', status: 'all', sort: 'votes', favoritesOnly: false, rankingMode: 'votes', session: null, favorites: new Set(), social: {}, community: {}, activeGame: null, publisherIntent: null }
 const grid = document.querySelector('[data-game-grid]')
 const empty = document.querySelector('[data-catalog-empty]')
 const controls = document.querySelector('[data-catalog-controls]')
@@ -118,7 +118,9 @@ const safeImageUrl = (candidate) => {
 }
 const localSocial = (slug) => state.social[slug] ?? { liked: false, votedAt: null, visits: 0, review: null }
 const socialView = (game) => {
-  const base = metadata(game); const local = localSocial(game.slug); const ownRating = Number(local.review?.rating ?? 0)
+  const base = metadata(game); const local = localSocial(game.slug); const remote = state.community[game.slug]
+  if (remote) return { ...base, ...remote, visits: base.visits + (local.visits || 0), local }
+  const ownRating = Number(local.review?.rating ?? 0)
   const reviews = base.reviews + (local.review ? 1 : 0); const rating = reviews ? ((base.rating * base.reviews) + ownRating) / reviews : 0
   const localVoteIsRecent = local.votedAt && Date.now() - new Date(local.votedAt).getTime() <= 12 * 60 * 60 * 1000
   return { ...base, votes: base.votes + (local.votedAt ? 1 : 0), votes12h: base.votes12h + (localVoteIsRecent ? 1 : 0), likes: base.likes + (local.liked ? 1 : 0), reviews, rating, visits: base.visits + (local.visits || 0), local }
@@ -139,6 +141,46 @@ const publisherPlans = Object.freeze({
 })
 const localPublisherKey = () => `altgrid.site.publisher-requests.v1:${storageScope()}`
 const isLocalPreview = ['127.0.0.1', 'localhost'].includes(window.location.hostname)
+
+const loadCommunity = async () => {
+  if (!supabase || isLocalPreview) return
+  const { data: totals, error: totalsError } = await supabase.rpc('get_site_game_community')
+  if (!totalsError && Array.isArray(totals)) {
+    state.community = Object.fromEntries(totals.map((entry) => [entry.game_slug, {
+      votes: Number(entry.votes || 0), votes12h: Number(entry.votes_12h || 0), likes: Number(entry.likes || 0),
+      reviews: Number(entry.reviews || 0), rating: Number(entry.rating || 0),
+    }]))
+  }
+  state.favorites = new Set()
+  state.social = {}
+  if (!state.session?.user) return
+  const { data: own, error: ownError } = await supabase.rpc('get_my_site_game_state')
+  if (ownError || !Array.isArray(own)) return
+  own.forEach((entry) => {
+    if (entry.favorited) state.favorites.add(entry.game_slug)
+    state.social[entry.game_slug] = {
+      liked: Boolean(entry.liked),
+      votedAt: entry.last_voted_at,
+      visits: 0,
+      review: entry.review_rating ? {
+        rating: Number(entry.review_rating), comment: entry.review_comment, createdAt: entry.review_created_at,
+      } : null,
+    }
+  })
+}
+
+const refreshCommunity = async () => { await loadCommunity(); renderAll() }
+
+const toggleFavorite = async (game) => {
+  if (!requireAccount()) return
+  if (isLocalPreview) {
+    state.favorites.has(game.slug) ? state.favorites.delete(game.slug) : state.favorites.add(game.slug)
+    storeLocalState(); renderAll(); return
+  }
+  const { error } = await supabase.rpc('toggle_site_game_favorite', { p_game_slug: game.slug })
+  if (error) { window.alert('Não foi possível alterar sua lista agora. Tente novamente.'); return }
+  await refreshCommunity()
+}
 
 const renderSpotlight = (campaign = null) => {
   if (!spotlightCard) return
@@ -353,7 +395,7 @@ const gameCard = (game, index) => {
   const visual = document.createElement('div'); visual.className = 'game-card__visual'
   const rank = document.createElement('span'); rank.className = 'game-card__rank'; rank.textContent = String(index + 1).padStart(2, '0')
   const favorite = document.createElement('button'); favorite.className = 'game-card__favorite'; favorite.type = 'button'; favorite.textContent = state.favorites.has(game.slug) ? '♥' : '♡'; favorite.setAttribute('aria-pressed', String(state.favorites.has(game.slug))); favorite.setAttribute('aria-label', `${state.favorites.has(game.slug) ? 'Remover' : 'Adicionar'} ${game.name} da minha lista`)
-  favorite.addEventListener('click', () => { if (!requireAccount()) return; state.favorites.has(game.slug) ? state.favorites.delete(game.slug) : state.favorites.add(game.slug); storeLocalState(); renderAll() })
+  favorite.addEventListener('click', () => { void toggleFavorite(game) })
   visual.append(rank, iconElement(game, 'game-card__icon'), favorite)
   const body = document.createElement('div'); body.className = 'game-card__body'
   const statusClass = view.status === 'Lançado' || view.status === 'Disponível' ? 'is-live' : view.status === 'Beta' ? 'is-beta' : 'is-development'
@@ -431,12 +473,27 @@ function renderVoteAgenda() {
   }))
 }
 
-function renderReviews(game) {
-  const list = document.querySelector('[data-review-list]'); const review = localSocial(game.slug).review
-  if (!review) { list.innerHTML = '<p class="review-empty">Ainda não há avaliações nesta prévia. Seja a primeira pessoa a contar como é jogar.</p>'; return }
-  const item = document.createElement('article'); item.className = 'review-item'; const identity = state.session?.user?.user_metadata?.full_name || state.session?.user?.email?.split('@')[0] || 'Jogador AltGrid'
-  const header = document.createElement('header'); const author = document.createElement('strong'); author.textContent = identity; const stars = document.createElement('span'); stars.textContent = '★'.repeat(review.rating) + '☆'.repeat(5 - review.rating); header.append(author, stars)
-  const comment = document.createElement('p'); comment.textContent = review.comment; item.append(header, comment); list.replaceChildren(item)
+function reviewElement(review, fallbackIdentity = 'Jogador AltGrid') {
+  const item = document.createElement('article'); item.className = 'review-item'
+  const header = document.createElement('header'); const author = document.createElement('strong'); author.textContent = review.author || fallbackIdentity
+  const stars = document.createElement('span'); stars.textContent = '★'.repeat(review.rating) + '☆'.repeat(5 - review.rating); header.append(author, stars)
+  const comment = document.createElement('p'); comment.textContent = review.comment; item.append(header, comment); return item
+}
+
+async function renderReviews(game) {
+  const list = document.querySelector('[data-review-list]')
+  if (isLocalPreview || !supabase) {
+    const review = localSocial(game.slug).review
+    if (!review) { list.innerHTML = '<p class="review-empty">Ainda não há avaliações. Seja a primeira pessoa a contar como é jogar.</p>'; return }
+    const identity = state.session?.user?.user_metadata?.full_name || state.session?.user?.email?.split('@')[0] || 'Jogador AltGrid'
+    list.replaceChildren(reviewElement(review, identity)); return
+  }
+  list.innerHTML = '<p class="review-empty">Carregando avaliações…</p>'
+  const { data, error } = await supabase.rpc('get_site_game_reviews', { p_game_slug: game.slug })
+  if (state.activeGame?.slug !== game.slug) return
+  if (error) { list.innerHTML = '<p class="review-empty">Não foi possível carregar as avaliações agora.</p>'; return }
+  if (!Array.isArray(data) || !data.length) { list.innerHTML = '<p class="review-empty">Ainda não há avaliações. Seja a primeira pessoa a contar como é jogar.</p>'; return }
+  list.replaceChildren(...data.map((review) => reviewElement({ ...review, rating: Number(review.rating) })))
 }
 
 function openGame(game, countVisit = true) {
@@ -455,7 +512,11 @@ function openGame(game, countVisit = true) {
   const like = document.querySelector('[data-detail-like]'); like.textContent = local.liked ? '♥ Curtido' : '♡ Curtir'; like.classList.toggle('is-active', Boolean(local.liked))
   const play = document.querySelector('[data-detail-play]'); const url = safeGameUrl(game.developer_referral_url) || safeGameUrl(game.launch_url); play.href = url || '#'; play.hidden = !url
   const reviewForm = document.querySelector('[data-review-form]'); reviewForm.elements.rating.value = String(local.review?.rating ?? 5); reviewForm.elements.comment.value = local.review?.comment ?? ''
-  document.querySelector('[data-review-message]').textContent = ''; renderReviews(game)
+  reviewForm.querySelector('button[type="submit"]').textContent = local.review ? 'Atualizar avaliação' : 'Publicar avaliação'
+  const reviewMessage = document.querySelector('[data-review-message]')
+  if (reviewForm.dataset.gameSlug !== game.slug) reviewMessage.textContent = ''
+  reviewForm.dataset.gameSlug = game.slug
+  void renderReviews(game)
   const urlState = new URL(window.location.href); urlState.searchParams.set('game', game.slug); history.replaceState({}, '', urlState); if (!gameDialog.open) gameDialog.showModal()
 }
 
@@ -522,18 +583,52 @@ document.querySelector('[data-publisher-close]').addEventListener('click', () =>
 document.querySelector('[data-publisher-refresh]').addEventListener('click', () => { void loadPublisherRequests() })
 publisherDialog.addEventListener('cancel', (event) => { event.preventDefault(); publisherDialog.close() })
 document.querySelectorAll('[data-publisher-form]').forEach((form) => form.addEventListener('submit', async (event) => { event.preventDefault(); if (form.reportValidity()) await submitPublisherRequest(form) }))
-document.querySelector('[data-detail-like]').addEventListener('click', () => { if (!state.activeGame || !requireAccount()) return; const local = localSocial(state.activeGame.slug); local.liked = !local.liked; state.social[state.activeGame.slug] = local; storeLocalState(); renderAll() })
+document.querySelector('[data-detail-like]').addEventListener('click', async () => {
+  if (!state.activeGame || !requireAccount()) return
+  const game = state.activeGame
+  if (isLocalPreview) { const local = localSocial(game.slug); local.liked = !local.liked; state.social[game.slug] = local; storeLocalState(); renderAll(); return }
+  const message = document.querySelector('[data-review-message]'); message.textContent = 'Atualizando curtida…'
+  const { error } = await supabase.rpc('toggle_site_game_like', { p_game_slug: game.slug })
+  if (error) { message.textContent = 'Não foi possível alterar a curtida agora.'; return }
+  await refreshCommunity(); document.querySelector('[data-review-message]').textContent = 'Curtida atualizada.'
+})
 document.querySelector('[data-detail-play]').addEventListener('click', () => { if (state.activeGame) trackSiteEvent('select_content', { content_type: 'outbound_idle_game', item_id: state.activeGame.slug, item_name: state.activeGame.name }) })
-document.querySelector('[data-detail-vote]').addEventListener('click', () => { if (!state.activeGame || !requireAccount()) return; const local = localSocial(state.activeGame.slug); const cooldown = 12 * 60 * 60 * 1000; if (local.votedAt && Date.now() - new Date(local.votedAt).getTime() < cooldown) { document.querySelector('[data-review-message]').textContent = 'Seu próximo voto libera 12 horas após o último.'; return } local.votedAt = new Date().toISOString(); state.social[state.activeGame.slug] = local; storeLocalState(); renderAll() })
-document.querySelector('[data-review-form]').addEventListener('submit', (event) => { event.preventDefault(); if (!state.activeGame || !requireAccount()) return; const data = new FormData(event.currentTarget); const comment = String(data.get('comment') ?? '').trim(); if (comment.length < 8) { document.querySelector('[data-review-message]').textContent = 'Escreva pelo menos 8 caracteres.'; return } const local = localSocial(state.activeGame.slug); local.review = { rating: Number(data.get('rating')), comment, createdAt: new Date().toISOString() }; state.social[state.activeGame.slug] = local; storeLocalState(); document.querySelector('[data-review-message]').textContent = 'Avaliação salva nesta prévia.'; renderAll() })
+document.querySelector('[data-detail-vote]').addEventListener('click', async () => {
+  if (!state.activeGame || !requireAccount()) return
+  const game = state.activeGame; const local = localSocial(game.slug); const message = document.querySelector('[data-review-message]'); const cooldown = 12 * 60 * 60 * 1000
+  if (local.votedAt && Date.now() - new Date(local.votedAt).getTime() < cooldown) { message.textContent = 'Seu próximo voto libera 12 horas após o último.'; return }
+  if (isLocalPreview) { local.votedAt = new Date().toISOString(); state.social[game.slug] = local; storeLocalState(); renderAll(); document.querySelector('[data-review-message]').textContent = 'Voto registrado.'; return }
+  message.textContent = 'Registrando voto…'
+  const { error } = await supabase.rpc('cast_site_game_vote', { p_game_slug: game.slug })
+  if (error) { message.textContent = error.message?.includes('cooldown') ? 'Seu próximo voto libera 12 horas após o último.' : 'Não foi possível registrar o voto agora.'; return }
+  await refreshCommunity(); document.querySelector('[data-review-message]').textContent = 'Voto registrado.'
+})
+document.querySelector('[data-review-form]').addEventListener('submit', async (event) => {
+  event.preventDefault(); if (!state.activeGame || !requireAccount()) return
+  const form = event.currentTarget; const button = form.querySelector('button[type="submit"]'); const game = state.activeGame; const data = new FormData(form)
+  const comment = String(data.get('comment') ?? '').trim(); const rating = Number(data.get('rating')); const message = document.querySelector('[data-review-message]')
+  if (comment.length < 8) { message.textContent = 'Escreva pelo menos 8 caracteres.'; return }
+  button.disabled = true; button.textContent = 'Publicando…'; message.textContent = 'Salvando sua avaliação…'
+  if (isLocalPreview) {
+    const local = localSocial(game.slug); local.review = { rating, comment, createdAt: new Date().toISOString() }; state.social[game.slug] = local; storeLocalState(); renderAll()
+    document.querySelector('[data-review-message]').textContent = 'Avaliação salva neste teste local.'
+  } else {
+    const { error } = await supabase.rpc('upsert_site_game_review', { p_game_slug: game.slug, p_rating: rating, p_comment: comment })
+    if (error) message.textContent = 'Não foi possível publicar sua avaliação. Tente novamente.'
+    else { await refreshCommunity(); document.querySelector('[data-review-message]').textContent = 'Avaliação publicada com sucesso.' }
+  }
+  button.disabled = false; button.textContent = localSocial(game.slug).review ? 'Atualizar avaliação' : 'Publicar avaliação'
+})
 document.querySelector('.menu-toggle')?.addEventListener('click', (event) => { const open = document.querySelector('#site-nav').classList.toggle('is-open'); event.currentTarget.setAttribute('aria-expanded', String(open)) })
 document.querySelector('#year').textContent = String(new Date().getFullYear())
 
 authForm.addEventListener('submit', async (event) => { event.preventDefault(); if (!supabase) return; authMessage.textContent = 'Entrando…'; const data = new FormData(authForm); const { error } = await supabase.auth.signInWithPassword({ email: String(data.get('email') ?? '').trim(), password: String(data.get('password') ?? '') }); if (error) { authMessage.textContent = 'Não foi possível entrar. Confira seu e-mail e senha.'; return } authDialog.close(); authForm.reset(); authMessage.textContent = '' })
 document.querySelector('[data-google-login]').addEventListener('click', async () => { if (!supabase) return; authMessage.textContent = 'Abrindo o Google…'; const redirectTo = new URL('games.html', window.location.href).href; const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo } }); if (error) authMessage.textContent = 'Não foi possível abrir o login do Google.' })
 
-if (supabase) { const { data } = await supabase.auth.getSession(); state.session = data.session; readLocalState(); renderMember(); supabase.auth.onAuthStateChange((_event, session) => { state.session = session; readLocalState(); renderMember(); renderAll(); if (session && state.publisherIntent) { const intent = state.publisherIntent; state.publisherIntent = null; queueMicrotask(() => openPublisher(intent.type, intent)) } }) } else { readLocalState(); renderMember() }
+if (supabase) { const { data } = await supabase.auth.getSession(); state.session = data.session; readLocalState(); renderMember(); supabase.auth.onAuthStateChange((_event, session) => { state.session = session; readLocalState(); void (async () => { await loadCommunity(); renderMember(); renderAll(); if (session && state.publisherIntent) { const intent = state.publisherIntent; state.publisherIntent = null; queueMicrotask(() => openPublisher(intent.type, intent)) } })() }) } else { readLocalState(); renderMember() }
 if (window.location.hash === '#entrar' && !state.session) { openAuth(); window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}`) }
 await loadCatalog()
+await loadCommunity()
+renderAll()
 await loadSpotlight()
 setInterval(renderVoteAgenda, 30000)
