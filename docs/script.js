@@ -77,8 +77,22 @@ if ('IntersectionObserver' in window) {
 const RELEASE_API = 'https://api.github.com/repos/acvisualdigital/altgrid-releases/releases/latest'
 const METRICS_API = 'https://altgrid-api.altgrid.workers.dev/v1/app/metrics'
 const METRICS_REFRESH_INTERVAL_MS = 60_000
+const PAGE_RELEASE_VERSION = '1.5.0'
 
 const findAsset = (assets, pattern) => assets.find((asset) => pattern.test(asset.name))
+const versionParts = (version) => version.split('.').map((part) => Number.parseInt(part, 10) || 0)
+const isSameOrNewerVersion = (candidate, baseline) => {
+  const candidateParts = versionParts(candidate)
+  const baselineParts = versionParts(baseline)
+  const length = Math.max(candidateParts.length, baselineParts.length)
+  for (let index = 0; index < length; index += 1) {
+    const candidatePart = candidateParts[index] ?? 0
+    const baselinePart = baselineParts[index] ?? 0
+    if (candidatePart > baselinePart) return true
+    if (candidatePart < baselinePart) return false
+  }
+  return true
+}
 
 const applyLatestRelease = async () => {
   try {
@@ -89,15 +103,17 @@ const applyLatestRelease = async () => {
 
     const release = await response.json()
     const assets = Array.isArray(release.assets) ? release.assets : []
-    const windows = findAsset(assets, /^AltGrid-Setup-.*\.exe$/i)
+    const windows = findAsset(assets, /^(?:AltGrid-Setup-.*|AltGrid-win-x64-Setup)\.exe$/i)
     const releaseVersion = String(release.tag_name ?? '').replace(/^v/i, '')
+    const canApplyRelease = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(releaseVersion)
+      && isSameOrNewerVersion(releaseVersion.split(/[-+]/, 1)[0], PAGE_RELEASE_VERSION)
 
-    if (windows?.browser_download_url) {
+    if (windows?.browser_download_url && canApplyRelease) {
       document.querySelectorAll('.download-windows').forEach((link) => {
         link.href = windows.browser_download_url
       })
     }
-    if (/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(releaseVersion)) {
+    if (canApplyRelease) {
       document.querySelectorAll('.download-windows .current-version, .download-card-main .current-version').forEach((element) => {
         element.textContent = `Versão ${releaseVersion}`
       })

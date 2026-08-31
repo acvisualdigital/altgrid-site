@@ -4,13 +4,7 @@
     <script>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
-      gtag('consent', 'default', {
-        ad_storage: 'denied',
-        analytics_storage: 'denied',
-        ad_user_data: 'denied',
-        ad_personalization: 'denied',
-        wait_for_update: 500
-      });
+      gtag('consent', 'default', { ad_storage: 'denied', analytics_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied', wait_for_update: 500 });
       gtag('js', new Date());
       gtag('config', 'AW-18415695413');
     </script>
@@ -18,248 +12,124 @@
     <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2576736310394290" crossorigin="anonymous"></script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="AltGrid organiza múltiplas contas e sessões de jogos em uma única janela, com grades flexíveis, Eco Mode e sessões independentes." />
+    <meta name="description" content="AltGrid 1.5 é a central para organizar múltiplas contas de jogos idle no Windows, com páginas de grades, Eco Mode, proxy e extensões por conta." />
     <meta name="theme-color" content="#07100c" />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="AltGrid — Todas as suas contas em uma única grade" />
-    <meta property="og:description" content="Gerencie múltiplas sessões de jogos com rapidez, controle e baixo consumo de recursos." />
+    <meta property="og:title" content="AltGrid 1.5 — Sua central para jogos idle" />
+    <meta property="og:description" content="Organize contas, grades, proxies e extensões em um único aplicativo feito para múltiplas sessões." />
     <meta property="og:image" content="https://altgrid.com.br/assets/altgrid-hero.png" />
     <meta property="og:url" content="https://altgrid.com.br/" />
     <meta property="og:locale" content="pt_BR" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="AltGrid — Todas as suas contas em uma única grade" />
-    <meta name="twitter:description" content="Gerencie múltiplas sessões de jogos com grades flexíveis, Eco Mode e contas independentes." />
+    <meta name="twitter:title" content="AltGrid 1.5 — Sua central para jogos idle" />
+    <meta name="twitter:description" content="Múltiplas contas, páginas de grades, Eco Mode e controle por sessão." />
     <meta name="twitter:image" content="https://altgrid.com.br/assets/altgrid-hero.png" />
     <link rel="canonical" href="https://altgrid.com.br/" />
     <link rel="icon" type="image/png" href="assets/altgrid-mark.png" />
     <link rel="preload" as="image" href="assets/altgrid-desktop-grid.png" />
-    <link rel="stylesheet" href="styles.css?v=sitefix-2" />
-    <title>AltGrid — Gerencie todas as suas sessões de jogos</title>
-    <script type="application/ld+json">
-      {
-        "@context": "https://schema.org",
-        "@type": "SoftwareApplication",
-        "name": "AltGrid",
-        "applicationCategory": "GameApplication",
-        "operatingSystem": "Windows, Android",
-        "description": "Aplicativo para organizar múltiplas sessões de jogos idle em grades flexíveis.",
-        "url": "https://altgrid.com.br/",
-        "image": "https://altgrid.com.br/assets/altgrid-hero.png",
-        "publisher": { "@type": "Organization", "name": "AC Visual Digital" },
-        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "BRL" }
-      }
-    </script>
+    <link rel="stylesheet" href="styles.css?v=home-15-3" />
+    <title>AltGrid 1.5 — Central multissessão para jogos idle</title>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"AltGrid","softwareVersion":"1.5.0","applicationCategory":"GameApplication","operatingSystem":"Windows, Android","description":"Central multissessão para organizar contas de jogos idle em páginas de grades.","url":"https://altgrid.com.br/","image":"https://altgrid.com.br/assets/altgrid-hero.png","publisher":{"@type":"Organization","name":"AC Visual Digital"},"offers":{"@type":"Offer","price":"0","priceCurrency":"BRL"}}</script>
   </head>
-  <body>
+  <body class="home-v15">
     <a class="skip-link" href="#conteudo">Ir para o conteúdo</a>
-
     <header class="site-header" data-header>
       <div class="header-inner">
-        <a class="brand" href="#topo" aria-label="AltGrid, início">
-          <img src="assets/altgrid-mark.png" alt="" width="42" height="42" />
-          <span>AltGrid</span>
-        </a>
-        <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">
-          <span></span><span></span><span></span><span class="sr-only">Abrir menu</span>
-        </button>
+        <a class="brand" href="#topo" aria-label="AltGrid, início"><img src="assets/altgrid-mark.png" alt="" width="42" height="42" /><span>AltGrid</span><small class="brand-version">1.5</small></a>
+        <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav"><span></span><span></span><span></span><span class="sr-only">Abrir menu</span></button>
         <nav id="site-nav" class="site-nav" aria-label="Navegação principal">
-          <a href="games.html">Jogos idle</a>
-          <a href="#recursos">Recursos</a>
-          <a href="#desempenho">Desempenho</a>
-          <a href="#planos">Planos</a>
-          <a href="#duvidas">Dúvidas</a>
-          <span class="visitor-counter" title="Navegadores únicos que já visitaram o AltGrid"><i></i><b data-total-visitors>—</b> <span data-visitor-word data-singular="visitante" data-plural="visitantes">visitantes</span></span>
-          <a href="games.html#entrar">Entrar</a>
-          <a class="header-download" href="#downloads">Baixar AltGrid <span aria-hidden="true">↓</span></a>
+          <a href="#novidades">Novidades</a><a href="#recursos">Recursos</a><a href="games.html">Jogos idle</a><a href="#planos">Planos</a>
+          <span class="visitor-counter" title="Pessoas que já visitaram o AltGrid"><i></i><b data-total-visitors>—</b> <span data-visitor-word data-singular="visitante" data-plural="visitantes">visitantes</span></span>
+          <a href="games.html#entrar">Entrar</a><a class="header-download" href="#downloads">Baixar 1.5 <span aria-hidden="true">↓</span></a>
         </nav>
       </div>
     </header>
 
     <main id="conteudo">
-      <section id="topo" class="hero">
-        <div class="hero-glow" aria-hidden="true"></div>
+      <section id="topo" class="hero hero-v15">
+        <div class="hero-glow" aria-hidden="true"></div><div class="hero-orbit hero-orbit-a" aria-hidden="true"></div><div class="hero-orbit hero-orbit-b" aria-hidden="true"></div>
         <div class="page-shell hero-grid">
           <div class="hero-copy reveal">
-            <p class="eyebrow"><span class="status-dot"></span> AltGrid 1.2.3 disponível no Windows</p>
-            <h1>Todas as suas contas. <em>Uma única grade.</em></h1>
-            <p class="hero-lede">Abra, organize e alterne entre várias sessões de jogos sem transformar sua área de trabalho em um caos. Leve, direto e construído para quem joga com múltiplas contas.</p>
+            <p class="eyebrow"><span class="status-dot"></span> AltGrid 1.5 disponível para Windows</p>
+            <h1>Seu universo idle. <em>Sob controle.</em></h1>
+            <p class="hero-lede">Uma central criada para quem gerencia muitas contas. Organize sessões em páginas de grades, reduza consumo e controle cada jogo sem transformar seu PC em um labirinto de janelas.</p>
             <div class="hero-actions">
-              <a class="button button-primary download-windows" href="https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.2.3/AltGrid-Setup-1.2.3.exe">
-                <span class="button-icon" aria-hidden="true">⊞</span>
-                <span><strong>Baixar para Windows</strong><small class="current-version">Versão 1.2.3</small></span>
-              </a>
-              <a class="button button-secondary download-android" href="/downloads/AltGrid-Android-1.2.0.apk" download="AltGrid-Android-1.2.0.apk">
-                <span class="button-icon" aria-hidden="true">▣</span>
-                <span><strong>Baixar para Android</strong><small class="current-version">Versão 1.2.0</small></span>
-              </a>
-              <span class="button button-secondary button-pending" aria-disabled="true"><span><strong>Microsoft Store</strong><small>Encaminhado · em revisão</small></span></span>
+              <a class="button button-primary download-windows" href="https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.5.0/AltGrid-win-x64-Setup.exe"><span class="button-icon" aria-hidden="true">⊞</span><span><strong>Baixar AltGrid 1.5</strong><small class="current-version">Versão 1.5.0 · Windows</small></span></a>
+              <a class="button button-secondary" href="games.html"><span class="button-icon" aria-hidden="true">▦</span><span><strong>Explorar jogos idle</strong><small>Catálogo oficial AltGrid</small></span></a>
+              <div class="hero-platform-pair" aria-label="Outras plataformas do AltGrid">
+                <a class="button button-secondary download-android" href="https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.5.0/AltGrid-Android-1.5.0.apk"><span class="button-icon" aria-hidden="true">◉</span><span><strong>Android</strong><small>Baixar APK 1.5</small></span></a>
+                <span class="button button-secondary button-pending" aria-label="AltGrid na Microsoft Store, em revisão"><span class="button-icon" aria-hidden="true">▦</span><span><strong>Microsoft</strong><small>Store · Em revisão</small></span></span>
+              </div>
             </div>
-            <div class="hero-notes" aria-label="Compatibilidade"><span>Windows 10/11</span><i></i><span>Android</span><i></i><span>Store em análise</span><i></i><span>Conta sincronizada</span></div>
+            <div class="hero-proof" aria-label="Destaques da versão 1.5"><span><b>21</b> jogos no app</span><span><b>∞</b> contas no Founder</span><span><b>1×</b> pagamento nos planos</span></div>
           </div>
           <div class="hero-media reveal reveal-delay">
-            <div class="hero-image-frame">
-              <img src="assets/altgrid-desktop-grid.png" alt="Grade real do AltGrid com seis sessões de jogos abertas simultaneamente" width="1919" height="952" fetchpriority="high" />
-            </div>
+            <div class="release-chip"><span>ATUALIZAÇÃO</span><strong>1.5</strong><small>Mais organização. Menos consumo.</small></div>
+            <div class="hero-image-frame"><img src="assets/altgrid-desktop-grid.png" alt="AltGrid organizando várias sessões de jogos em uma grade" width="1919" height="952" fetchpriority="high" /><div class="hero-image-shade" aria-hidden="true"></div></div>
+            <div class="floating-card floating-card-top"><span class="eco-mark">ECO</span><div><strong>Eco Mode adaptativo</strong><small>Prioridade para a conta em uso</small></div></div>
+            <div class="floating-card floating-card-bottom"><span class="mini-grid-icon">▦</span><div><strong>Páginas de grades</strong><small>Separe contas por jogo ou operação</small></div></div>
           </div>
         </div>
       </section>
 
-      <section class="status-strip" aria-label="Resumo do AltGrid">
-        <div class="page-shell status-grid">
-          <div><strong class="current-version-short">1.2.3</strong><span>Versão estável</span></div>
-          <div><strong id="active-users">—</strong><span>Usuários ativos agora</span></div>
-          <div><strong id="total-users">—</strong><span>Pessoas já usaram o AltGrid</span></div>
-          <div><strong>3 / 2</strong><span>Huntera / outros jogos no FREE</span></div>
+      <section class="status-strip" aria-label="AltGrid em números"><div class="page-shell status-grid"><div><strong class="current-version-short">1.5.0</strong><span>Versão atual para PC</span></div><div><strong id="active-users">—</strong><span>Usuários ativos agora</span></div><div><strong id="total-users">—</strong><span>Pessoas no AltGrid</span></div><div><strong>20+</strong><span>Jogos idle no catálogo</span></div></div></section>
+
+      <section id="novidades" class="section page-shell release-section">
+        <div class="section-heading reveal"><p class="eyebrow">A atualização mais completa até agora</p><h2>A versão 1.5 muda a forma de operar suas contas.</h2><p>O AltGrid cresceu por dentro e por fora: navegação mais limpa, controles acessíveis e ferramentas feitas para operações maiores.</p></div>
+        <div class="release-grid">
+          <article class="release-card release-card-main reveal"><div class="release-card-head"><span>01</span><b>ORGANIZAÇÃO</b></div><h3>Várias páginas de grades.</h3><p>Crie Grade 1, Grade 2 e quantas páginas precisar. Separe contas por jogo, objetivo ou rotina e mostre no topo apenas as sessões da página atual.</p><div class="page-tabs-demo" aria-hidden="true"><span>Todas</span><span class="active">Grade 1</span><span>Grade 2</span><i>+ Nova grade</i></div></article>
+          <article class="release-card reveal"><div class="release-card-head"><span>02</span><b>DESEMPENHO</b></div><h3>Central de CPU e memória.</h3><p>Acompanhe o consumo das sessões em tempo real e ajuste o Eco Mode direto na barra inferior.</p><div class="metric-demo"><span><small>CPU</small><strong>8.4%</strong></span><span><small>RAM</small><strong>1.2 GB</strong></span></div></article>
+          <article class="release-card reveal"><div class="release-card-head"><span>03</span><b>DESCANSO</b></div><h3>Telas escuras. Contas rodando.</h3><p>Coloque uma conta ou toda a grade em descanso visual sem encerrar as sessões.</p><div class="sleep-demo" aria-hidden="true"><span>z</span><span>z</span><strong>Z</strong></div></article>
+          <article class="release-card reveal"><div class="release-card-head"><span>04</span><b>CONTROLE</b></div><h3>Proxy por conta.</h3><p>Salve, ative, teste a rota e copie o proxy de uma conta para outra sem preencher tudo novamente.</p><div class="proxy-demo"><i></i><span>Rota protegida</span><b>ATIVA</b></div></article>
+          <article class="release-card reveal"><div class="release-card-head"><span>05</span><b>EXTENSÕES</b></div><h3>Isoladas por sessão.</h3><p>Cada conta pode receber sua própria extensão no Windows, respeitando o limite do plano.</p><div class="extension-demo" aria-hidden="true"><span>+</span><i>EXT</i><i>EXT</i><i>EXT</i></div></article>
         </div>
       </section>
 
-      <section id="recursos" class="section page-shell">
-        <div class="section-heading reveal">
-          <p class="eyebrow">Feito para múltiplas contas</p>
-          <h2>O controle que faltava entre você e suas sessões.</h2>
-          <p>Menos janelas espalhadas, menos cliques repetidos e mais espaço para acompanhar o que realmente importa.</p>
-        </div>
-        <div class="bento-grid">
-          <article class="feature-card feature-card-wide reveal">
-            <span class="feature-icon" aria-hidden="true">▦</span>
-            <div><p class="card-label">Grades inteligentes</p><h3>De uma conta a uma operação inteira.</h3><p>Use Auto, 1×1, 1×2, 2×1, 2×2, 3×2 e 3×3. O AltGrid reorganiza as sessões sem recarregar os jogos.</p><div class="grid-preview" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></div></div>
-          </article>
-          <article class="feature-card reveal"><span class="feature-icon" aria-hidden="true">◎</span><p class="card-label">Sessões vivas</p><h3>Alterne sem perder o estado.</h3><p>Cada conta mantém armazenamento, login e contexto próprios enquanto você muda de tela ou de layout.</p></article>
-          <article class="feature-card reveal"><span class="feature-icon" aria-hidden="true">⌁</span><p class="card-label">Somente telas</p><h3>O jogo ocupa o espaço.</h3><p>Esconda barras e controles secundários para transformar praticamente toda a janela em área útil.</p></article>
-          <article class="feature-card reveal"><span class="feature-icon" aria-hidden="true">↗</span><p class="card-label">Login completo</p><h3>Pop-ups e Google quando o jogo precisar.</h3><p>Fluxos de autenticação externos abrem com segurança e devolvem você à sessão correta.</p></article>
-          <article class="feature-card feature-card-wide feature-card-chat reveal">
-            <span class="feature-icon" aria-hidden="true">◌</span>
-            <div><p class="card-label">Comunidade integrada</p><h3>Chat global com identidade.</h3><p>Converse sem sair do AltGrid. Fotos dos jogos e badges de plano deixam cada perfil fácil de reconhecer.</p><div class="chat-preview" aria-hidden="true"><div class="avatar">N</div><div><strong class="chat-name"><img class="chat-plan-badge" src="assets/plan-founder-transparent.png" alt="" /> <span>Nick</span> <small>FOUNDER #0001</small></strong><p>Minha grade está pronta.</p></div><span>agora</span></div></div>
-          </article>
-        </div>
-      </section>
+      <section id="recursos" class="control-section"><div class="page-shell control-grid">
+        <div class="control-copy reveal"><p class="eyebrow">Tudo ao alcance de um clique</p><h2>Uma central de comando, não apenas um navegador.</h2><p>Abra o chat, ative Somente telas, descanse sessões, acompanhe CPU e RAM ou altere o limite do Eco Mode sem sair dos jogos.</p><ul class="check-list"><li>Contas e logins isolados localmente</li><li>Google ou e-mail na mesma identidade AltGrid</li><li>Chat global e mensagens diretas com avisos</li><li>Nick único para comunidade e suporte</li><li>Interface redimensionável para qualquer tela</li></ul></div>
+        <div class="command-center reveal reveal-delay" aria-label="Representação da central de utilitários do AltGrid"><div class="command-screen"><span class="command-logo"><img src="assets/altgrid-mark.png" alt="" /></span><small>CENTRAL PRONTA</small><strong>3 sessões organizadas</strong><p>Grade 1 · Huntera</p></div><div class="command-dock"><div><small>CPU</small><strong>8.4%</strong></div><div><small>RAM</small><strong>1.2 GB</strong></div><button type="button">Chat <i>2</i></button><button type="button">Somente telas</button><button type="button">Descanso</button><button class="is-on" type="button"><span>Eco Mode</span><b>Ligado</b></button><label>20 FPS <span>⌄</span></label></div></div>
+      </div></section>
 
-      <section id="desempenho" class="performance-section">
-        <div class="page-shell performance-grid">
-          <div class="performance-copy reveal">
-            <p class="eyebrow">Performance sob seu controle</p><h2>Suave onde você joga. Econômico onde você espera.</h2><p>Defina FPS por sessão ou ative o Eco Mode. A conta em uso recebe prioridade e as demais trabalham em ritmo reduzido.</p>
-            <ul class="check-list"><li>Aceleração por GPU no aplicativo desktop</li><li>FPS individual por janela</li><li>Modo economia de 10 a 30 FPS nas sessões em segundo plano</li><li>Sessões independentes sem recriação ao trocar a grade</li></ul>
+      <section class="section page-shell catalog-teaser"><div class="catalog-panel reveal">
+        <div class="catalog-copy"><p class="eyebrow">Descubra seu próximo idle</p><h2>Um catálogo vivo, feito pela comunidade.</h2><p>Veja jogos lançados, em beta ou em desenvolvimento. Filtre estilos, favorite projetos e acesse apenas sites oficiais verificados.</p><div class="catalog-actions"><a class="button button-primary" href="games.html#lista">Ver todos os jogos</a><a class="button button-secondary" href="games.html#anunciar">Anunciar meu jogo</a></div></div>
+        <div class="catalog-stack" aria-label="Alguns jogos disponíveis no catálogo"><article><img src="assets/game-icons/frenetic-world-official.png" alt="Frenetic World" /><div><small>MMORPG IDLE</small><strong>Frenetic World</strong></div><span>LANÇADO</span></article><article><img src="assets/game-icons/gengar-idle-official.png" alt="Gengar Idle" /><div><small>POKÉMON IDLE</small><strong>Gengar Idle</strong></div><span>LANÇADO</span></article><article><img src="assets/game-icons/jerimbia-idle-official.png" alt="Jerimbia Idle" /><div><small>TIBIA IDLE</small><strong>Jerimbia Idle</strong></div><span>EM DESTAQUE</span></article></div>
+      </div></section>
+
+      <section id="planos" class="plans-section plans-v15"><div class="page-shell">
+        <div class="section-heading centered reveal"><p class="eyebrow">Uma compra. Acesso vitalício.</p><h2>Escolha o tamanho da sua operação.</h2><p>FREE é grátis para sempre. PRO, PLUS e FOUNDER são pagos uma única vez, sem mensalidade.</p></div>
+        <div class="plans-grid">
+          <article class="plan-card reveal"><img class="plan-emblem" src="assets/plan-free-transparent.png" alt="Plano FREE" /><div class="plan-name"><span>FREE</span><small>GRÁTIS PARA SEMPRE</small></div><h3>3 no Huntera · 2 nos demais</h3><p class="plan-summary">Para começar a organizar suas contas sem custo.</p><ul><li>Grades básicas</li><li>Somente telas</li><li>Presets e sessões isoladas</li><li>Dados locais preservados</li></ul><a class="button button-quiet download-windows" href="https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.5.0/AltGrid-win-x64-Setup.exe">Baixar grátis</a></article>
+          <article class="plan-card plan-card-pro reveal"><img class="plan-emblem" src="assets/plan-pro-transparent.png" alt="Plano PRO" /><div class="plan-name"><span>PRO</span><small>VITALÍCIO</small></div><h3>Até 6 contas simultâneas</h3><p class="plan-summary">Mais controle, grades avançadas e economia de recursos.</p><ul><li>Tudo do FREE</li><li>Eco Mode e controle de FPS</li><li>Grades personalizadas</li><li>Extensões em até 3 contas</li></ul><a class="button button-primary" href="#downloads">Começar com PRO</a></article>
+          <article class="plan-card plan-card-plus reveal"><span class="recommended-pill">MAIS ESCOLHIDO</span><img class="plan-emblem" src="assets/plan-plus-transparent.png" alt="Plano PLUS" /><div class="plan-name"><span>PLUS</span><small>VITALÍCIO</small></div><h3>Até 10 contas simultâneas</h3><p class="plan-summary">Capacidade para quem gerencia muitas contas todos os dias.</p><ul><li>Tudo do PRO</li><li>Grades para operações maiores</li><li>Eco Mode completo</li><li>Extensões em até 9 contas</li></ul><a class="button button-plus" href="#downloads">Começar com PLUS</a></article>
+          <article class="plan-card plan-card-founder reveal"><img class="plan-emblem" src="assets/plan-founder-transparent.png" alt="Plano FOUNDER" /><div class="plan-name"><span>FOUNDER</span><small>VITALÍCIO</small></div><h3>Contas ilimitadas</h3><p class="plan-summary">O nível máximo do AltGrid, sem limite de sessões ou extensões.</p><ul><li>Tudo do PLUS</li><li>Contas e extensões ilimitadas</li><li>Proxy exclusivo por conta</li><li>Recursos beta e badge Founder</li></ul><a class="button button-founder" href="#downloads">Quero ser Founder</a></article>
+        </div><p class="plans-note">Os limites indicam contas abertas ao mesmo tempo. Suas configurações continuam salvas mesmo quando o plano muda.</p>
+      </div></section>
+
+      <section id="downloads" class="downloads-section downloads-v15"><div class="page-shell download-spotlight reveal">
+        <div class="download-spotlight-copy"><p class="eyebrow">Pronto para organizar seu grid?</p><h2>Baixe o AltGrid 1.5.</h2><p>O instalador inclui o novo sistema de atualização. Suas contas e configurações locais são preservadas nas próximas versões.</p><div class="download-badges"><span>Windows 10/11</span><span>x64</span><span>Atualização integrada</span></div></div>
+        <div class="download-spotlight-actions">
+          <a class="button button-primary download-windows" href="https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.5.0/AltGrid-win-x64-Setup.exe"><span class="button-icon" aria-hidden="true">⊞</span><span><strong>Baixar para Windows</strong><small class="current-version">AltGrid 1.5.0 · Windows 10/11</small></span></a>
+          <div class="download-platform-pair" aria-label="AltGrid para Android e Microsoft Store">
+            <a class="button button-secondary download-android" href="https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.5.0/AltGrid-Android-1.5.0.apk"><span class="button-icon" aria-hidden="true">◉</span><span><strong>Android</strong><small>Baixar APK 1.5</small></span></a>
+            <span class="button button-secondary button-pending" aria-label="AltGrid na Microsoft Store, em revisão"><span class="button-icon" aria-hidden="true">▦</span><span><strong>Microsoft</strong><small>Store · Em revisão</small></span></span>
           </div>
-          <div class="performance-console reveal reveal-delay" aria-label="Exemplo visual do Eco Mode">
-            <div class="console-top"><span>ALTGRID / ECO MODE</span><b><i></i> ATIVO</b></div>
-            <div class="session-meter session-meter-active"><div><span>Conta ativa</span><strong>60 FPS</strong></div><div class="meter"><i style="--meter: 100%"></i></div><small>Prioridade de renderização</small></div>
-            <div class="session-meter"><div><span>Sessão 02</span><strong>20 FPS</strong></div><div class="meter"><i style="--meter: 34%"></i></div><small>Economia em segundo plano</small></div>
-            <div class="session-meter"><div><span>Sessão 03</span><strong>10 FPS</strong></div><div class="meter"><i style="--meter: 17%"></i></div><small>Economia máxima</small></div>
-          </div>
+          <small class="download-notice">O Windows pode exibir “Editor desconhecido” enquanto o instalador direto ainda não possui assinatura digital.</small>
         </div>
-      </section>
+      </div></section>
 
-      <section class="section page-shell workflow-section">
-        <div class="section-heading reveal"><p class="eyebrow">Simples desde o primeiro clique</p><h2>Adicione, organize e jogue.</h2></div>
-        <div class="workflow-grid">
-          <article class="reveal"><span>01</span><h3>Escolha o jogo</h3><p>Use os presets atualizados remotamente ou informe uma URL personalizada.</p></article>
-          <article class="reveal"><span>02</span><h3>Abra suas contas</h3><p>Cada conta recebe uma sessão isolada e continua salva para o próximo acesso.</p></article>
-          <article class="reveal"><span>03</span><h3>Monte a grade</h3><p>Organize automaticamente ou escolha o layout ideal para sua tela e seu plano.</p></article>
-        </div>
-      </section>
+      <section id="duvidas" class="section page-shell faq-section"><div class="section-heading reveal"><p class="eyebrow">Perguntas frequentes</p><h2>Respostas rápidas antes de começar.</h2></div><div class="faq-list">
+        <article class="faq-item reveal"><button type="button" aria-expanded="false"><span>Os planos pagos têm mensalidade?</span><b>+</b></button><div class="faq-answer"><p>Não. PRO, PLUS e FOUNDER são licenças vitalícias com pagamento único. O FREE continua grátis para sempre.</p></div></article>
+        <article class="faq-item reveal"><button type="button" aria-expanded="false"><span>Colocar a tela em descanso encerra a conta?</span><b>+</b></button><div class="faq-answer"><p>Não. O descanso reduz a atividade visual e mantém a sessão rodando em segundo plano.</p></div></article>
+        <article class="faq-item reveal"><button type="button" aria-expanded="false"><span>Posso usar um proxy diferente em cada conta?</span><b>+</b></button><div class="faq-answer"><p>Sim. No Windows, o proxy pode ser salvo, ativado e testado por conta. Também é possível copiar a configuração para outra sessão.</p></div></article>
+        <article class="faq-item reveal"><button type="button" aria-expanded="false"><span>As extensões ficam separadas?</span><b>+</b></button><div class="faq-answer"><p>Sim. Cada conta usa sua própria configuração de extensão. PRO permite até 3, PLUS até 9 e FOUNDER não possui limite.</p></div></article>
+        <article class="faq-item reveal"><button type="button" aria-expanded="false"><span>O AltGrid guarda a senha dos jogos?</span><b>+</b></button><div class="faq-answer"><p>As sessões e dados dos jogos ficam isolados localmente no seu dispositivo. O AltGrid não cria um banco próprio com as senhas dos jogos.</p></div></article>
+      </div></section>
 
-      <section id="planos" class="plans-section">
-        <div class="page-shell">
-          <div class="section-heading centered reveal"><p class="eyebrow">Planos sem apagar suas contas</p><h2>Comece grátis. Cresça quando precisar.</h2><p>O limite controla sessões abertas ao mesmo tempo. Suas contas e configurações continuam preservadas.</p></div>
-          <div class="plans-grid">
-            <article class="plan-card reveal">
-              <img class="plan-emblem" src="assets/plan-free-transparent.png" alt="Emblema do plano FREE" width="256" height="256" />
-              <div class="plan-name"><span>FREE</span><small>Para começar</small></div>
-              <h3>Organize suas primeiras contas.</h3>
-              <p class="plan-summary">A base completa do AltGrid, sem prazo para acabar e sem excluir configurações.</p>
-              <ul><li>Até 3 sessões simultâneas no Huntera</li><li>Até 2 sessões nos demais jogos</li><li>Contas configuradas preservadas</li><li>Presets remotos de jogos</li><li>Grades e controles essenciais</li><li>URLs personalizadas seguras</li><li>Privacidade local das sessões</li></ul>
-              <a class="button button-quiet download-windows" href="https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.2.3/AltGrid-Setup-1.2.3.exe">Baixar grátis</a>
-            </article>
-            <article class="plan-card plan-card-pro reveal">
-              <img class="plan-emblem" src="assets/plan-pro-transparent.png" alt="Emblema do plano PRO" width="256" height="256" />
-              <div class="plan-name"><span>PRO</span><small>Plano avançado</small></div>
-              <h3>Mais contas e mais controle.</h3>
-              <p class="plan-summary">Feito para quem precisa acompanhar uma grade maior com desempenho ajustável.</p>
-              <ul><li>Até 6 sessões simultâneas</li><li>Todos os recursos do FREE</li><li>Grades avançadas até 3×3</li><li>Eco Mode para segundo plano</li><li>Controle individual de FPS</li><li>Restauração de sessões</li><li>Badge PRO no perfil e no chat</li></ul>
-              <a class="button button-primary" href="#downloads">Usar o AltGrid</a>
-            </article>
-            <article class="plan-card plan-card-plus reveal">
-              <span class="recommended-pill">MAIS ESCOLHIDO</span>
-              <img class="plan-emblem" src="assets/plan-plus-transparent.png" alt="Emblema do plano PLUS" width="256" height="256" />
-              <div class="plan-name"><span>PLUS</span><small>Melhor custo-benefício</small></div>
-              <h3>Espaço para uma grade completa.</h3>
-              <p class="plan-summary">A camada intermediária para quem quer expandir sem abrir mão da eficiência.</p>
-              <ul><li>Até 10 sessões simultâneas</li><li>Todos os recursos do PRO</li><li>Grades grandes e layouts avançados</li><li>Eco Mode e FPS por sessão</li><li>Restauração de todas as contas</li><li>Prioridade nas novidades</li><li>Badge PLUS exclusiva</li></ul>
-              <a class="button button-plus" href="#downloads">Usar o AltGrid</a>
-            </article>
-            <article class="plan-card plan-card-founder reveal">
-              <img class="plan-emblem" src="assets/plan-founder-transparent.png" alt="Emblema do plano FOUNDER" width="256" height="256" />
-              <div class="plan-name"><span>FOUNDER</span><small>Plano máximo</small></div>
-              <h3>Parte permanente da história.</h3>
-              <p class="plan-summary">O nível máximo para fundadores que apoiam o crescimento do AltGrid.</p>
-              <ul><li>Sessões simultâneas ilimitadas</li><li>Todos os recursos do PLUS</li><li>Acesso a recursos beta</li><li>Benefícios especiais de Founder</li><li>Badge FOUNDER real no chat</li><li>Número de fundador no perfil</li><li>Acesso vitalício conforme oferta</li></ul>
-              <a class="button button-founder" href="https://discord.gg/F5b5pmruU" target="_blank" rel="noreferrer">Entrar na comunidade</a>
-            </article>
-          </div>
-          <p class="plans-note">Valores, limites atualizados e disponibilidade aparecem dentro do aplicativo. Pagamentos externos podem ser processados por Pix.</p>
-        </div>
-      </section>
-
-      <section id="downloads" class="downloads-section">
-        <div class="page-shell">
-          <div class="section-heading reveal"><p class="eyebrow">Baixe do seu jeito</p><h2>AltGrid em todas as suas telas.</h2><p>Use a mesma conta no Windows e no Android. Escolha a versão adequada para seu dispositivo.</p></div>
-          <div class="android-showcase reveal">
-            <div class="android-video-shell">
-              <video controls muted playsinline preload="metadata" aria-label="Demonstração do AltGrid funcionando no Android">
-                <source src="assets/altgrid-android-demo.mp4" type="video/mp4" />
-                Seu navegador não consegue reproduzir este vídeo.
-              </video>
-            </div>
-            <div class="android-showcase-copy">
-              <p class="eyebrow">Android em destaque</p>
-              <h3>Suas contas rápidas e conectadas no celular.</h3>
-              <p>O AltGrid para Android mantém suas sessões organizadas dentro do aplicativo e permite alternar entre contas sem depender de várias abas abertas.</p>
-              <ul class="android-benefits"><li>Sessões acessíveis dentro do aplicativo</li><li>Troca rápida entre contas conectadas</li><li>Mesma identidade e planos do AltGrid</li><li>Interface adaptada para toque e telas menores</li></ul>
-              <a class="button button-primary download-android" href="/downloads/AltGrid-Android-1.2.0.apk" download="AltGrid-Android-1.2.0.apk">Baixar AltGrid para Android <span aria-hidden="true">↓</span></a>
-              <small>Vídeo real da versão Android. O APK é instalado manualmente enquanto a distribuição oficial é ampliada.</small>
-            </div>
-          </div>
-          <div class="download-grid">
-            <article class="download-card download-card-main reveal"><div class="platform-icon" aria-hidden="true">⊞</div><div class="download-copy"><span class="download-label">WINDOWS 10/11</span><h3>Aplicativo para PC</h3><p>Versão desktop completa com grades, sessões independentes, escala de interface por conta e proxy exclusivo Founder.</p></div><a class="button button-primary download-windows" href="https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.2.3/AltGrid-Setup-1.2.3.exe">Baixar instalador <span aria-hidden="true">↓</span></a><small class="asset-meta">EXE · <span class="current-version">Versão 1.2.3</span></small></article>
-            <article class="download-card download-card-android reveal"><div class="platform-icon" aria-hidden="true">▣</div><div class="download-copy"><span class="download-label">ANDROID · APK</span><h3>Aplicativo para celular</h3><p>Acesso integrado às sessões, zoom automático e alternância rápida entre contas em uma interface feita para toque.</p></div><a class="button button-secondary download-android" href="/downloads/AltGrid-Android-1.2.0.apk" download="AltGrid-Android-1.2.0.apk">Baixar APK <span aria-hidden="true">↓</span></a><small class="asset-meta">APK · <span class="current-version">Versão 1.2.0</span></small></article>
-            <article class="download-card download-card-store reveal"><div class="platform-icon platform-icon-store" aria-hidden="true">▦</div><div class="download-copy"><span class="download-label store-status">ENCAMINHADO</span><h3>Microsoft Store</h3><p>O AltGrid já foi enviado à Microsoft e está aguardando a revisão e a liberação pública na loja.</p><span class="store-review-status"><i></i>Aguardando revisão da Microsoft</span></div><span class="button button-secondary button-pending" aria-disabled="true">Disponível após aprovação</span><small class="asset-meta">O link será ativado assim que a certificação terminar.</small></article>
-          </div>
-          <section class="install-help reveal" aria-labelledby="install-help-title">
-            <div class="install-help-heading"><p class="eyebrow">Antes de instalar</p><h3 id="install-help-title">Avisos que podem aparecer em cada versão.</h3><p>Essas mensagens são diferentes conforme o sistema. Só prossiga quando o download tiver sido iniciado pelos botões oficiais desta página.</p></div>
-            <div class="install-notice-grid">
-              <article class="install-notice"><span class="notice-platform">WINDOWS · EXE</span><h4>“O Windows protegeu o computador”</h4><p>O SmartScreen pode mostrar “Editor desconhecido” enquanto o instalador direto constrói reputação e recebe assinatura.</p><ul><li>Clique em <strong>Mais informações</strong>.</li><li>Confirme que o arquivo se chama AltGrid-Setup.</li><li>Use <strong>Executar assim mesmo</strong> somente se baixou por esta página.</li><li>Se a atualização interna não concluir, reinstale o Setup disponível nesta página; seus dados serão preservados.</li></ul><div class="notice-action">O pedido de permissão do Windows para instalar também é esperado.</div></article>
-              <article class="install-notice install-notice-android"><span class="notice-platform">ANDROID · APK</span><h4>“Instalação de fonte desconhecida”</h4><p>Como o APK é distribuído diretamente, o Android ou o Play Protect pode pedir uma confirmação adicional.</p><ul><li>Autorize temporariamente o navegador ou gerenciador de arquivos usado no download.</li><li>Continue somente com o APK oficial do AltGrid.</li><li>Se aparecer “App não instalado”, procure o suporte antes de remover uma versão anterior.</li></ul><div class="notice-action">Desative novamente a permissão de fonte desconhecida após instalar.</div></article>
-              <article class="install-notice install-notice-store"><span class="notice-platform">MICROSOFT STORE</span><h4>Produto ainda não disponível</h4><p>O envio foi concluído, mas a Microsoft ainda está revisando o aplicativo. Até a aprovação, a página pode não abrir ou mostrar indisponibilidade.</p><ul><li>Status atual: <strong>aguardando revisão</strong>.</li><li>Nenhuma ação é necessária agora.</li><li>O botão será liberado depois da publicação oficial.</li></ul><div class="notice-action">A versão da Store terá instalação e atualizações pelo canal oficial.</div></article>
-            </div>
-          </section>
-        </div>
-      </section>
-
-      <section id="duvidas" class="section page-shell faq-section">
-        <div class="section-heading reveal"><p class="eyebrow">Perguntas frequentes</p><h2>Antes de abrir sua primeira grade.</h2></div>
-        <div class="faq-list">
-          <article class="faq-item reveal"><button type="button" aria-expanded="false"><span>O AltGrid apaga contas quando o plano muda?</span><b>+</b></button><div class="faq-answer"><p>Não. Os limites são aplicados às sessões abertas simultaneamente. Contas e configurações continuam salvas.</p></div></article>
-          <article class="faq-item reveal"><button type="button" aria-expanded="false"><span>Trocar a grade recarrega o jogo?</span><b>+</b></button><div class="faq-answer"><p>Não. A mudança de layout preserva as sessões e apenas reorganiza suas janelas na interface.</p></div></article>
-          <article class="faq-item reveal"><button type="button" aria-expanded="false"><span>Como funciona o Eco Mode?</span><b>+</b></button><div class="faq-answer"><p>A sessão em uso mantém maior fluidez, enquanto contas em segundo plano podem operar com um limite menor de FPS.</p></div></article>
-          <article class="faq-item reveal"><button type="button" aria-expanded="false"><span>O AltGrid guarda minhas senhas?</span><b>+</b></button><div class="faq-answer"><p>Não. A autenticação do AltGrid é gerenciada com segurança pelo provedor de autenticação, e as senhas não são armazenadas manualmente pelo aplicativo.</p></div></article>
-          <article class="faq-item reveal"><button type="button" aria-expanded="false"><span>Posso usar uma URL personalizada?</span><b>+</b></button><div class="faq-answer"><p>Sim. Além dos jogos disponibilizados remotamente, você pode criar uma sessão com uma URL HTTP ou HTTPS válida.</p></div></article>
-        </div>
-      </section>
-
-      <section class="community-cta"><div class="page-shell community-grid reveal"><div><p class="eyebrow">A evolução acontece junto</p><h2>Entre na comunidade AltGrid.</h2><p>Compartilhe feedback, acompanhe novidades e receba suporte diretamente no Discord.</p></div><a class="button button-primary" href="https://discord.gg/F5b5pmruU" target="_blank" rel="noreferrer">Entrar no Discord <span aria-hidden="true">↗</span></a></div></section>
+      <section class="community-cta"><div class="page-shell community-grid reveal"><div><p class="eyebrow">Construído junto com quem joga</p><h2>Entre na comunidade AltGrid.</h2><p>Dê sugestões, acompanhe as próximas versões e fale com outros jogadores idle no chat e no Discord.</p></div><div class="community-actions"><a class="button button-primary" href="https://discord.gg/F5b5pmruU" target="_blank" rel="noreferrer">Entrar no Discord <span aria-hidden="true">↗</span></a><a class="button button-secondary" href="https://x.com/altgridapp" target="_blank" rel="noreferrer">Seguir no X</a></div></div></section>
     </main>
 
-    <footer class="site-footer">
-      <div class="page-shell footer-grid">
-        <div class="footer-brand"><a class="brand" href="#topo"><img src="assets/altgrid-mark.png" alt="" width="36" height="36" /><span>AltGrid</span></a><p>Múltiplas contas. Uma única grade.</p></div>
-        <nav aria-label="Links do rodapé"><a href="games.html">Jogos idle</a><a href="about.html">Sobre</a><a href="#planos">Planos</a><a href="#downloads">Downloads</a><a href="support.html">Suporte e contato</a><a href="privacy.html">Privacidade</a><a href="terms.html">Termos</a></nav>
-        <div class="footer-meta"><a href="https://discord.gg/F5b5pmruU" target="_blank" rel="noreferrer">Discord oficial ↗</a><span>© <span id="year"></span> AC Visual Digital</span></div>
-      </div>
-    </footer>
+    <footer class="site-footer"><div class="page-shell footer-grid"><div class="footer-brand"><a class="brand" href="#topo"><img src="assets/altgrid-mark.png" alt="" width="36" height="36" /><span>AltGrid</span></a><p>Sua central para jogos idle.</p></div><nav aria-label="Links do rodapé"><a href="games.html">Jogos idle</a><a href="about.html">Sobre</a><a href="#planos">Planos</a><a href="#downloads">Downloads</a><a href="support.html">Suporte</a><a href="privacy.html">Privacidade</a><a href="terms.html">Termos</a></nav><div class="footer-meta"><a href="https://discord.gg/F5b5pmruU" target="_blank" rel="noreferrer">Discord oficial ↗</a><span>AltGrid 1.5 · © <span id="year"></span> AC Visual Digital</span></div></div></footer>
     <noscript><p class="noscript">Ative o JavaScript para detectar automaticamente a versão mais recente dos downloads.</p></noscript>
-    <script src="site-config.js"></script>
-    <script type="module" src="site-visitors.js?v=visitors-1"></script>
-    <script src="site-consent.js?v=consent-1"></script>
-    <script src="script.js?v=sitefix-2"></script>
+    <script src="site-config.js"></script><script type="module" src="site-visitors.js?v=visitors-1"></script><script src="site-consent.js?v=consent-1"></script><script src="script.js?v=home-15-3"></script>
   </body>
 </html>
