@@ -187,6 +187,52 @@ describe('platform Worker endpoints', () => {
     expect(authentication.authenticate).not.toHaveBeenCalled()
   })
 
+  it('serves the Windows update feed without exposing GitHub redirects to the launcher', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      Assets: [{
+        FileName: 'AltGrid-1.5.0-win-x64-full.nupkg',
+        PackageId: 'AltGrid',
+        Type: 'Full',
+        Version: '1.5.0',
+      }],
+    }), { status: 200 }))
+    const alwaysAllowed = { limit: vi.fn(async () => ({ success: true })) }
+    const updateApi = createApi({
+      authentication,
+      repository,
+      entitlementService: new EntitlementService(repository),
+      edgeRateLimiter: alwaysAllowed,
+      userRateLimiter: alwaysAllowed,
+      deviceRateLimiter: alwaysAllowed,
+    }, { fetcher })
+
+    const feed = await updateApi.fetch(new Request(
+      'https://api.example.com/v1/updates/releases.win-x64.json?localVersion=1.5.0&id=AltGrid',
+    ))
+    expect(feed.status).toBe(200)
+    await expect(feed.json()).resolves.toMatchObject({
+      Assets: [{ Version: '1.5.0' }],
+    })
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://github.com/acvisualdigital/altgrid-releases/releases/latest/download/releases.win-x64.json',
+      { headers: { Accept: 'application/json' } },
+    )
+    expect(authentication.authenticate).not.toHaveBeenCalled()
+
+    const packageResponse = await updateApi.fetch(new Request(
+      'https://api.example.com/v1/updates/AltGrid-1.5.1-win-x64-full.nupkg',
+    ))
+    expect(packageResponse.status).toBe(302)
+    expect(packageResponse.headers.get('Location')).toBe(
+      'https://github.com/acvisualdigital/altgrid-releases/releases/latest/download/AltGrid-1.5.1-win-x64-full.nupkg',
+    )
+
+    const rejected = await updateApi.fetch(new Request(
+      'https://api.example.com/v1/updates/../../secrets.txt',
+    ))
+    expect(rejected.status).toBe(404)
+  })
+
   it('sends chat messages as the authenticated user with a dedicated rate limit', async () => {
     const response = await api.fetch(request(
       `/v1/chat/channels/${CHANNEL_ID}/messages`,

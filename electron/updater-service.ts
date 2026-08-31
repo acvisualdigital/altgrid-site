@@ -7,7 +7,7 @@ const STARTUP_CHECK_DELAY_MS = 5_000
 const PERIODIC_CHECK_INTERVAL_MS = 30 * 60 * 1_000
 const RETRY_DELAYS_MS = [1_000, 3_000] as const
 const MAX_RELEASE_NOTES_LENGTH = 4_000
-const DEFAULT_UPDATE_URL = 'https://github.com/acvisualdigital/altgrid-releases/releases/latest/download/'
+const DEFAULT_UPDATE_URL = 'https://altgrid-api.altgrid.workers.dev/v1/updates/'
 
 function releaseNotesAsText(releaseNotes: string | undefined): string | undefined {
   if (!releaseNotes) return undefined

@@ -53,7 +53,13 @@ interface ApiDependencies {
 
 interface ApiOptions {
   allowedOrigins?: readonly string[]
+  fetcher?: typeof fetch
 }
+
+const UPDATE_RELEASE_BASE_URL =
+  'https://github.com/acvisualdigital/altgrid-releases/releases/latest/download/'
+const WINDOWS_UPDATE_FEED = 'releases.win-x64.json'
+const WINDOWS_UPDATE_PACKAGE = /^AltGrid-[0-9A-Za-z.+-]+-win-x64-(?:full|delta)\.nupkg$/
 
 function normalizedPath(url: string): string {
   const pathname = new URL(url).pathname
@@ -103,6 +109,10 @@ function allowedMethods(pathname: string): string[] | null {
     || /^\/v1\/chat\/direct\/[^/]+$/.test(pathname)
   ) {
     return ['POST']
+  }
+
+  if (/^\/v1\/updates\/[^/]+$/.test(pathname)) {
+    return ['GET']
   }
 
   if (/^\/v1\/chat\/channels\/[^/]+\/messages$/.test(pathname)) {
@@ -181,6 +191,39 @@ export function createApi(
         'rate_limited',
         'Muitas tentativas. Aguarde e tente novamente.',
       )
+    }
+
+    const updateAssetMatch = /^\/v1\/updates\/([^/]+)$/.exec(pathname)
+    if (updateAssetMatch) {
+      const assetName = decodePathSegment(updateAssetMatch[1])
+      if (assetName === WINDOWS_UPDATE_FEED) {
+        const upstream = await (options.fetcher ?? fetch)(
+          UPDATE_RELEASE_BASE_URL + WINDOWS_UPDATE_FEED,
+          { headers: { Accept: 'application/json' } },
+        )
+        if (!upstream.ok) {
+          throw new ApiError(502, 'update_feed_unavailable', 'Atualizações indisponíveis.')
+        }
+        const feed = await upstream.json() as { Assets?: unknown }
+        if (!Array.isArray(feed.Assets)) {
+          throw new ApiError(502, 'invalid_update_feed', 'Feed de atualizações inválido.')
+        }
+        return jsonResponse(feed, 200, {
+          'Cache-Control': 'public, max-age=60, s-maxage=60',
+        })
+      }
+
+      if (WINDOWS_UPDATE_PACKAGE.test(assetName)) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            'Cache-Control': 'public, max-age=60, s-maxage=60',
+            Location: UPDATE_RELEASE_BASE_URL + encodeURIComponent(assetName),
+          },
+        })
+      }
+
+      throw new ApiError(404, 'update_asset_not_found', 'Arquivo de atualização não encontrado.')
     }
 
     if (pathname === '/v1/games') {

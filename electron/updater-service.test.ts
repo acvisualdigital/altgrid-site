@@ -119,6 +119,16 @@ describe('UpdaterService with Velopack launcher', () => {
     expect(unsafe.getState().supported).toBe(false)
   })
 
+  it('uses the stable AltGrid update endpoint by default', () => {
+    electronMocks.app.isPackaged = true
+    new UpdaterService(createWindow().browserWindow)
+
+    expect(velopackMocks.UpdateManager).toHaveBeenLastCalledWith(
+      'https://altgrid-api.altgrid.workers.dev/v1/updates/',
+      { AllowVersionDowngrade: false, MaximumDeltasBeforeFallback: 5 },
+    )
+  })
+
   it('keeps portable and legacy NSIS installations out of the launcher path', async () => {
     electronMocks.app.isPackaged = true
     process.env.PORTABLE_EXECUTABLE_FILE = 'C:\\AltGrid\\AltGrid-Portable.exe'
