@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Poké Idle — Pokébola</title>
+  <defs>
+    <clipPath id="ball"><circle cx="32" cy="32" r="28"/></clipPath>
+    <linearGradient id="red" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ff786d"/><stop offset=".48" stop-color="#e53935"/><stop offset="1" stop-color="#9f171b"/></linearGradient>
+    <linearGradient id="white" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#c9d0d1"/></linearGradient>
+  </defs>
+  <g clip-path="url(#ball)"><rect x="4" y="4" width="56" height="28" fill="url(#red)"/><rect x="4" y="32" width="56" height="28" fill="url(#white)"/><path d="M5 29h54v8H5z" fill="#171b1d"/><path d="M9 12c8-7 20-8 29-4" fill="none" stroke="#ffb2a9" stroke-width="4" stroke-linecap="round" opacity=".75"/></g>
+  <circle cx="32" cy="32" r="28" fill="none" stroke="#101416" stroke-width="5"/><circle cx="32" cy="33" r="12" fill="#15191b"/><circle cx="32" cy="33" r="8" fill="url(#white)" stroke="#5f696c" stroke-width="2"/><circle cx="29" cy="30" r="2" fill="#fff" opacity=".9"/>
+</svg>

@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://altgrid.com.br/sitemap.xml

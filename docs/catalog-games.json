@@ -1,0 +1,430 @@
+{
+  "source": "TopIdle public catalog review",
+  "reviewed_at": "2026-08-30",
+  "games": [
+    {
+      "id": "catalog-poke-idle-online",
+      "slug": "poke-idle-online",
+      "name": "Poke Idle Online",
+      "launch_url": "https://pokeidle.online/game/",
+      "icon_url": "assets/game-icons/poke-idle-online.svg",
+      "sort_order": 100,
+      "site_only": false,
+      "metadata": {
+        "category": "Poke Idle",
+        "status": "Lançado",
+        "description": "MMORPG idle de captura, treinamento e evolução de criaturas com progressão contínua no navegador.",
+        "tagline": "Capture, evolua e continue avançando.",
+        "accent": "#f1c94d",
+        "features": ["Captura e evolução", "Progressão idle", "Mundo multiplayer"],
+        "source_url": "https://topidle.com/jogo/poke-idle-online-832e9d"
+      }
+    },
+    {
+      "id": "catalog-pokeidle-io",
+      "slug": "pokeidle-io",
+      "name": "PokeIdle.io",
+      "launch_url": "https://pokeidle.io/",
+      "icon_url": "assets/game-icons/pokeidle-io-official.png",
+      "sort_order": 101,
+      "site_only": false,
+      "metadata": {
+        "category": "Poke Idle",
+        "status": "Beta",
+        "description": "Jogo idle de navegador com caçadas automáticas, coleção, PvP e economia entre jogadores.",
+        "tagline": "Escolha a caçada e acompanhe a evolução.",
+        "accent": "#f3d455",
+        "features": ["Caçadas automáticas", "PvP competitivo", "Mercado da comunidade"],
+        "source_url": "https://topidle.com/jogo/pokeidle-io-5f9969"
+      }
+    },
+    {
+      "id": "catalog-idlepoke",
+      "slug": "idlepoke",
+      "name": "IdlePoke",
+      "launch_url": "https://idlepoke.com/",
+      "icon_url": "assets/game-icons/idlepoke-official.png",
+      "sort_order": 102,
+      "site_only": false,
+      "metadata": {
+        "category": "Poke Idle",
+        "status": "Lançado",
+        "description": "Mundo idle com criaturas, profissões, desafios cooperativos e sistemas de progressão no navegador.",
+        "tagline": "Construa sua equipe e explore no seu ritmo.",
+        "accent": "#65c6ff",
+        "features": ["Profissões", "Dungeons", "Guildas e PvP"],
+        "source_url": "https://topidle.com/jogo/idlepoke-5c6135"
+      }
+    },
+    {
+      "id": "catalog-frenetic-world",
+      "slug": "frenetic-world",
+      "name": "Frenetic World",
+      "launch_url": "https://www.frenetic.world/",
+      "icon_url": "assets/game-icons/frenetic-world-official.png",
+      "sort_order": 103,
+      "site_only": false,
+      "metadata": {
+        "category": "MMORPG Idle",
+        "status": "Lançado",
+        "description": "MMORPG em pixel art com classes, caçadas AFK, equipamentos, bosses e mercado entre jogadores.",
+        "tagline": "Forje seu herói em um mundo pixel art.",
+        "accent": "#ff795c",
+        "features": ["Classes e subclasses", "Bosses globais", "Caçadas AFK"],
+        "source_url": "https://topidle.com/jogo/frenetic-world-a5ee6e"
+      }
+    },
+    {
+      "id": "catalog-midgard-idle",
+      "slug": "midgard-idle-community",
+      "name": "Midgard Idle",
+      "launch_url": null,
+      "icon_url": "assets/game-icons/midgard-idle.webp",
+      "sort_order": 104,
+      "site_only": true,
+      "metadata": {
+        "category": "Ragnarok Idle",
+        "status": "Beta",
+        "description": "Experiência idle inspirada em MMORPG clássico, com classes, mapas e evolução compartilhada.",
+        "tagline": "Uma jornada por Midgard que não para.",
+        "accent": "#8fd9ff",
+        "features": ["Classes e builds", "Mundo compartilhado", "Progressão automática"],
+        "source_url": "https://topidle.com/jogo/midgard-idle-958ffe"
+      }
+    },
+    {
+      "id": "catalog-chakra-idle-brasil",
+      "slug": "chakra-idle-brasil",
+      "name": "Chakra Idle Brasil",
+      "launch_url": null,
+      "icon_url": "assets/game-icons/chakra-idle.webp",
+      "sort_order": 105,
+      "site_only": true,
+      "metadata": {
+        "category": "Anime Idle",
+        "status": "Beta",
+        "description": "RPG idle de temática ninja com formação de equipes, evolução de personagens e desafios progressivos.",
+        "tagline": "Monte sua equipe ninja e avance.",
+        "accent": "#ff9c45",
+        "features": ["Coleção de personagens", "Formação de equipes", "Bosses"],
+        "source_url": "https://topidle.com/jogo/chakra-idle-brasil-0657f2"
+      }
+    },
+    {
+      "id": "catalog-pokepixel-idle",
+      "slug": "pokepixel-idle",
+      "name": "Pokepixel Idle",
+      "launch_url": "https://pokepixel.nietore.com/",
+      "icon_url": "assets/game-icons/pokepixel-idle-official.png",
+      "sort_order": 106,
+      "site_only": false,
+      "metadata": {
+        "category": "Poke Idle",
+        "status": "Lançado",
+        "description": "MMORPG idle com caçadas temáticas, profissões, comércio e progressão persistente.",
+        "tagline": "Sua jornada continua mesmo longe do jogo.",
+        "accent": "#63e1bb",
+        "features": ["Caçadas temáticas", "Profissões", "Mercado global"],
+        "source_url": "https://topidle.com/jogo/pokepixel"
+      }
+    },
+    {
+      "id": "catalog-souls-idle",
+      "slug": "souls-idle",
+      "name": "SOUL'S IDLE",
+      "launch_url": null,
+      "icon_url": "assets/game-icons/souls-idle.webp",
+      "sort_order": 107,
+      "site_only": true,
+      "metadata": {
+        "category": "MMORPG Idle",
+        "status": "Em desenvolvimento",
+        "description": "RPG idle de fantasia sombria com chefes, profissões, guildas e crescimento de personagem.",
+        "tagline": "Enfrente a escuridão e fortaleça seu herói.",
+        "accent": "#bb7aff",
+        "features": ["Fantasia sombria", "Chefes", "Guildas e profissões"],
+        "source_url": "https://topidle.com/jogo/soul-s-idle-cf5d08"
+      }
+    },
+    {
+      "id": "catalog-pokeidle-br",
+      "slug": "pokeidle-br",
+      "name": "PokeIdle BR",
+      "launch_url": "https://poke.idlebr.com/",
+      "icon_url": "assets/game-icons/pokeidle-br-official.png",
+      "sort_order": 108,
+      "site_only": false,
+      "metadata": {
+        "category": "Poke Idle",
+        "status": "Beta",
+        "description": "Jogo idle brasileiro com caçadas, captura, negociação e progresso que continua fora da sessão.",
+        "tagline": "Caçe, capture e acompanhe o progresso.",
+        "accent": "#f3c94e",
+        "features": ["Caçadas persistentes", "Captura", "Economia de jogadores"],
+        "source_url": "https://topidle.com/jogo/pokeidle-br-e17e3b"
+      }
+    },
+    {
+      "id": "catalog-ygg-idle",
+      "slug": "ygg-idle",
+      "name": "Ygg Idle",
+      "launch_url": null,
+      "icon_url": "assets/game-icons/ygg-idle.webp",
+      "sort_order": 109,
+      "site_only": true,
+      "metadata": {
+        "category": "Ragnarok Idle",
+        "status": "Beta",
+        "description": "RPG idle com evolução, equipamentos, refinamento e confrontos contra monstros poderosos.",
+        "tagline": "Evolua sua build e enfrente novos desafios.",
+        "accent": "#83d4ff",
+        "features": ["Refinamento", "Equipamentos", "Chefes e progressão"],
+        "source_url": "https://topidle.com/jogo/ygg-idle-d59c84"
+      }
+    },
+    {
+      "id": "catalog-naruto-idle-online",
+      "slug": "naruto-idle-online",
+      "name": "Naruto Idle Online",
+      "launch_url": null,
+      "icon_url": "assets/game-icons/naruto-idle-online.webp",
+      "sort_order": 110,
+      "site_only": true,
+      "metadata": {
+        "category": "Anime Idle",
+        "status": "Em desenvolvimento",
+        "description": "Jogo idle ninja focado em recrutamento, evolução e composição estratégica de equipes.",
+        "tagline": "Recrute ninjas e construa sua formação.",
+        "accent": "#ff8a4c",
+        "features": ["Recrutamento", "Evolução de equipe", "Batalhas automáticas"],
+        "source_url": "https://topidle.com/jogo/naruto-idle-online-38d5d3"
+      }
+    },
+    {
+      "id": "catalog-stoned-idle-campinho",
+      "slug": "stoned-idle-campinho",
+      "name": "Stoned Idle Campinho",
+      "launch_url": null,
+      "icon_url": "assets/game-icons/stoned-idle-campinho.webp",
+      "sort_order": 111,
+      "site_only": true,
+      "metadata": {
+        "category": "MMORPG Idle",
+        "status": "Beta",
+        "description": "RPG idle brasileiro com ambientação urbana, habilidades, progressão e ranking competitivo.",
+        "tagline": "Do campinho para o ranking.",
+        "accent": "#74ce79",
+        "features": ["Progressão de habilidades", "Ranking", "Atualizações frequentes"],
+        "source_url": "https://topidle.com/jogo/stoned-idle-campinho-9f2afd"
+      }
+    },
+    {
+      "id": "catalog-dead-idle",
+      "slug": "dead-idle",
+      "name": "Dead Idle",
+      "launch_url": null,
+      "icon_url": "assets/game-icons/dead-idle.webp",
+      "sort_order": 112,
+      "site_only": true,
+      "metadata": {
+        "category": "MMORPG Idle",
+        "status": "Em desenvolvimento",
+        "description": "MMORPG idle de sobrevivência em um mundo infectado, com exploração, combate e fabricação.",
+        "tagline": "Sobreviva, colete e fortaleça seu abrigo.",
+        "accent": "#b6cf62",
+        "features": ["Sobrevivência", "Combate automático", "Coleta e fabricação"],
+        "source_url": "https://topidle.com/jogo/dead-idle-8c0924"
+      }
+    },
+    {
+      "id": "catalog-anime-idle",
+      "slug": "anime-idle",
+      "name": "Anime Idle",
+      "launch_url": null,
+      "icon_url": "assets/game-icons/anime-idle.webp",
+      "sort_order": 113,
+      "site_only": true,
+      "metadata": {
+        "category": "Anime Idle",
+        "status": "Beta",
+        "description": "Jogo idle de coleção e batalhas que reúne diferentes estilos de personagens em equipes personalizadas.",
+        "tagline": "Crie sua equipe e enfrente novos mundos.",
+        "accent": "#ff6fae",
+        "features": ["Coleção de personagens", "Equipes personalizadas", "Batalhas"],
+        "source_url": "https://topidle.com/jogo/anime-idle-68ac13"
+      }
+    },
+    {
+      "id": "catalog-dragon-ball-idle-world",
+      "slug": "dragon-ball-idle-world",
+      "name": "Dragon Ball Idle World",
+      "launch_url": null,
+      "icon_url": "assets/game-icons/dragon-ball-idle-world.webp",
+      "sort_order": 114,
+      "site_only": true,
+      "metadata": {
+        "category": "Dragon Ball Idle",
+        "status": "Beta",
+        "description": "RPG idle de treinamento, aumento de poder e formação de guerreiros para desafios progressivos.",
+        "tagline": "Treine e ultrapasse novos limites.",
+        "accent": "#ff9d35",
+        "features": ["Treinamento", "Evolução de poder", "Coleção de guerreiros"],
+        "source_url": "https://topidle.com/jogo/dragon-ball-idle"
+      }
+    },
+    {
+      "id": "catalog-idlepokemoon",
+      "slug": "idlepokemoon",
+      "name": "Idle Poke Moon",
+      "launch_url": "https://idlepokemoon.com.br/",
+      "icon_url": "assets/game-icons/idlepokemoon-official.png",
+      "sort_order": 115,
+      "site_only": false,
+      "metadata": {
+        "category": "Poke Idle",
+        "status": "Beta",
+        "description": "MMORPG idle de captura com centenas de criaturas, zonas de caça, ginásios, PvP ranqueado, clãs e mercado entre jogadores.",
+        "tagline": "Capture, evolua e dispute o ranking.",
+        "accent": "#7057d9",
+        "features": ["Captura e evolução", "PvP ranqueado", "Clãs e mercado"],
+        "votes_month": 0,
+        "likes": 0,
+        "reviews_count": 0,
+        "rating": 0,
+        "source_url": "https://topidle.com/jogo/idle-pokemoon-43659f"
+      }
+    },
+    {
+      "id": "catalog-poke-hero-world",
+      "slug": "poke-hero-world",
+      "name": "Poke Hero World",
+      "launch_url": "https://pokehero.com.br/",
+      "icon_url": "assets/game-icons/poke-hero-world-official.png",
+      "sort_order": 116,
+      "site_only": false,
+      "metadata": {
+        "category": "Poke Idle",
+        "status": "Lançado",
+        "description": "MMORPG idle no navegador com caçadas configuráveis, evolução persistente e progresso que continua enquanto você está fora.",
+        "tagline": "Configure a caçada e continue evoluindo.",
+        "accent": "#f0c944",
+        "features": ["Caçadas configuráveis", "Progresso offline", "Mundo persistente"],
+        "votes_month": 0,
+        "likes": 0,
+        "reviews_count": 0,
+        "rating": 0,
+        "source_url": "https://topidle.com/jogo/poke-hero-world-ad9d71"
+      }
+    },
+    {
+      "id": "catalog-jerimbia-idle",
+      "slug": "jerimbia-idle",
+      "name": "Jerimbia Idle",
+      "launch_url": "https://jerimbia-idle.com/",
+      "icon_url": "assets/game-icons/jerimbia-idle-official.png",
+      "sort_order": 117,
+      "site_only": false,
+      "metadata": {
+        "category": "Poke Idle",
+        "status": "Beta",
+        "description": "Jogo idle de criaturas com evolução, batalhas, PvP, guildas e eventos em uma experiência online de navegador.",
+        "tagline": "Colecione criaturas e fortaleça sua guilda.",
+        "accent": "#ff8848",
+        "features": ["Coleção de criaturas", "PvP e guildas", "Eventos online"],
+        "votes_month": 0,
+        "likes": 0,
+        "reviews_count": 0,
+        "rating": 0,
+        "source_url": "https://topidle.com/jogo/jerimbia-idle-bb1975"
+      }
+    },
+    {
+      "id": "catalog-pokehunt",
+      "slug": "pokehunt",
+      "name": "PokéHunt",
+      "launch_url": "https://pkhunt.online/",
+      "icon_url": "assets/game-icons/pokehunt-official.png",
+      "sort_order": 118,
+      "site_only": false,
+      "metadata": {
+        "category": "Poke Idle",
+        "status": "Beta",
+        "description": "MMORPG idle de captura com centenas de espécies, regiões de caça, arena, chefes e evolução automática da equipe.",
+        "tagline": "Monte sua equipe e explore novas regiões.",
+        "accent": "#ef4545",
+        "features": ["Centenas de espécies", "Arena e chefes", "Caçadas automáticas"],
+        "votes_month": 0,
+        "likes": 0,
+        "reviews_count": 0,
+        "rating": 0,
+        "source_url": "https://topidle.com/jogo/pokehunt-f59c57"
+      }
+    },
+    {
+      "id": "catalog-gengar-idle",
+      "slug": "gengar-idle",
+      "name": "Gengar Idle",
+      "launch_url": "https://gengar.com.br/",
+      "icon_url": "assets/game-icons/gengar-idle-official.png",
+      "sort_order": 119,
+      "site_only": false,
+      "metadata": {
+        "category": "Poke Idle",
+        "status": "Beta",
+        "description": "Aventura idle de criaturas focada em coleção, estratégia de equipe e progresso contínuo direto no navegador.",
+        "tagline": "Descubra criaturas e avance todos os dias.",
+        "accent": "#8b5cf6",
+        "features": ["Coleção de criaturas", "Estratégia de equipe", "Progressão contínua"],
+        "votes_month": 0,
+        "likes": 0,
+        "reviews_count": 0,
+        "rating": 0,
+        "source_url": "https://topidle.com/jogo/gengar-idle"
+      }
+    },
+    {
+      "id": "catalog-idledex",
+      "slug": "idledex",
+      "name": "idleDEX",
+      "launch_url": "https://idledex.com/",
+      "icon_url": "assets/game-icons/idledex-official.png",
+      "sort_order": 120,
+      "site_only": false,
+      "metadata": {
+        "category": "Poke Idle",
+        "status": "Lançado",
+        "description": "MMO de captura no navegador com evolução compartilhada, automação de progresso e comunidade de treinadores.",
+        "tagline": "Ative o automático e volte para conferir o progresso.",
+        "accent": "#55c6ff",
+        "features": ["Captura e evolução", "Progresso automático", "Mundo multiplayer"],
+        "votes_month": 0,
+        "likes": 0,
+        "reviews_count": 0,
+        "rating": 0,
+        "source_url": "https://topidle.com/jogo/idledex"
+      }
+    },
+    {
+      "id": "catalog-idle-world",
+      "slug": "idle-world",
+      "name": "Idle World",
+      "launch_url": "https://idleworld.online/",
+      "icon_url": "assets/game-icons/idle-world-official.png",
+      "sort_order": 121,
+      "site_only": false,
+      "metadata": {
+        "category": "Tibia Idle",
+        "status": "Beta",
+        "description": "Mundo persistente de navegador com caçadas, mercado e uma progressão automática pensada para continuar por longo prazo.",
+        "tagline": "Um mundo grande com progressão contínua.",
+        "accent": "#39d98a",
+        "features": ["Caçadas persistentes", "Mercado entre jogadores", "Progressão automática"],
+        "votes_month": 0,
+        "likes": 0,
+        "reviews_count": 0,
+        "rating": 0,
+        "source_url": "https://topidle.com/jogo/idle-world"
+      }
+    }
+  ]
+}
