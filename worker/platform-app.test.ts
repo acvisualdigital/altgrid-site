@@ -233,6 +233,46 @@ describe('platform Worker endpoints', () => {
     expect(rejected.status).toBe(404)
   })
 
+  it('streams the latest Android APK with resumable download headers', async () => {
+    let receivedHeaders: Headers | null = null
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      receivedHeaders = new Headers(init?.headers)
+      return new Response('apk-bytes', {
+      status: 206,
+      headers: {
+        'Accept-Ranges': 'bytes',
+        'Content-Length': '9',
+        'Content-Range': 'bytes 0-8/9',
+      },
+      })
+    })
+    const alwaysAllowed = { limit: vi.fn(async () => ({ success: true })) }
+    const downloadApi = createApi({
+      authentication,
+      repository,
+      entitlementService: new EntitlementService(repository),
+      edgeRateLimiter: alwaysAllowed,
+      userRateLimiter: alwaysAllowed,
+      deviceRateLimiter: alwaysAllowed,
+    }, { fetcher })
+
+    const response = await downloadApi.fetch(new Request(
+      'https://api.example.com/v1/downloads/android',
+      { headers: { Range: 'bytes=0-8' } },
+    ))
+    expect(response.status).toBe(206)
+    expect(response.headers.get('Content-Length')).toBe('9')
+    expect(response.headers.get('Content-Range')).toBe('bytes 0-8/9')
+    expect(response.headers.get('Content-Disposition')).toContain('AltGrid-Android-latest.apk')
+    await expect(response.text()).resolves.toBe('apk-bytes')
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://github.com/acvisualdigital/altgrid-releases/releases/latest/download/AltGrid-Android-latest.apk',
+      { headers: expect.any(Headers) },
+    )
+    expect(receivedHeaders).not.toBeNull()
+    expect((receivedHeaders as Headers | null)?.get('Range')).toBe('bytes=0-8')
+  })
+
   it('sends chat messages as the authenticated user with a dedicated rate limit', async () => {
     const response = await api.fetch(request(
       `/v1/chat/channels/${CHANNEL_ID}/messages`,

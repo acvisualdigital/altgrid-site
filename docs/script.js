@@ -75,6 +75,7 @@ if ('IntersectionObserver' in window) {
 }
 
 const RELEASE_API = 'https://api.github.com/repos/acvisualdigital/altgrid-releases/releases/latest'
+const ANDROID_DOWNLOAD_URL = 'https://altgrid-api.altgrid.workers.dev/v1/downloads/android'
 const METRICS_API = 'https://altgrid-api.altgrid.workers.dev/v1/app/metrics'
 const METRICS_REFRESH_INTERVAL_MS = 60_000
 const PAGE_RELEASE_VERSION = '1.5.1'
@@ -116,7 +117,7 @@ const applyLatestRelease = async () => {
     }
     if (android?.browser_download_url && canApplyRelease) {
       document.querySelectorAll('.download-android').forEach((link) => {
-        link.href = android.browser_download_url
+        link.href = ANDROID_DOWNLOAD_URL
         const version = link.querySelector('small')
         if (version) version.textContent = `Baixar APK ${releaseVersion}`
       })

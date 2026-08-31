@@ -169,6 +169,8 @@ jobs:
 
           $androidArtifact = "release/AltGrid-Android-$($env:RELEASE_TAG.Substring(1)).apk"
           Copy-Item -LiteralPath "android/app/build/outputs/apk/release/app-release.apk" -Destination $androidArtifact
+          $androidLatestArtifact = "release/AltGrid-Android-latest.apk"
+          Copy-Item -LiteralPath $androidArtifact -Destination $androidLatestArtifact
 
           $storeArtifact = "store-release/AltGrid-Store-$($env:RELEASE_TAG.Substring(1)).appx"
 
@@ -195,6 +197,7 @@ jobs:
 
           $artifacts = @(
             "release/AltGrid-Android-$($env:RELEASE_TAG.Substring(1)).apk",
+            $androidLatestArtifact,
             $storeArtifact
           )
           $artifacts += @(Get-ChildItem -LiteralPath "release/velopack" -File | ForEach-Object { $_.FullName })

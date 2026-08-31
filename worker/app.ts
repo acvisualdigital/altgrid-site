@@ -60,6 +60,8 @@ const UPDATE_RELEASE_BASE_URL =
   'https://github.com/acvisualdigital/altgrid-releases/releases/latest/download/'
 const WINDOWS_UPDATE_FEED = 'releases.win-x64.json'
 const WINDOWS_UPDATE_PACKAGE = /^AltGrid-[0-9A-Za-z.+-]+-win-x64-(?:full|delta)\.nupkg$/
+const ANDROID_DOWNLOAD_PATH = '/v1/downloads/android'
+const ANDROID_RELEASE_ASSET = 'AltGrid-Android-latest.apk'
 
 function normalizedPath(url: string): string {
   const pathname = new URL(url).pathname
@@ -80,6 +82,7 @@ function allowedMethods(pathname: string): string[] | null {
     || pathname === '/v1/app/config'
     || pathname === '/v1/app/metrics'
     || pathname === '/v1/app/announcements'
+    || pathname === ANDROID_DOWNLOAD_PATH
     || pathname === '/v1/products'
     || pathname === '/v1/devices'
     || pathname === '/v1/chat/channels'
@@ -224,6 +227,37 @@ export function createApi(
       }
 
       throw new ApiError(404, 'update_asset_not_found', 'Arquivo de atualização não encontrado.')
+    }
+
+    if (pathname === ANDROID_DOWNLOAD_PATH) {
+      const upstreamHeaders = new Headers({
+        Accept: 'application/vnd.android.package-archive, application/octet-stream',
+      })
+      const range = request.headers.get('Range')
+      if (range) upstreamHeaders.set('Range', range)
+
+      const upstream = await (options.fetcher ?? fetch)(
+        UPDATE_RELEASE_BASE_URL + ANDROID_RELEASE_ASSET,
+        { headers: upstreamHeaders },
+      )
+      if (!upstream.ok) {
+        throw new ApiError(502, 'android_download_unavailable', 'Download do Android indisponível.')
+      }
+
+      const responseHeaders = new Headers({
+        'Cache-Control': 'public, max-age=300, s-maxage=300',
+        'Content-Disposition': 'attachment; filename="AltGrid-Android-latest.apk"',
+        'Content-Type': 'application/vnd.android.package-archive',
+        'X-Content-Type-Options': 'nosniff',
+      })
+      for (const header of ['Accept-Ranges', 'Content-Length', 'Content-Range', 'ETag', 'Last-Modified']) {
+        const value = upstream.headers.get(header)
+        if (value) responseHeaders.set(header, value)
+      }
+      return new Response(upstream.body, {
+        status: upstream.status,
+        headers: responseHeaders,
+      })
     }
 
     if (pathname === '/v1/games') {
