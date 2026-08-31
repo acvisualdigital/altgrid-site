@@ -211,7 +211,7 @@
 .game-card__social span { padding: 8px; }
 .games-page .button,.games-page button { transition: color .2s,background .2s,border-color .2s,box-shadow .2s,transform .2s; }
 .games-page .button:hover { transform: translateY(-2px); }
-.reveal-item { opacity: 0; transform: translateY(24px); transition: opacity .62s ease,transform .62s cubic-bezier(.2,.75,.2,1); }
+.reveal-item { opacity: 1; transform: none; }
 .reveal-item.is-visible { opacity: 1; transform: none; }
 .game-grid .reveal-item:nth-child(3n + 2) { transition-delay: .06s; }
 .game-grid .reveal-item:nth-child(3n) { transition-delay: .12s; }
