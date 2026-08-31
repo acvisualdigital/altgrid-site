@@ -41,6 +41,25 @@ const free: ResolvedEntitlements = {
 }
 
 describe('ConfiguredAccountService', () => {
+  it('duplicates a saved configuration with a new isolated id', () => {
+    const ids = ['source-id', 'copy-id']
+    const service = new ConfiguredAccountService({
+      createId: () => ids.shift()!,
+      storage: null,
+    })
+    const source = service.add('user-a', {
+      displayName: 'Huntera principal',
+      gameSlug: 'huntera',
+    })
+
+    expect(service.duplicate('user-a', source.id)).toEqual(expect.objectContaining({
+      displayName: 'Huntera principal - cópia',
+      gameSlug: 'huntera',
+      id: 'copy-id',
+    }))
+    expect(service.list('user-a')).toHaveLength(2)
+  })
+
   it('keeps every configured account even when the simultaneous limit is lower', async () => {
     let nextId = 0
     const accounts = new ConfiguredAccountService({
@@ -187,6 +206,7 @@ describe('ConfiguredAccountService', () => {
       displayName: 'Conta antiga',
       gameSlug: 'huntera',
       id: 'legacy-account',
+      stonegyBotEnabled: true,
     }]))
     expect(new ConfiguredAccountService({ storage }).list('user-b')).toEqual([{
       createdAt: '2026-08-25T12:00:00.000Z',
@@ -196,30 +216,4 @@ describe('ConfiguredAccountService', () => {
     }])
   })
 
-  it('persists the AltGrid Bot preference only on the requested account', () => {
-    const storage = new MemoryStorage()
-    let nextId = 0
-    const service = new ConfiguredAccountService({
-      createId: () => 'account-' + ++nextId,
-      storage,
-    })
-    const first = service.add('user-a', {
-      displayName: 'Stonegy 1',
-      gameSlug: 'stonegy',
-    })
-    const second = service.add('user-a', {
-      displayName: 'Stonegy 2',
-      gameSlug: 'stonegy',
-    })
-
-    expect(service.setStonegyBotEnabled('user-a', first.id, true))
-      .toMatchObject({ id: first.id, stonegyBotEnabled: true })
-    expect(service.list('user-a')).toEqual([
-      { ...first, stonegyBotEnabled: true },
-      second,
-    ])
-    expect(new ConfiguredAccountService({ storage }).list('user-a')[0])
-      .toMatchObject({ id: first.id, stonegyBotEnabled: true })
-    expect(service.setStonegyBotEnabled('user-a', 'missing', true)).toBeNull()
-  })
 })

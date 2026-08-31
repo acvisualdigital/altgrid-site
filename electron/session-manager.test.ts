@@ -16,12 +16,13 @@ interface FakeView extends NativeSessionView {
   destroy: Mock<(force: boolean) => void>
   emit(event: NativeSessionEvent): void
   focus: Mock<() => void>
-  getResourceUsage: Mock<() => Promise<{ privateKb: number; sharedKb: number }>>
+  getResourceUsage: Mock<() => Promise<{ cpuPercent: number; privateKb: number; sharedKb: number }>>
   loadURL: Mock<(url: string) => Promise<void>>
   reload: Mock<() => void>
   stop: Mock<() => void>
   setBounds: Mock<(bounds: SessionBounds) => void>
   setEcoMode: Mock<(enabled: boolean) => void>
+  setExtension: Mock<(extensionPath: string | null) => Promise<void>>
   setFrameRateLimit: Mock<(fps: number) => void>
   setMuted: Mock<(muted: boolean) => void>
   setProxy: Mock<(config: import('./contracts.js').SessionProxyConfig | null) => Promise<void>>
@@ -43,16 +44,16 @@ function createHarness(
       destroy: vi.fn(),
       emit: (event) => context.onEvent(event),
       focus: vi.fn(),
-      getResourceUsage: vi.fn(async () => ({ privateKb: 128_000, sharedKb: 16_000 })),
+      getResourceUsage: vi.fn(async () => ({ cpuPercent: 12.5, privateKb: 128_000, sharedKb: 16_000 })),
       loadURL: vi.fn(async () => undefined),
       reload: vi.fn(),
       stop: vi.fn(),
       setBounds: vi.fn(),
       setEcoMode: vi.fn(),
+      setExtension: vi.fn(async () => undefined),
       setFrameRateLimit: vi.fn(),
       setMuted: vi.fn(),
       setProxy: vi.fn(async () => undefined),
-      setStonegyBotEnabled: vi.fn(),
       setVisible: vi.fn(),
       setZoomFactor: vi.fn(),
       testProxy: vi.fn(async () => ({
@@ -77,6 +78,26 @@ function createHarness(
 }
 
 describe('SessionManager', () => {
+  it('loads an account extension before the game and can replace it without recreating the view', async () => {
+    const harness = createHarness()
+    await harness.manager.createSession(
+      'account-extension',
+      'https://game.example/',
+      null,
+      'C:\\extensions\\idle-helper',
+    )
+    const view = harness.views.get('account-extension')!
+    expect(view.setExtension).toHaveBeenCalledWith('C:\\extensions\\idle-helper')
+    expect(view.setExtension.mock.invocationCallOrder[0]).toBeLessThan(
+      view.loadURL.mock.invocationCallOrder[0]!,
+    )
+
+    await harness.manager.setSessionExtension('account-extension', null)
+    expect(view.setExtension).toHaveBeenLastCalledWith(null)
+    expect(view.reload).toHaveBeenCalledOnce()
+    expect(harness.createView).toHaveBeenCalledOnce()
+  })
+
   it('creates one persistent isolated partition per internal account id', async () => {
     const harness = createHarness()
 
@@ -118,26 +139,6 @@ describe('SessionManager', () => {
     expect(view.setProxy.mock.invocationCallOrder[0]).toBeLessThan(
       view.loadURL.mock.invocationCallOrder[0]!,
     )
-  })
-
-  it('persists and toggles the STONER bot state on the native account view', async () => {
-    const harness = createHarness()
-
-    const created = await harness.manager.createSession(
-      'account-stonegy',
-      'https://stonegy-online.com/play',
-      null,
-      true,
-    )
-
-    expect(created.stonegyBotEnabled).toBe(true)
-    expect(harness.contexts.get('account-stonegy')?.stonegyBotEnabled).toBe(true)
-
-    harness.manager.setStonegyBot('account-stonegy', false)
-
-    const view = harness.views.get('account-stonegy')!
-    expect(view.setStonegyBotEnabled).toHaveBeenCalledWith(false)
-    expect(harness.manager.getSessions()[0]?.stonegyBotEnabled).toBe(false)
   })
 
   it('reconnects an open account after changing its proxy', async () => {
@@ -324,6 +325,26 @@ describe('SessionManager', () => {
     expect(() => harness.manager.setEcoMode(true, 31)).toThrow(RangeError)
   })
 
+  it('tightens secondary FPS automatically as the active grid grows', async () => {
+    const harness = createHarness()
+    for (let index = 1; index <= 3; index += 1) {
+      await harness.manager.createSession(`account-${index}`, 'https://game.example/')
+      harness.manager.showSession(`account-${index}`)
+    }
+    harness.manager.focusSession('account-1')
+    harness.manager.setEcoMode(true, 30)
+    expect(harness.views.get('account-2')?.setFrameRateLimit).toHaveBeenLastCalledWith(30)
+
+    await harness.manager.createSession('account-4', 'https://game.example/')
+    expect(harness.views.get('account-2')?.setFrameRateLimit).toHaveBeenLastCalledWith(10)
+
+    for (let index = 5; index <= 8; index += 1) {
+      await harness.manager.createSession(`account-${index}`, 'https://game.example/')
+    }
+    expect(harness.views.get('account-2')?.setFrameRateLimit).toHaveBeenLastCalledWith(5)
+    expect(harness.views.get('account-1')?.setFrameRateLimit).toHaveBeenLastCalledWith(0)
+  })
+
   it('stores a desired FPS per session and updates native state before its snapshot', async () => {
     const harness = createHarness()
     await harness.manager.createSession('account-1', 'https://game.example/')
@@ -445,8 +466,8 @@ describe('SessionManager', () => {
     await harness.manager.createSession('account-memory-b', 'https://game.example/')
 
     await expect(harness.manager.getResourceUsage()).resolves.toEqual([
-      { accountId: 'account-memory-a', privateKb: 128_000, sharedKb: 16_000 },
-      { accountId: 'account-memory-b', privateKb: 128_000, sharedKb: 16_000 },
+      { accountId: 'account-memory-a', cpuPercent: 12.5, privateKb: 128_000, sharedKb: 16_000 },
+      { accountId: 'account-memory-b', cpuPercent: 12.5, privateKb: 128_000, sharedKb: 16_000 },
     ])
   })
 
@@ -458,16 +479,16 @@ describe('SessionManager', () => {
         destroy: vi.fn(),
         emit: (event) => context.onEvent(event),
         focus: vi.fn(),
-        getResourceUsage: vi.fn(async () => ({ privateKb: 128_000, sharedKb: 16_000 })),
+        getResourceUsage: vi.fn(async () => ({ cpuPercent: 12.5, privateKb: 128_000, sharedKb: 16_000 })),
         loadURL: vi.fn(() => new Promise<void>(() => undefined)),
         reload: vi.fn(),
         stop: vi.fn(),
         setBounds: vi.fn(),
         setEcoMode: vi.fn(),
+        setExtension: vi.fn(async () => undefined),
         setFrameRateLimit: vi.fn(),
         setMuted: vi.fn(),
         setProxy: vi.fn(async () => undefined),
-        setStonegyBotEnabled: vi.fn(),
         setVisible: vi.fn(),
         setZoomFactor: vi.fn(),
         testProxy: vi.fn(async () => ({

@@ -16,6 +16,8 @@ import type {
   AdminGame,
   AdminProduct,
   AdminPaymentLog,
+  AdminPublisherRequest,
+  AdminPublisherRequestStatus,
   AdminReferralLog,
   AdminReferralStats,
   AdminReferralStatus,
@@ -32,9 +34,67 @@ type AdminTab =
   | 'games'
   | 'products'
   | 'payments'
+  | 'publishers'
   | 'referrals'
   | 'users'
 type AdminView = 'checking' | 'denied' | 'error' | 'ready' | 'signed-out'
+
+const ADMIN_TAB_META: Record<AdminTab, {
+  description: string
+  icon: string
+  label: string
+}> = {
+  users: {
+    description: 'Contas, planos, dispositivos e histórico individual.',
+    icon: '◎',
+    label: 'Usuários',
+  },
+  games: {
+    description: 'Catálogo, URLs de acesso e disponibilidade dos jogos.',
+    icon: '◇',
+    label: 'Jogos',
+  },
+  config: {
+    description: 'Versões, indicações, limites e estado dos serviços.',
+    icon: '⌁',
+    label: 'Configuração',
+  },
+  products: {
+    description: 'Preços, moedas e ofertas disponíveis para compra.',
+    icon: '▣',
+    label: 'Produtos',
+  },
+  payments: {
+    description: 'Tentativas, aprovações e conciliação de pagamentos.',
+    icon: '$',
+    label: 'Pagamentos',
+  },
+  publishers: {
+    description: 'Cadastros, reivindicações e campanhas enviadas pelo site.',
+    icon: '◆',
+    label: 'Divulgação',
+  },
+  referrals: {
+    description: 'Validação, recompensas e integridade das indicações.',
+    icon: '✦',
+    label: 'Indicações',
+  },
+  announcements: {
+    description: 'Comunicados e alertas publicados dentro do AltGrid.',
+    icon: '◉',
+    label: 'Avisos',
+  },
+  chat: {
+    description: 'Denúncias, mensagens e restrições de usuários.',
+    icon: '◌',
+    label: 'Chat',
+  },
+  audit: {
+    description: 'Rastreamento das alterações administrativas.',
+    icon: '≡',
+    label: 'Auditoria',
+  },
+}
 
 type AdminBackend = Pick<
   BackendApi,
@@ -52,6 +112,7 @@ type AdminBackend = Pick<
   | 'getAdminGames'
   | 'getAdminProducts'
   | 'getAdminPaymentLogs'
+  | 'getAdminPublisherRequests'
   | 'getAdminReferrals'
   | 'getAdminSession'
   | 'getAdminUser'
@@ -60,6 +121,7 @@ type AdminBackend = Pick<
   | 'reconcileAdminPayment'
   | 'approveAdminReferral'
   | 'rejectAdminReferral'
+  | 'reviewAdminPublisherRequest'
   | 'reviewAdminChatReport'
   | 'revokeAdminDevice'
   | 'revokeAdminLicense'
@@ -174,6 +236,8 @@ export class AdminApp {
   private paymentPage = 1
   private paymentHasMore = false
   private paymentTotal = 0
+  private publisherRequests: AdminPublisherRequest[] = []
+  private publisherStatus: AdminPublisherRequestStatus | null = null
   private referrals: AdminReferralLog[] = []
   private referralStats: AdminReferralStats = {
     total: 0, pending: 0, qualified: 0, rewarded: 0, rejected: 0,
@@ -191,6 +255,7 @@ export class AdminApp {
   private auditPage = 1
   private auditHasMore = false
   private auditTotal = 0
+  private overviewReady = false
   private revision = 0
   private unsubscribe: (() => void) | null = null
 
@@ -264,6 +329,7 @@ export class AdminApp {
       this.view = 'ready'
       this.render()
       await this.loadTab('users', revision)
+      await this.loadOverview(revision)
     } catch (error) {
       if (revision !== this.revision) {
         return
@@ -294,6 +360,8 @@ export class AdminApp {
     this.paymentPage = 1
     this.paymentHasMore = false
     this.paymentTotal = 0
+    this.publisherRequests = []
+    this.publisherStatus = null
     this.referrals = []
     this.referralStats = { total: 0, pending: 0, qualified: 0, rewarded: 0, rejected: 0 }
     this.referralStatus = null
@@ -309,6 +377,44 @@ export class AdminApp {
     this.auditPage = 1
     this.auditHasMore = false
     this.auditTotal = 0
+    this.overviewReady = false
+  }
+
+  private async loadOverview(expectedRevision = this.revision): Promise<void> {
+    const [games, payments, referrals, announcements, chat, publishers] = await Promise.allSettled([
+      this.backend.getAdminGames(),
+      this.backend.getAdminPaymentLogs(1, 50),
+      this.backend.getAdminReferrals(null, '', 1, 50),
+      this.backend.getAdminAnnouncements(),
+      this.backend.getAdminChatReports('pending', 1, 50),
+      typeof this.backend.getAdminPublisherRequests === 'function'
+        ? this.backend.getAdminPublisherRequests(null)
+        : Promise.resolve({ requests: [] }),
+    ])
+
+    if (expectedRevision !== this.revision) {
+      return
+    }
+
+    if (games.status === 'fulfilled') this.games = games.value.games
+    if (payments.status === 'fulfilled') {
+      this.paymentLogs = payments.value.payments
+      this.paymentTotal = payments.value.pagination.total
+    }
+    if (referrals.status === 'fulfilled') {
+      this.referrals = referrals.value.referrals
+      this.referralStats = referrals.value.stats
+      this.referralTotal = referrals.value.pagination.total
+    }
+    if (announcements.status === 'fulfilled') {
+      this.announcements = announcements.value.announcements
+    }
+    if (chat.status === 'fulfilled') this.chatReports = chat.value.reports
+    if (publishers.status === 'fulfilled') this.publisherRequests = publishers.value.requests
+
+    this.overviewReady = payments.status === 'fulfilled'
+      && referrals.status === 'fulfilled'
+    this.render()
   }
 
   private async loadTab(
@@ -338,6 +444,9 @@ export class AdminApp {
         if (expectedRevision === this.revision) {
           this.games = response.games
         }
+      } else if (tab === 'publishers') {
+        const response = await this.backend.getAdminPublisherRequests(this.publisherStatus)
+        if (expectedRevision === this.revision) this.publisherRequests = response.requests
       } else if (tab === 'config') {
         const response = await this.backend.getAdminConfig()
         if (expectedRevision === this.revision) {
@@ -435,46 +544,69 @@ export class AdminApp {
       return
     }
 
+    const meta = ADMIN_TAB_META[this.activeTab]
     this.root.innerHTML = `
       <div class="app-frame admin-frame">
         <header class="topbar admin-topbar">
           <a class="brand admin-brand" href="/" aria-label="AltGrid">
             <img class="brand__logo" src="${altgridLogoUrl}" alt="" />
             <span class="brand__name">AltGrid</span>
-            <span class="admin-badge">Admin</span>
+            <span class="admin-badge">Control Center</span>
           </a>
           <div class="admin-topbar__actions">
-            <a class="text-button" href="/">Voltar às contas</a>
-            <button class="text-button" data-admin-sign-out type="button">Sair</button>
+            <span class="admin-system-status"><i aria-hidden="true"></i> Área protegida</span>
+            <a class="admin-topbar-link" href="/">← Voltar ao app</a>
+            <button class="admin-avatar" data-admin-sign-out type="button" aria-label="Sair da conta" title="Sair">${escapeHtml((this.session?.user.email ?? 'A').slice(0, 1).toUpperCase())}</button>
           </div>
         </header>
         <main class="admin-stage">
           <section class="admin-panel" aria-labelledby="admin-title">
-            <div class="admin-panel__heading">
-              <div>
-                <p class="eyebrow">Operações internas</p>
-                <h1 id="admin-title">Administração</h1>
-              </div>
-              <span class="admin-actor">${escapeHtml(this.session?.user.email ?? this.session?.user.id)}</span>
-            </div>
-            <nav class="admin-tabs" aria-label="Seções administrativas" role="tablist">
-              ${this.renderTab('users', 'Usuários')}
-              ${this.renderTab('games', 'Jogos')}
-              ${this.renderTab('config', 'Configuração')}
-              ${this.renderTab('products', 'Produtos')}
-              ${this.renderTab('payments', 'Pagamentos')}
-              ${this.renderTab('referrals', `Indicações (${this.referralStats.pending + this.referralStats.qualified})`)}
-              ${this.renderTab('announcements', 'Avisos')}
-              ${this.renderTab('chat', 'Chat')}
-              ${this.renderTab('audit', 'Auditoria')}
-            </nav>
-            <div class="admin-feedback" aria-live="polite">
-              ${this.loading ? '<span class="spinner spinner--green" aria-hidden="true"></span> Carregando…' : ''}
-              ${this.error ? `<span class="admin-feedback--error">${escapeHtml(this.error)}</span>` : ''}
-              ${this.notice ? `<span class="admin-feedback--success">${escapeHtml(this.notice)}</span>` : ''}
-            </div>
-            <div class="admin-content" role="tabpanel">
-              ${this.renderActiveTab()}
+            <div class="admin-workbench">
+              <aside class="admin-navigation">
+                <div class="admin-navigation__heading">
+                  <span class="admin-navigation__mark">AG</span>
+                  <span><strong>Administração</strong><small>Operações internas</small></span>
+                </div>
+                <nav class="admin-tabs" aria-label="Seções administrativas" role="tablist">
+                  <span class="admin-nav-group">Gestão</span>
+                  ${this.renderTab('users')}
+                  ${this.renderTab('games')}
+                  ${this.renderTab('publishers')}
+                  ${this.renderTab('products')}
+                  ${this.renderTab('payments')}
+                  ${this.renderTab('referrals')}
+                  <span class="admin-nav-group">Comunicação e sistema</span>
+                  ${this.renderTab('announcements')}
+                  ${this.renderTab('chat')}
+                  ${this.renderTab('config')}
+                  ${this.renderTab('audit')}
+                </nav>
+                <div class="admin-navigation__actor">
+                  <span class="admin-avatar admin-avatar--static">${escapeHtml((this.session?.user.email ?? 'A').slice(0, 1).toUpperCase())}</span>
+                  <span><strong>Administrador</strong><small>${escapeHtml(this.session?.user.email ?? this.session?.user.id)}</small></span>
+                </div>
+              </aside>
+              <section class="admin-workspace">
+                <header class="admin-page-heading">
+                  <div>
+                    <p class="eyebrow">${escapeHtml(meta.label)}</p>
+                    <h1 id="admin-title">${escapeHtml(meta.label)}</h1>
+                    <p>${escapeHtml(meta.description)}</p>
+                  </div>
+                  <button class="admin-refresh-button" data-admin-refresh type="button" ${this.loading ? 'disabled' : ''}>
+                    <span aria-hidden="true">↻</span> Atualizar
+                  </button>
+                </header>
+                ${this.renderOverviewCards()}
+                <div class="admin-feedback ${this.error ? 'is-error' : this.notice ? 'is-success' : ''}" aria-live="polite">
+                  ${this.loading ? '<span class="spinner spinner--green" aria-hidden="true"></span><span>Sincronizando dados…</span>' : ''}
+                  ${this.error ? `<span class="admin-feedback--error"><b aria-hidden="true">!</b>${escapeHtml(this.error)}</span>` : ''}
+                  ${this.notice ? `<span class="admin-feedback--success"><b aria-hidden="true">✓</b>${escapeHtml(this.notice)}</span>` : ''}
+                </div>
+                <div class="admin-content" role="tabpanel">
+                  ${this.renderActiveTab()}
+                </div>
+              </section>
             </div>
           </section>
         </main>
@@ -530,8 +662,16 @@ export class AdminApp {
     `
   }
 
-  private renderTab(tab: AdminTab, label: string): string {
+  private renderTab(tab: AdminTab): string {
     const active = tab === this.activeTab
+    const meta = ADMIN_TAB_META[tab]
+    const badge = tab === 'referrals'
+      ? this.referralStats.pending + this.referralStats.qualified
+      : tab === 'chat'
+        ? this.chatReports.filter((report) => report.status === 'pending').length
+        : tab === 'publishers'
+          ? this.publisherRequests.filter((entry) => ['pending', 'reviewing'].includes(entry.status)).length
+        : 0
     return `
       <button
         class="admin-tab ${active ? 'is-active' : ''}"
@@ -539,7 +679,34 @@ export class AdminApp {
         type="button"
         role="tab"
         aria-selected="${active}"
-      >${label}</button>
+      ><span class="admin-tab__icon" aria-hidden="true">${meta.icon}</span><span>${escapeHtml(meta.label)}</span>${badge > 0 ? `<b>${badge}</b>` : ''}</button>
+    `
+  }
+
+  private renderOverviewCards(): string {
+    const pendingReferrals = this.referralStats.pending + this.referralStats.qualified
+    const cards: Array<{
+      detail: string
+      label: string
+      tab: AdminTab
+      value: number | string
+    }> = [
+      { detail: 'contas cadastradas', label: 'Usuários', tab: 'users', value: this.usersTotal },
+      { detail: 'registros financeiros', label: 'Pagamentos', tab: 'payments', value: this.overviewReady ? this.paymentTotal : '—' },
+      { detail: 'indicações registradas', label: 'Indicações', tab: 'referrals', value: this.overviewReady ? this.referralStats.total : '—' },
+      { detail: 'aguardando análise', label: 'Pendências', tab: 'referrals', value: this.overviewReady ? pendingReferrals : '—' },
+    ]
+
+    return `
+      <div class="admin-overview" aria-label="Resumo operacional">
+        ${cards.map((card) => `
+          <button class="admin-overview-card" data-admin-shortcut="${card.tab}" type="button">
+            <span><small>${escapeHtml(card.label)}</small><strong>${escapeHtml(card.value)}</strong></span>
+            <span class="admin-overview-card__arrow" aria-hidden="true">↗</span>
+            <small>${escapeHtml(card.detail)}</small>
+          </button>
+        `).join('')}
+      </div>
     `
   }
 
@@ -549,6 +716,9 @@ export class AdminApp {
     }
     if (this.activeTab === 'games') {
       return this.renderGames()
+    }
+    if (this.activeTab === 'publishers') {
+      return this.renderPublisherRequests()
     }
     if (this.activeTab === 'config') {
       return this.renderConfig()
@@ -579,7 +749,7 @@ export class AdminApp {
           id="admin-search-query"
           name="query"
           value="${escapeHtml(this.searchQuery)}"
-          placeholder="E-mail, user ID ou referral code"
+          placeholder="E-mail, nick, user ID ou referral code"
         />
         <button class="button button--secondary button--compact" type="submit">Buscar</button>
       </form>
@@ -608,9 +778,10 @@ export class AdminApp {
 
   private renderUserRow(user: AdminUserSummary): string {
     return `
-      <tr>
+      <tr class="${this.selectedUser?.id === user.id ? 'is-selected' : ''}">
         <td>
-          <strong>${escapeHtml(user.email ?? 'Sem e-mail')}</strong>
+          <strong>${escapeHtml(user.display_name ?? 'Sem nick')}</strong>
+          <small>${escapeHtml(user.email ?? 'Sem e-mail')}</small>
           <small>${escapeHtml(user.id)}</small>
           <small>Referral code: ${escapeHtml(user.referral_code)}</small>
         </td>
@@ -631,12 +802,14 @@ export class AdminApp {
       <aside class="admin-detail" aria-label="Detalhes de ${escapeHtml(user.email ?? user.id)}">
         <div class="admin-detail__heading">
           <div>
-            <strong>${escapeHtml(user.email ?? 'Sem e-mail')}</strong>
+            <strong>${escapeHtml(user.display_name ?? 'Sem nick')}</strong>
+            <small>${escapeHtml(user.email ?? 'Sem e-mail')}</small>
             <small>${escapeHtml(user.id)}</small>
           </div>
           <span class="admin-plan">${escapeHtml(user.plan)}</span>
         </div>
         <dl class="admin-facts">
+          <div><dt>Nick</dt><dd>${escapeHtml(user.display_name ?? '—')}</dd></div>
           <div><dt>Status</dt><dd>${escapeHtml(user.license_status ?? 'FREE')}</dd></div>
           <div><dt>Expira</dt><dd>${escapeHtml(formatDate(user.expires_at))}</dd></div>
           <div><dt>Lifetime</dt><dd>${user.lifetime ? 'Sim' : 'Não'}</dd></div>
@@ -814,6 +987,49 @@ export class AdminApp {
               : '<tr><td colspan="5" class="admin-empty">Nenhum jogo cadastrado.</td></tr>'}
           </tbody>
         </table>
+      </div>
+    `
+  }
+
+  private renderPublisherRequests(): string {
+    const typeLabels: Record<string, string> = {
+      register: 'Cadastro', claim: 'Reivindicação', campaign: 'Campanha',
+    }
+    const statusLabels: Record<string, string> = {
+      pending: 'Aguardando', reviewing: 'Em análise', approved: 'Aprovada', rejected: 'Recusada', cancelled: 'Cancelada',
+    }
+    return `
+      <form class="admin-search" id="admin-publisher-filter">
+        <label>Status
+          <select name="status">
+            <option value="" ${this.publisherStatus === null ? 'selected' : ''}>Todos</option>
+            ${(['pending', 'reviewing', 'approved', 'rejected', 'cancelled'] as const).map((status) => `<option value="${status}" ${this.publisherStatus === status ? 'selected' : ''}>${statusLabels[status]}</option>`).join('')}
+          </select>
+        </label>
+        <button class="button button--secondary button--compact" type="submit">Filtrar</button>
+      </form>
+      <div class="admin-publisher-list">
+        ${this.publisherRequests.length ? this.publisherRequests.map((entry) => `
+          <article class="admin-editor admin-publisher-card" data-publisher-card="${escapeHtml(entry.id)}">
+            <div class="admin-editor__heading">
+              <div>
+                <span class="admin-request-kicker">${escapeHtml(typeLabels[entry.request_type] ?? entry.request_type)} · ${escapeHtml(entry.plan_code ?? 'sem plano')}</span>
+                <h2>${escapeHtml(entry.game_slug ?? (typeof entry.payload === 'object' && entry.payload && !Array.isArray(entry.payload) ? String(entry.payload.name ?? 'Novo jogo') : 'Novo jogo'))}</h2>
+                <small>${escapeHtml(entry.display_name ?? entry.user_email ?? entry.user_id)} · ${escapeHtml(formatDate(entry.created_at))}</small>
+              </div>
+              <span class="admin-request-status is-${escapeHtml(entry.status)}">${escapeHtml(statusLabels[entry.status] ?? entry.status)}</span>
+            </div>
+            <details class="admin-request-details"><summary>Ver dados enviados</summary><pre>${escapeHtml(jsonPreview(entry.payload))}</pre></details>
+            <label class="admin-form-field--wide">Observações administrativas
+              <textarea rows="3" maxlength="2000" data-publisher-notes placeholder="Motivo, ajuste solicitado ou observação interna…">${escapeHtml(entry.admin_notes ?? '')}</textarea>
+            </label>
+            <div class="admin-row-actions admin-request-actions">
+              <button class="text-button" data-review-publisher="${escapeHtml(entry.id)}" data-status="reviewing" type="button">Marcar em análise</button>
+              <button class="text-button text-button--strong" data-review-publisher="${escapeHtml(entry.id)}" data-status="approved" type="button">Aprovar</button>
+              <button class="text-button admin-danger" data-review-publisher="${escapeHtml(entry.id)}" data-status="rejected" type="button">Recusar</button>
+            </div>
+          </article>
+        `).join('') : '<p class="admin-empty">Nenhuma solicitação neste filtro.</p>'}
       </div>
     `
   }
@@ -1243,6 +1459,23 @@ export class AdminApp {
         })
       })
 
+    this.root.querySelectorAll<HTMLButtonElement>('[data-admin-shortcut]')
+      .forEach((button) => {
+        button.addEventListener('click', () => {
+          const tab = button.dataset.adminShortcut as AdminTab | undefined
+          if (tab) {
+            this.notice = null
+            void this.loadTab(tab)
+          }
+        })
+      })
+
+    this.root.querySelector<HTMLButtonElement>('[data-admin-refresh]')
+      ?.addEventListener('click', () => {
+        this.notice = null
+        void this.loadTab(this.activeTab)
+      })
+
     this.root.querySelector<HTMLButtonElement>('[data-admin-sign-out]')
       ?.addEventListener('click', () => {
         void this.authService.signOut().catch((error) => {
@@ -1394,6 +1627,26 @@ export class AdminApp {
       })
       this.notice = 'Status do jogo atualizado.'
       await this.loadTab('games')
+    })
+
+    this.root.querySelector<HTMLFormElement>('#admin-publisher-filter')
+      ?.addEventListener('submit', (event) => {
+        event.preventDefault()
+        const value = String(new FormData(event.currentTarget as HTMLFormElement).get('status') ?? '')
+        this.publisherStatus = value ? value as AdminPublisherRequestStatus : null
+        void this.loadTab('publishers')
+      })
+    this.bindMutationButtons('[data-review-publisher]', async (button) => {
+      const status = button.dataset.status
+      if (!status || !['reviewing', 'approved', 'rejected'].includes(status)) return
+      const card = button.closest<HTMLElement>('[data-publisher-card]')
+      const notes = card?.querySelector<HTMLTextAreaElement>('[data-publisher-notes]')?.value.trim() || null
+      await this.backend.reviewAdminPublisherRequest(button.dataset.reviewPublisher!, {
+        status: status as 'reviewing' | 'approved' | 'rejected',
+        notes,
+      })
+      this.notice = status === 'approved' ? 'Solicitação aprovada.' : status === 'rejected' ? 'Solicitação recusada.' : 'Solicitação marcada em análise.'
+      await this.loadTab('publishers')
     })
 
     this.root.querySelector<HTMLFormElement>('#admin-config-form')

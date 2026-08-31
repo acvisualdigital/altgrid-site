@@ -1,6 +1,6 @@
 {
   "name": "altgrid",
-  "version": "1.2.3",
+  "version": "1.5.0",
   "description": "Gerenciador desktop multissessão para jogos e sites suportados.",
   "author": "AltGrid",
   "private": true,
@@ -12,9 +12,10 @@
     "build": "pnpm typecheck && vite build && pnpm worker:build",
     "desktop:compile": "tsc -p tsconfig.electron.json && esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=electron-dist/preload.cjs && esbuild electron/session-preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=electron-dist/session-preload.cjs",
     "desktop:dev": "pnpm desktop:compile && concurrently --kill-others --success first \"vite --mode desktop\" \"wait-on http://127.0.0.1:3000 && cross-env ALTGRID_DEV_SERVER_URL=http://127.0.0.1:3000 electron .\"",
+    "catalog:lab:serve": "node scripts/local-catalog-proxy.mjs",
     "desktop:build": "pnpm typecheck && vite build --mode desktop && pnpm desktop:compile && node scripts/package-desktop.mjs",
+    "desktop:launcher:restore": "node scripts/velopack-cli.mjs restore",
     "update:lab:build": "node scripts/local-update-lab.mjs build",
-    "update:lab:build-new": "node scripts/local-update-lab.mjs build-new",
     "update:lab:serve": "node scripts/local-update-lab.mjs serve",
     "store:build": "pnpm typecheck && vite build --mode desktop && pnpm desktop:compile && node scripts/package-store.mjs",
     "android:sync": "pnpm build:android:web && cap sync android",
@@ -23,6 +24,7 @@
     "android:build": "pnpm android:sync && cd android && gradlew.bat assembleDebug",
     "release:preflight": "node scripts/release-preflight.mjs",
     "smoke:staging": "node scripts/staging-smoke.mjs",
+    "site:test": "node scripts/site-preflight.mjs",
     "test": "vitest",
     "test:run": "vitest run",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit && tsc -p tsconfig.electron.test.json",
@@ -41,7 +43,7 @@
     "@capacitor/android": "^8.5.0",
     "@capacitor/core": "^8.5.0",
     "@supabase/supabase-js": "2.112.4",
-    "electron-updater": "6.8.9"
+    "velopack": "1.2.0"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.0",
@@ -63,13 +65,16 @@
     "productName": "AltGrid",
     "protocols": [
       {
-        "name": "AltGrid password recovery",
+        "name": "AltGrid authentication",
         "schemes": [
           "altgrid"
         ]
       }
     ],
     "asar": true,
+    "asarUnpack": [
+      "node_modules/velopack/lib/native/velopack_nodeffi_win_x64_msvc.node"
+    ],
     "directories": {
       "output": "release"
     },
@@ -77,32 +82,18 @@
       "dist/**/*",
       "electron-dist/**/*",
       "electron/assets/**/*",
+      "!node_modules/velopack/lib/native/velopack_nodeffi_linux_arm64_gnu.node",
+      "!node_modules/velopack/lib/native/velopack_nodeffi_linux_x64_gnu.node",
+      "!node_modules/velopack/lib/native/velopack_nodeffi_osx.node",
+      "!node_modules/velopack/lib/native/velopack_nodeffi_win_arm64_msvc.node",
+      "!node_modules/velopack/lib/native/velopack_nodeffi_win_x86_msvc.node",
       "package.json"
     ],
     "win": {
-      "icon": "electron/assets/icon.png",
+      "icon": "electron/assets/icon.ico",
       "target": [
-        "nsis",
-        "portable"
+        "dir"
       ]
-    },
-    "nsis": {
-      "artifactName": "AltGrid-Setup-${version}.${ext}",
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "deleteAppDataOnUninstall": false,
-      "include": "installer/windows.nsh"
-    },
-    "portable": {
-      "artifactName": "AltGrid-Portable-${version}.${ext}"
-    },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "acvisualdigital",
-        "repo": "altgrid-releases",
-        "releaseType": "release"
-      }
-    ]
+    }
   }
 }

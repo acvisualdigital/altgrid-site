@@ -5,6 +5,7 @@ import {
   type AltgridDesktopApi,
   type SessionBounds,
   type SessionEvent,
+  type SessionExtensionSummary,
   type SessionProxyInput,
   type SessionProxySummary,
   type SessionProxyTestResult,
@@ -26,24 +27,41 @@ const api: AltgridDesktopApi = Object.freeze({
     ),
   }),
   sessions: Object.freeze({
+    chooseExtension: (accountId: string) => (
+      invoke<SessionExtensionSummary | null>(IPC_CHANNELS.sessions.chooseExtension, accountId)
+    ),
     clearData: (accountId: string) => (
       invoke<boolean>(IPC_CHANNELS.sessions.clearData, accountId)
     ),
     closeSession: (accountId: string) => (
       invoke<boolean>(IPC_CHANNELS.sessions.close, accountId)
     ),
+    copyProxy: (sourceAccountId: string, targetAccountId: string) => (
+      invoke<SessionProxySummary | null>(
+        IPC_CHANNELS.sessions.copyProxy,
+        sourceAccountId,
+        targetAccountId,
+      )
+    ),
+    copyExtension: (sourceAccountId: string, targetAccountId: string) => (
+      invoke<SessionExtensionSummary | null>(
+        IPC_CHANNELS.sessions.copyExtension,
+        sourceAccountId,
+        targetAccountId,
+      )
+    ),
     createSession: (
       accountId: string,
       url: string,
       useStoredProxy = false,
-      stonegyBotEnabled = false,
+      useStoredExtension = false,
     ) => (
       invoke<SessionSnapshot>(
         IPC_CHANNELS.sessions.create,
         accountId,
         url,
         useStoredProxy,
-        stonegyBotEnabled,
+        useStoredExtension,
       )
     ),
     destroySession: (accountId: string) => (
@@ -57,6 +75,9 @@ const api: AltgridDesktopApi = Object.freeze({
     ),
     getProxy: (accountId: string) => (
       invoke<SessionProxySummary | null>(IPC_CHANNELS.sessions.getProxy, accountId)
+    ),
+    getExtension: (accountId: string) => (
+      invoke<SessionExtensionSummary | null>(IPC_CHANNELS.sessions.getExtension, accountId)
     ),
     getResourceUsage: () => (
       invoke<SessionResourceUsage[]>(IPC_CHANNELS.sessions.getResourceUsage)
@@ -83,6 +104,9 @@ const api: AltgridDesktopApi = Object.freeze({
     removeProxy: (accountId: string) => (
       invoke<boolean>(IPC_CHANNELS.sessions.removeProxy, accountId)
     ),
+    removeExtension: (accountId: string) => (
+      invoke<boolean>(IPC_CHANNELS.sessions.removeExtension, accountId)
+    ),
     resizeSession: (accountId: string, bounds: SessionBounds) => (
       invoke<SessionSnapshot>(IPC_CHANNELS.sessions.resize, accountId, bounds)
     ),
@@ -97,11 +121,15 @@ const api: AltgridDesktopApi = Object.freeze({
     setInterfaceZoom: (accountId: string, zoom: number | null) => (
       invoke<SessionSnapshot>(IPC_CHANNELS.sessions.setInterfaceZoom, accountId, zoom)
     ),
-    setStonegyBot: (accountId: string, enabled: boolean) => (
-      invoke<SessionSnapshot>(IPC_CHANNELS.sessions.setStonegyBot, accountId, enabled)
-    ),
     setProxy: (accountId: string, input: SessionProxyInput) => (
       invoke<SessionProxySummary>(IPC_CHANNELS.sessions.setProxy, accountId, input)
+    ),
+    setExtensionEnabled: (accountId: string, enabled: boolean) => (
+      invoke<SessionExtensionSummary>(
+        IPC_CHANNELS.sessions.setExtensionEnabled,
+        accountId,
+        enabled,
+      )
     ),
     showSession: (accountId: string) => (
       invoke<SessionSnapshot>(IPC_CHANNELS.sessions.show, accountId)

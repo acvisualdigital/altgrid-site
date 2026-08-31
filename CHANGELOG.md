@@ -1,24 +1,41 @@
 # Changelog
 
+## 1.5.0
+
+### Conta, chat e administração
+
+- Solicita um nick obrigatório no primeiro acesso e reutiliza o mesmo nome no chat.
+- Permite localizar usuários pelo nick no painel administrativo, mantendo e-mail e ID visíveis para identificação segura.
+- Adiciona alertas exclusivos para administradores quando uma compra é iniciada e quando o pagamento é confirmado.
+- Inclui sinal sonoro diferente para tentativa e confirmação de compra, sem repetir pagamentos antigos ao abrir o app.
+- Reformula o painel administrativo com navegação por áreas, indicadores operacionais, atalhos clicáveis, atualização rápida e melhor adaptação a telas menores.
+
+### Windows
+
+- Repagina a central de sessões, sidebar, cards e barra de desempenho com uma hierarquia visual mais clara e efeitos gráficos leves.
+- Limita o heap JavaScript de cada renderer de jogo e desativa o cache de páginas anteriores, reduzindo retenção de memória sem suspender rede ou gameplay.
+- Compartilha uma única leitura da árvore de processos entre todas as contas e reduz a frequência do monitoramento automático.
+- Atualiza somente as regiões da interface que realmente mudaram, evitando reconstruções e alocações repetidas durante chat, presença e métricas.
+- Carrega o painel administrativo sob demanda, removendo esse código da inicialização normal dos jogadores.
+- Adapta automaticamente as contas secundárias para até 10 FPS em grades com 4 sessões e 5 FPS a partir de 8, mantendo a conta focada fluida.
+- Solicita coleta de objetos JavaScript não utilizados ao ocultar uma tela, liberando RAM sem encerrar o jogo ou sua conexão.
+- Reúne CPU, memória, sessões, Chat, RMT, modo Somente telas, Descanso e Eco Mode na barra inferior recolhível.
+- Adiciona modo Descanso visual por conta ou grade, mantendo as sessões em execução em segundo plano.
+- Permite recolher a barra lateral por uma alça discreta e amplia a área útil das contas.
+- Corrige o cálculo de CPU, a alternância do Eco Mode e a sobreposição dos menus das contas.
+- Mantém proxy salvo e ativável por conta e remove completamente o bot do Stonegy.
+- Amplia o catálogo do app com 13 jogos idle de site ativo, links HTTPS verificados e ícones empacotados sem cortes ou deformações.
+
 ## 1.2.2
 
 ### Windows
 
-- Integra o AltGrid Bot diretamente nas contas do Stonegy, sem instalação manual de extensão.
-- Libera o recurso para os planos PRO, PLUS e FOUNDER, mantendo o FREE sem automação.
-- Permite ativar ou desativar o bot individualmente pelo menu de cada conta e preserva a preferência local.
-- Corrige o estado visual do botão de ativação, que podia continuar mostrando a ação anterior em uma conta aberta.
-- Ignora a Venda Rápida no primeiro ciclo iniciado na cidade e preserva a preferência permanente de venda automática.
-- Recupera automaticamente o fluxo que parar na seleção, reaplicando a hunt e confirmando sua entrada.
-- Substitui o nome e a imagem herdados da extensão pela identidade do AltGrid Bot.
 - Substitui o atualizador diferencial do Windows pelo download controlado do instalador completo, com verificação de integridade e novas tentativas automáticas.
 - Impede downloads duplicados durante a verificação e inicia a instalação explicitamente após encerrar as sessões do AltGrid.
 - Adiciona escala de interface independente por conta, de 50% a 100% ou automática, para exibir mais itens do HUD em grades com várias telas.
 - Encerra conexões e processos auxiliares remanescentes antes de instalar a atualização, evitando arquivos antigos bloqueados pelo Windows.
 - Exibe e permite ativar corretamente o plano PLUS nos controles de plano temporário e vitalício do painel administrativo.
 - Substitui os blocos e ícones padrão do pacote Microsoft Store pela identidade visual oficial do AltGrid.
-- Executa o bot em um mundo isolado e somente em páginas HTTPS do domínio oficial do Stonegy.
-- Restringe o envio de webhooks aos endpoints HTTPS oficiais do Discord e limita o tamanho dos dados enviados.
 - Mantém Android inalterado nesta atualização.
 
 ## 1.2.0

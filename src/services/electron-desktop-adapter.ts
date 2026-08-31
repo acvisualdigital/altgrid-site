@@ -2,6 +2,7 @@ import type {
   AltgridDesktopApi,
   SessionBounds,
   SessionEvent,
+  SessionExtensionSummary,
   SessionProxyInput,
   SessionProxySummary,
   SessionProxyTestResult,
@@ -16,9 +17,9 @@ export interface DesktopAccountReference {
 }
 
 export interface DesktopSessionLaunchTarget {
+  allowExtension?: boolean
   allowProxy?: boolean
   launchUrl: string
-  stonegyBotEnabled?: boolean
 }
 
 export interface DesktopSessionStatusEvent {
@@ -30,8 +31,6 @@ export interface DesktopSessionStatusEvent {
     | 'load-failed'
     | 'loading'
     | 'ready'
-    | 'stonegy-bot-failed'
-    | 'stonegy-bot-ready'
 }
 
 export interface ElectronDesktopIntegration {
@@ -131,6 +130,13 @@ export class ElectronSessionLauncher {
     await this.api.closeSession(account.id)
   }
 
+  copyProxy(
+    source: DesktopAccountReference,
+    target: DesktopAccountReference,
+  ): Promise<SessionProxySummary | null> {
+    return this.api.copyProxy(source.id, target.id)
+  }
+
   async clearData(account: DesktopAccountReference): Promise<void> {
     this.unavailableSessionIds.delete(account.id)
     await this.api.clearData(account.id)
@@ -160,7 +166,7 @@ export class ElectronSessionLauncher {
       account.id,
       target.launchUrl,
       Boolean(proxy?.enabled),
-      target.stonegyBotEnabled === true,
+      Boolean(target.allowExtension),
     )
   }
 
@@ -200,6 +206,32 @@ export class ElectronSessionLauncher {
     await this.api.reloadSession(account.id)
   }
 
+  chooseExtension(account: DesktopAccountReference): Promise<SessionExtensionSummary | null> {
+    return this.api.chooseExtension(account.id)
+  }
+
+  copyExtension(
+    source: DesktopAccountReference,
+    target: DesktopAccountReference,
+  ): Promise<SessionExtensionSummary | null> {
+    return this.api.copyExtension(source.id, target.id)
+  }
+
+  getExtension(account: DesktopAccountReference): Promise<SessionExtensionSummary | null> {
+    return this.api.getExtension(account.id)
+  }
+
+  removeExtension(account: DesktopAccountReference): Promise<boolean> {
+    return this.api.removeExtension(account.id)
+  }
+
+  setExtensionEnabled(
+    account: DesktopAccountReference,
+    enabled: boolean,
+  ): Promise<SessionExtensionSummary> {
+    return this.api.setExtensionEnabled(account.id, enabled)
+  }
+
   async setMuted(account: DesktopAccountReference, muted: boolean): Promise<void> {
     await this.api.muteSession(account.id, muted)
   }
@@ -219,10 +251,6 @@ export class ElectronSessionLauncher {
     scale: number | null,
   ): Promise<void> {
     await this.api.setInterfaceZoom(account.id, scale)
-  }
-
-  async setStonegyBot(account: DesktopAccountReference, enabled: boolean): Promise<void> {
-    await this.api.setStonegyBot(account.id, enabled)
   }
 
   dispose(): void {
@@ -259,8 +287,6 @@ function isStatusEvent(event: SessionEvent): event is SessionEvent & {
     'load-failed',
     'loading',
     'ready',
-    'stonegy-bot-failed',
-    'stonegy-bot-ready',
   ].includes(event.type)
 }
 

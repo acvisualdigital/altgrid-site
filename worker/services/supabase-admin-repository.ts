@@ -19,6 +19,8 @@ import type {
   AdminPaymentLog,
   AdminProduct,
   AdminProductUpdate,
+  AdminPublisherRequest,
+  AdminPublisherRequestStatus,
   AdminReferral,
   AdminReferralLog,
   AdminReferralStats,
@@ -426,6 +428,38 @@ export class SupabaseAdminRepository implements AdminRepository {
       p_enabled: input.enabled ?? current.enabled,
       p_sort_order: input.sort_order ?? current.sort_order,
     })
+  }
+
+  async getAdminPublisherRequests(
+    actorUserId: string,
+    status: AdminPublisherRequestStatus | null,
+  ): Promise<AdminPublisherRequest[]> {
+    const { data, error } = await this.client.rpc('admin_list_site_developer_requests', {
+      p_actor_user_id: actorUserId,
+      p_status: status,
+    })
+    if (error) dataError(error)
+    return (data ?? []) as AdminPublisherRequest[]
+  }
+
+  async reviewAdminPublisherRequest(
+    actorUserId: string,
+    requestId: string,
+    status: Extract<AdminPublisherRequestStatus, 'reviewing' | 'approved' | 'rejected'>,
+    notes: string | null,
+  ): Promise<AdminPublisherRequest> {
+    const reviewed = await this.adminRpcResult<AdminPublisherRequest>(
+      'admin_review_site_developer_request',
+      {
+        p_actor_user_id: actorUserId,
+        p_request_id: requestId,
+        p_status: status,
+        p_notes: notes,
+      },
+    )
+    const [enriched] = await this.getAdminPublisherRequests(actorUserId, status)
+      .then((entries) => entries.filter((entry) => entry.id === reviewed.id))
+    return enriched ?? reviewed
   }
 
   async getAdminConfig(): Promise<AdminConfigEntry[]> {

@@ -16,6 +16,7 @@ type ChatApi = Pick<
   | 'getChatStatus'
   | 'reportChatMessage'
   | 'sendChatMessage'
+  | 'startDirectChat'
 >
 
 interface ChatStorage {
@@ -24,7 +25,11 @@ interface ChatStorage {
 }
 
 export interface ChatRealtimeGateway {
-  subscribe(channelId: string, onChange: () => void): () => void
+  subscribe(
+    channelId: string,
+    onChange: () => void,
+    type?: ChatChannel['type'],
+  ): () => void
 }
 
 export interface ChatState {
@@ -93,6 +98,7 @@ export class ChatService {
   private revision = 0
   private lastSentAt = 0
   private refreshInFlight: Promise<void> | null = null
+  private channelRefreshInFlight: Promise<void> | null = null
 
   constructor(
     private readonly api: ChatApi,
@@ -148,7 +154,14 @@ export class ChatService {
     const selected = channels.find((channel) => channel.type === 'global')
       ?? channels[0]
       ?? null
-    this.patch({ channels, loading: false })
+    this.patch({
+      channels,
+      loading: false,
+      unread: Object.fromEntries(channels.map((channel) => [
+        channel.id,
+        Math.max(0, channel.unread ?? this.state.unread[channel.id] ?? 0),
+      ])),
+    })
 
     if (this.state.open && selected) {
       await this.selectChannel(selected.id)
@@ -157,22 +170,45 @@ export class ChatService {
 
   async open(preferredGameId: string | null = null): Promise<void> {
     this.patch({ open: true })
-
-    if (this.state.channels.length === 0) {
-      await this.start(preferredGameId)
-      return
-    }
-
-    const fallback = this.state.channels.find((channel) => channel.type === 'global')
-      ?? this.state.channels[0]
-
-    if (fallback) {
-      await this.selectChannel(fallback.id)
-    }
+    await this.start(preferredGameId)
   }
 
   close(): void {
     this.patch({ loading: false, loadingMore: false, open: false, sending: false })
+  }
+
+  refreshUnread(): Promise<void> {
+    if (this.channelRefreshInFlight) {
+      return this.channelRefreshInFlight
+    }
+
+    const revision = this.revision
+    const operation = this.api.getChatChannels()
+      .then((response) => {
+        if (revision !== this.revision) {
+          return
+        }
+
+        const selectedChannelId = this.state.selectedChannelId
+        this.patch({
+          channels: response.channels,
+          unread: Object.fromEntries(response.channels.map((channel) => [
+            channel.id,
+            this.state.open && channel.id === selectedChannelId
+              ? 0
+              : Math.max(0, channel.unread ?? this.state.unread[channel.id] ?? 0),
+          ])),
+        })
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.channelRefreshInFlight === operation) {
+          this.channelRefreshInFlight = null
+        }
+      })
+
+    this.channelRefreshInFlight = operation
+    return operation
   }
 
   reset(): void {
@@ -197,7 +233,8 @@ export class ChatService {
   }
 
   async selectChannel(channelId: string): Promise<void> {
-    if (!this.state.channels.some((channel) => channel.id === channelId)) {
+    const selectedChannel = this.state.channels.find((channel) => channel.id === channelId)
+    if (!selectedChannel) {
       return
     }
 
@@ -229,6 +266,7 @@ export class ChatService {
         this.unsubscribeRealtime = this.realtime?.subscribe(
           channelId,
           () => void this.refreshSelectedChannel(channelId),
+          selectedChannel.type,
         ) ?? null
       }
     } catch {
@@ -302,6 +340,30 @@ export class ChatService {
       })
     } catch (error) {
       this.patch({ error: 'Não foi possível enviar a mensagem.', sending: false })
+      throw error
+    }
+  }
+
+  async startDirectConversation(recipientId: string): Promise<void> {
+    const normalized = recipientId.trim()
+    if (!normalized) {
+      throw new Error('Não foi possível identificar esta pessoa.')
+    }
+
+    this.patch({ error: null, loading: true })
+    try {
+      const response = await this.api.startDirectChat(normalized)
+      const channels = [
+        ...this.state.channels.filter((channel) => channel.id !== response.channel.id),
+        response.channel,
+      ]
+      this.patch({ channels, loading: false })
+      await this.selectChannel(response.channel.id)
+    } catch (error) {
+      this.patch({
+        error: 'Não foi possível abrir a conversa direta.',
+        loading: false,
+      })
       throw error
     }
   }

@@ -1,3 +1,5 @@
+import './velopack-bootstrap.js'
+
 import { existsSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -26,11 +28,8 @@ import {
   createNativeSessionViewFactory,
 } from './native-session-view.js'
 import { SessionManager } from './session-manager.js'
-import {
-  isStonegyUrl,
-  normalizeDiscordWebhookRequest,
-} from './stonegy-bot.js'
 import { ProxyConfigStore } from './proxy-config-store.js'
+import { ExtensionConfigStore } from './extension-config-store.js'
 import { configureShellSecurity } from './shell-security.js'
 import { UpdaterService } from './updater-service.js'
 import {
@@ -58,12 +57,36 @@ protocol.registerSchemesAsPrivileged([{
   },
   scheme: LOCAL_SHELL_SCHEME,
 }])
+
+// Each account owns an isolated Chromium renderer. Keep those renderers lean
+// without disabling GPU acceleration or suspending the game/network loop.
+// A bounded V8 heap encourages earlier collection on idle games, while the
+// back/forward cache is unnecessary for the single-page game sessions and can
+// otherwise retain complete, hidden page trees after navigation.
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=320 --expose-gc')
+app.commandLine.appendSwitch('disable-features', 'BackForwardCache')
+// Chromium still keeps WebGL accelerated, but evicts discardable textures and
+// raster resources before the shared GPU process grows without a useful bound
+// across large grids. One GiB leaves ample room for smooth idle-game rendering.
+app.commandLine.appendSwitch('force-gpu-mem-available-mb', '1024')
+// The development shell is rebuilt in place by Vite. Chromium's persistent
+// cache can otherwise keep a stale asset response under a TypeScript module
+// URL, leaving the local app on a black screen until its profile is cleared.
+// Packaged builds keep the normal HTTP cache.
+if (process.env.ALTGRID_DEV_SERVER_URL) {
+  app.commandLine.appendSwitch('disable-http-cache')
+  // Keep local validation independent from an installed AltGrid instance.
+  // This prevents the production single-instance lock and saved sessions from
+  // closing or redirecting the development window during catalog/update tests.
+  app.setPath('userData', resolve(process.cwd(), '.altgrid-dev-profile'))
+}
 app.enableSandbox()
 const singleInstanceLock = app.requestSingleInstanceLock()
 
 let mainWindow: BrowserWindow | null = null
 let sessionManager: SessionManager | null = null
 let proxyConfigStore: ProxyConfigStore | null = null
+let extensionConfigStore: ExtensionConfigStore | null = null
 let updaterService: UpdaterService | null = null
 let shellEntryUrl: string | null = null
 let pendingRecoveryDeepLink = findTrustedRecoveryDeepLink(process.argv)
@@ -181,6 +204,12 @@ function requireProxyStore(event: IpcMainInvokeEvent): ProxyConfigStore {
   return proxyConfigStore
 }
 
+function requireExtensionStore(event: IpcMainInvokeEvent): ExtensionConfigStore {
+  requireShellSender(event)
+  if (!extensionConfigStore) throw new Error('As extensões ainda não estão disponíveis.')
+  return extensionConfigStore
+}
+
 function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.app.getPlatform, (event) => {
     requireShellSender(event)
@@ -203,22 +232,105 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.sessions.create,
-    (event, accountId, url, useStoredProxy = false, stonegyBotEnabled = false) => {
+    (event, accountId, url, useStoredProxy = false, useStoredExtension = false) => {
       const manager = requireSessionManager(event)
       const proxy = useStoredProxy
         ? requireProxyStore(event).get(accountId)
+        : null
+      const extension = useStoredExtension
+        ? requireExtensionStore(event).get(accountId)
         : null
       return manager.createSession(
         accountId,
         url,
         proxy?.enabled ? proxy : null,
-        stonegyBotEnabled,
+        extension?.enabled ? extension.path : null,
       )
     },
   )
+  ipcMain.handle(IPC_CHANNELS.sessions.getExtension, (event, accountId) => (
+    requireExtensionStore(event).getSummary(accountId)
+  ))
+  ipcMain.handle(IPC_CHANNELS.sessions.copyExtension, (event, sourceAccountId, targetAccountId) => (
+    requireExtensionStore(event).copy(sourceAccountId, targetAccountId)
+  ))
+  ipcMain.handle(IPC_CHANNELS.sessions.chooseExtension, async (event, accountId) => {
+    const manager = requireSessionManager(event)
+    const store = requireExtensionStore(event)
+    if (!mainWindow || mainWindow.isDestroyed()) return null
+    const selection = await dialog.showOpenDialog(mainWindow, {
+      buttonLabel: 'Usar nesta conta',
+      message: 'Selecione a pasta descompactada da extensão (com manifest.json).',
+      properties: ['openDirectory'],
+      title: 'Selecionar extensão do navegador',
+    })
+    if (selection.canceled || !selection.filePaths[0]) return null
+    const previous = store.get(accountId)
+    const chosen = store.setFromDirectory(accountId, selection.filePaths[0])
+    try {
+      if (manager.getSessions().some((candidate) => candidate.accountId === accountId)) {
+        const current = store.get(accountId)
+        await manager.setSessionExtension(accountId, current?.enabled ? current.path : null)
+      }
+      return chosen
+    } catch (error) {
+      if (previous) {
+        store.setFromDirectory(accountId, previous.path)
+        store.setEnabled(accountId, previous.enabled)
+      } else {
+        store.remove(accountId)
+      }
+      throw error
+    }
+  })
+  ipcMain.handle(IPC_CHANNELS.sessions.setExtensionEnabled, async (event, accountId, enabled) => {
+    const manager = requireSessionManager(event)
+    const store = requireExtensionStore(event)
+    const previous = store.get(accountId)
+    const updated = store.setEnabled(accountId, enabled)
+    try {
+      if (manager.getSessions().some((candidate) => candidate.accountId === accountId)) {
+        const current = store.get(accountId)
+        await manager.setSessionExtension(accountId, current?.enabled ? current.path : null)
+      }
+      return updated
+    } catch (error) {
+      if (previous) store.setEnabled(accountId, previous.enabled)
+      throw error
+    }
+  })
+  ipcMain.handle(IPC_CHANNELS.sessions.removeExtension, async (event, accountId) => {
+    const manager = requireSessionManager(event)
+    const store = requireExtensionStore(event)
+    if (manager.getSessions().some((candidate) => candidate.accountId === accountId)) {
+      await manager.setSessionExtension(accountId, null)
+    }
+    return store.remove(accountId)
+  })
   ipcMain.handle(IPC_CHANNELS.sessions.clearData, (event, accountId) => (
     requireSessionManager(event).clearSessionData(accountId)
   ))
+  ipcMain.handle(
+    IPC_CHANNELS.sessions.copyProxy,
+    async (event, sourceAccountId, targetAccountId) => {
+      const manager = requireSessionManager(event)
+      const store = requireProxyStore(event)
+      const previous = store.get(targetAccountId)
+      const summary = store.copy(sourceAccountId, targetAccountId)
+      if (!summary) return null
+
+      try {
+        if (manager.getSessions().some((candidate) => candidate.accountId === targetAccountId)) {
+          await manager.setSessionProxy(targetAccountId, store.get(targetAccountId))
+        }
+        return summary
+      } catch (error) {
+        if (previous) store.set(targetAccountId, previous)
+        else store.remove(targetAccountId)
+        throw error
+      }
+    },
+  )
   ipcMain.handle(IPC_CHANNELS.sessions.show, (event, accountId) => (
     requireSessionManager(event).showSession(accountId)
   ))
@@ -257,9 +369,6 @@ function registerIpcHandlers(): void {
   ))
   ipcMain.handle(IPC_CHANNELS.sessions.setInterfaceZoom, (event, accountId, zoom) => (
     requireSessionManager(event).setInterfaceZoom(accountId, zoom)
-  ))
-  ipcMain.handle(IPC_CHANNELS.sessions.setStonegyBot, (event, accountId, enabled) => (
-    requireSessionManager(event).setStonegyBot(accountId, enabled)
   ))
   ipcMain.handle(IPC_CHANNELS.sessions.getAll, (event) => (
     requireSessionManager(event).getSessions()
@@ -331,32 +440,6 @@ function registerIpcHandlers(): void {
     )
   ))
 
-  ipcMain.handle(
-    SESSION_PRELOAD_CHANNELS.stonegyDiscordWebhook,
-    async (event, webhook, payload) => {
-      if (
-        event.senderFrame !== event.sender.mainFrame
-        || !isStonegyUrl(event.senderFrame.url)
-      ) {
-        throw new Error('Webhook rejeitado: origem não confiável.')
-      }
-
-      const request = normalizeDiscordWebhookRequest(webhook, payload)
-      const response = await net.fetch(request.url, {
-        body: request.body,
-        headers: { 'content-type': 'application/json' },
-        method: 'POST',
-        redirect: 'error',
-      })
-
-      return {
-        error: response.ok ? '' : `Discord respondeu HTTP ${response.status}.`,
-        ok: response.ok,
-        status: response.status,
-      }
-    },
-  )
-
   ipcMain.handle(IPC_CHANNELS.updater.getState, (event) => (
     requireUpdater(event).getState()
   ))
@@ -368,8 +451,8 @@ function registerIpcHandlers(): void {
   ))
   ipcMain.handle(IPC_CHANNELS.updater.install, (event) => {
     const updater = requireUpdater(event)
-    // Release native game views before electron-updater closes the shell and
-    // starts NSIS. This removes the old race with lingering session processes.
+    // Release native game views before Velopack closes the shell and swaps the
+    // active package. This prevents lingering session processes from holding files.
     sessionManager?.destroyAll()
     return updater.quitAndInstall()
   })
@@ -498,6 +581,9 @@ async function createMainWindow(): Promise<void> {
     join(app.getPath('userData'), 'proxy-config.v1.json'),
     safeStorage,
   )
+  extensionConfigStore = new ExtensionConfigStore(
+    join(app.getPath('userData'), 'extension-config.v1.json'),
+  )
   sessionManager = new SessionManager({
     allowInsecureLoopback: !app.isPackaged,
     clearPartitionData: clearNativeSessionPartition,
@@ -527,6 +613,7 @@ async function createMainWindow(): Promise<void> {
     updaterService = null
     sessionManager = null
     proxyConfigStore = null
+    extensionConfigStore = null
     mainWindow = null
     shellEntryUrl = null
   })

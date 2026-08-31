@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   AltgridDesktopApi,
   SessionEvent,
+  SessionExtensionSummary,
   SessionProxySummary,
   SessionSnapshot,
 } from '../../electron/contracts'
@@ -24,7 +25,6 @@ function snapshot(
     muted: false,
     partition: `persist:${accountId}`,
     status: 'ready',
-    stonegyBotEnabled: false,
     url: 'https://game.example/',
     visible,
   }
@@ -33,13 +33,17 @@ function snapshot(
 function createSessionApi() {
   let eventListener: ((event: SessionEvent) => void) | null = null
   const api = {
+    chooseExtension: vi.fn(async (): Promise<SessionExtensionSummary | null> => null),
     clearData: vi.fn(async () => true),
     closeSession: vi.fn(async () => true),
+    copyProxy: vi.fn(async (): Promise<SessionProxySummary | null> => null),
+    copyExtension: vi.fn(async (): Promise<SessionExtensionSummary | null> => null),
     createSession: vi.fn(async (accountId: string) => snapshot(accountId, false)),
     destroySession: vi.fn(async () => true),
     focusSession: vi.fn(async (accountId: string) => snapshot(accountId, true)),
     getSessions: vi.fn(async () => [snapshot('account-1', true), snapshot('account-2', true)]),
     getProxy: vi.fn(async (): Promise<SessionProxySummary | null> => null),
+    getExtension: vi.fn(async (): Promise<SessionExtensionSummary | null> => null),
     getResourceUsage: vi.fn(async () => []),
     hideSession: vi.fn(async (accountId: string) => snapshot(accountId, false)),
     muteSession: vi.fn(async (accountId: string) => snapshot(accountId, true)),
@@ -52,6 +56,7 @@ function createSessionApi() {
     }),
     reloadSession: vi.fn(async (accountId: string) => snapshot(accountId, true)),
     removeProxy: vi.fn(async () => true),
+    removeExtension: vi.fn(async () => true),
     resizeSession: vi.fn(async (accountId: string) => snapshot(accountId, true)),
     setEcoMode: vi.fn(async (enabled: boolean) => enabled),
     setFrameRate: vi.fn(async (accountId: string, fps: number) => ({
@@ -59,9 +64,13 @@ function createSessionApi() {
       frameRate: fps,
     })),
     setInterfaceZoom: vi.fn(async (accountId: string) => snapshot(accountId, true)),
-    setStonegyBot: vi.fn(async (accountId: string, enabled: boolean) => ({
-      ...snapshot(accountId, true),
-      stonegyBotEnabled: enabled,
+    setExtensionEnabled: vi.fn(async (_accountId: string, enabled: boolean): Promise<SessionExtensionSummary> => ({
+      enabled,
+      folderName: 'test-extension',
+      manifestVersion: 3,
+      name: 'Test Extension',
+      permissions: [],
+      version: '1.0.0',
     })),
     setProxy: vi.fn(async (_accountId, input) => ({
       enabled: input.enabled,
@@ -88,6 +97,24 @@ function createSessionApi() {
 }
 
 describe('ElectronSessionLauncher', () => {
+  it('copies a stored proxy between isolated account ids', async () => {
+    const harness = createSessionApi()
+    const summary: SessionProxySummary = {
+      enabled: true,
+      hasPassword: true,
+      host: 'proxy.example.com',
+      port: 1080,
+      protocol: 'socks5',
+      username: 'player',
+    }
+    harness.api.copyProxy.mockResolvedValue(summary)
+    const launcher = new ElectronSessionLauncher(harness.api)
+
+    await expect(launcher.copyProxy({ id: 'source' }, { id: 'copy' }))
+      .resolves.toEqual(summary)
+    expect(harness.api.copyProxy).toHaveBeenCalledWith('source', 'copy')
+  })
+
   it('repositions existing native views without recreating or navigating them', async () => {
     const harness = createSessionApi()
     const launcher = new ElectronSessionLauncher(harness.api)
@@ -166,6 +193,7 @@ describe('ElectronSessionLauncher', () => {
     const launcher = new ElectronSessionLauncher(harness.api)
 
     await launcher.open({ id: 'account-1' }, {
+      allowExtension: false,
       allowProxy: false,
       launchUrl: 'https://game.example/',
     })
@@ -210,6 +238,7 @@ describe('ElectronSessionLauncher', () => {
     })
 
     await launcher.open({ id: 'account-1' }, {
+      allowExtension: false,
       allowProxy: true,
       launchUrl: 'https://game.example/',
     })
@@ -220,6 +249,24 @@ describe('ElectronSessionLauncher', () => {
       'https://game.example/',
       true,
       false,
+    )
+  })
+
+  it('loads a stored extension only when the trusted launch target allows it', async () => {
+    const harness = createSessionApi()
+    const launcher = new ElectronSessionLauncher(harness.api)
+
+    await launcher.open({ id: 'account-1' }, {
+      allowExtension: true,
+      allowProxy: false,
+      launchUrl: 'https://game.example/',
+    })
+
+    expect(harness.api.createSession).toHaveBeenCalledWith(
+      'account-1',
+      'https://game.example/',
+      false,
+      true,
     )
   })
 

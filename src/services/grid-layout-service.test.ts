@@ -56,6 +56,7 @@ describe('GridLayoutService', () => {
       '2x2': [2, 2, 4],
       '3x2': [3, 2, 6],
       '3x3': [3, 3, 9],
+      '4x4': [4, 4, 16],
     } as const
     const layouts = service(true)
 
@@ -101,7 +102,7 @@ describe('GridLayoutService', () => {
     expect(resolveMode(5, { advancedGrids: false })).toBe('2x2')
   })
 
-  it('marks 3x2 and 3x3 unavailable without advanced_grids', () => {
+  it('marks 3x2, 3x3 and 4x4 unavailable without advanced_grids', () => {
     const layouts = service(false)
     const availability = new Map(
       layouts.listModes().map((item) => [item.mode, item]),
@@ -114,6 +115,10 @@ describe('GridLayoutService', () => {
       requiredFeature: 'advanced_grids',
     })
     expect(availability.get('3x3')).toMatchObject({
+      available: false,
+      requiredFeature: 'advanced_grids',
+    })
+    expect(availability.get('4x4')).toMatchObject({
       available: false,
       requiredFeature: 'advanced_grids',
     })

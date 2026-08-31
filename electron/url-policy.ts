@@ -50,6 +50,7 @@ export function parseTrustedRecoveryDeepLink(candidate: unknown): string | null 
   const url = parsedUrl(candidate)
 
   const isRecovery = url?.searchParams.get('auth') === 'recovery'
+  const isOAuth = url?.searchParams.get('auth') === 'oauth'
   const referralCode = url?.searchParams.get('ref')?.trim().toUpperCase() ?? ''
   const isReferral = /^HUNT-[A-HJ-NP-Z2-9]{8}$/.test(referralCode)
     && url?.searchParams.size === 1
@@ -62,9 +63,26 @@ export function parseTrustedRecoveryDeepLink(candidate: unknown): string | null 
     || url.protocol !== 'altgrid:'
     || url.host !== 'app'
     || (url.pathname !== '' && url.pathname !== '/')
-    || (!isRecovery && !isReferral)
+    || (!isRecovery && !isOAuth && !isReferral)
   ) {
     return null
+  }
+
+  if (isOAuth) {
+    const fragment = new URLSearchParams(url.hash.replace(/^#/, ''))
+    const hasImplicitSession = Boolean(
+      fragment.get('access_token') && fragment.get('refresh_token'),
+    )
+    const hasPkceCode = Boolean(url.searchParams.get('code'))
+    const allowedQueryKeys = hasPkceCode
+      ? ['auth', 'code']
+      : ['auth']
+    const hasUnexpectedQuery = [...url.searchParams.keys()]
+      .some((key) => !allowedQueryKeys.includes(key))
+
+    if ((!hasImplicitSession && !hasPkceCode) || hasUnexpectedQuery) {
+      return null
+    }
   }
 
   if (isReferral) {

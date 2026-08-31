@@ -82,8 +82,6 @@ export type NativeSessionEvent =
         | 'crashed'
         | 'load-failed'
         | 'popup-blocked'
-        | 'stonegy-bot-failed'
-        | 'stonegy-bot-ready'
       detail?: string
     }
   | { type: 'navigated'; url: string }
@@ -98,10 +96,10 @@ export interface NativeSessionView {
   stop(): void
   setBounds(bounds: SessionBounds): void
   setEcoMode(enabled: boolean): void
+  setExtension(extensionPath: string | null): Promise<void>
   setFrameRateLimit(fps: number): void
   setMuted(muted: boolean): void
   setProxy(config: SessionProxyConfig | null): Promise<void>
-  setStonegyBotEnabled(enabled: boolean): void
   testProxy(targetUrl: string): Promise<SessionProxyTestResult>
   setVisible(visible: boolean): void
   setZoomFactor(factor: number): void
@@ -111,7 +109,6 @@ export interface NativeSessionViewContext {
   accountId: string
   onEvent(event: NativeSessionEvent): void
   partition: string
-  stonegyBotEnabled?: boolean
 }
 
 export type NativeSessionViewFactory = (
@@ -133,7 +130,6 @@ interface SessionRecord {
   interfaceZoom: number | null
   partition: string
   status: SessionStatus
-  stonegyBotEnabled: boolean
   url: string
   view: NativeSessionView
   visible: boolean
@@ -213,7 +209,6 @@ function snapshot(record: SessionRecord): SessionSnapshot {
     muted: record.muted,
     partition: record.partition,
     status: record.status,
-    stonegyBotEnabled: record.stonegyBotEnabled,
     url: record.url,
     visible: record.visible,
   }
@@ -249,19 +244,12 @@ export class SessionManager {
     accountId: unknown,
     inputUrl: unknown,
     proxyConfig: SessionProxyConfig | null = null,
-    stonegyBotEnabled: unknown = false,
+    extensionPath: string | null = null,
   ): Promise<SessionSnapshot> {
     const normalizedId = normalizeAccountId(accountId)
-    if (typeof stonegyBotEnabled !== 'boolean') {
-      throw new TypeError('O estado do AltGrid Bot deve ser booleano.')
-    }
     const existing = this.records.get(normalizedId)
 
     if (existing) {
-      if (existing.stonegyBotEnabled !== stonegyBotEnabled) {
-        existing.stonegyBotEnabled = stonegyBotEnabled
-        existing.view.setStonegyBotEnabled(stonegyBotEnabled)
-      }
       return snapshot(existing)
     }
 
@@ -271,7 +259,6 @@ export class SessionManager {
     const view = this.createView({
       accountId: normalizedId,
       partition,
-      stonegyBotEnabled,
       onEvent: (event) => this.handleNativeEvent(normalizedId, event),
     })
 
@@ -283,7 +270,6 @@ export class SessionManager {
       muted: false,
       partition,
       status: 'loading' satisfies SessionStatus,
-      stonegyBotEnabled,
       url,
       view,
       visible: false,
@@ -296,12 +282,15 @@ export class SessionManager {
       view.setEcoMode(this.ecoModeEnabled)
       view.setFrameRateLimit(this.effectiveFrameRate(record))
       await view.setProxy(proxyConfig?.enabled ? proxyConfig : null)
+      await view.setExtension(extensionPath)
       view.attach()
       view.setBounds(record.bounds)
       view.setZoomFactor(this.effectiveInterfaceZoom(record))
       view.setVisible(false)
+      this.refreshFrameRateBudgets()
     } catch {
       this.records.delete(normalizedId)
+      this.refreshFrameRateBudgets()
       view.destroy(true)
       throw new Error('Não foi possível preparar esta conta.')
     }
@@ -321,6 +310,13 @@ export class SessionManager {
       }
     }
 
+    return snapshot(record)
+  }
+
+  async setSessionExtension(accountId: unknown, extensionPath: string | null): Promise<SessionSnapshot> {
+    const record = this.requireRecord(accountId)
+    await record.view.setExtension(extensionPath)
+    record.view.reload()
     return snapshot(record)
   }
 
@@ -488,23 +484,6 @@ export class SessionManager {
 
     record.interfaceZoom = zoom
     record.view.setZoomFactor(this.effectiveInterfaceZoom(record))
-    return snapshot(record)
-  }
-
-  setStonegyBot(accountId: unknown, enabled: unknown): SessionSnapshot {
-    if (typeof enabled !== 'boolean') {
-      throw new TypeError('O estado do AltGrid Bot deve ser booleano.')
-    }
-
-    const record = this.requireRecord(accountId)
-    if (record.stonegyBotEnabled === enabled) {
-      return snapshot(record)
-    }
-
-    record.stonegyBotEnabled = enabled
-    record.status = 'loading'
-    record.view.setStonegyBotEnabled(enabled)
-    this.emit({ accountId: record.accountId, session: snapshot(record), type: 'loading' })
     return snapshot(record)
   }
 
@@ -682,6 +661,7 @@ export class SessionManager {
     }
 
     this.records.delete(normalizedId)
+    this.refreshFrameRateBudgets()
     const wasFocused = this.focusedAccountId === normalizedId
     if (wasFocused) {
       this.focusedAccountId = null
@@ -707,13 +687,28 @@ export class SessionManager {
       return desiredFrameRate
     }
 
+    const adaptiveCeiling = this.records.size >= 8
+      ? Math.min(ecoSecondaryFrameRate, 5)
+      : this.records.size >= 4
+        ? Math.min(ecoSecondaryFrameRate, 10)
+        : ecoSecondaryFrameRate
+
     return desiredFrameRate === 0
-      ? ecoSecondaryFrameRate
-      : Math.min(desiredFrameRate, ecoSecondaryFrameRate)
+      ? adaptiveCeiling
+      : Math.min(desiredFrameRate, adaptiveCeiling)
   }
 
   private effectiveInterfaceZoom(record: SessionRecord): number {
     return record.interfaceZoom ?? computeAutoFitZoom(record.bounds.width)
+  }
+
+  private refreshFrameRateBudgets(): void {
+    if (!this.ecoModeEnabled) {
+      return
+    }
+    for (const record of this.records.values()) {
+      record.view.setFrameRateLimit(this.effectiveFrameRate(record))
+    }
   }
 
   private updateFocusedAccount(accountId: string | null): void {

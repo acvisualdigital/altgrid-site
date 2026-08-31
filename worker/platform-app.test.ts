@@ -16,6 +16,7 @@ import type {
 
 const USER_ID = '00000000-0000-4000-8000-000000000001'
 const CHANNEL_ID = '10000000-0000-4000-8000-000000000001'
+const RECIPIENT_ID = '00000000-0000-4000-8000-000000000099'
 const MESSAGE_ID = '20000000-0000-4000-8000-000000000001'
 const PAYMENT_ID = '30000000-0000-4000-8000-000000000001'
 
@@ -116,6 +117,14 @@ describe('platform Worker endpoints', () => {
         founder_number: null,
       })),
       reportChatMessage: vi.fn(async () => ({ id: MESSAGE_ID, status: 'pending' })),
+      startDirectChat: vi.fn(async (_userId, recipientId) => ({
+        id: '30000000-0000-4000-8000-000000000001',
+        type: 'direct' as const,
+        game_id: null,
+        name: 'Amigo',
+        participant_id: recipientId,
+        unread: 0,
+      })),
     }
     paymentService = {
       createPixPayment: vi.fn(async () => ({
@@ -199,6 +208,33 @@ describe('platform Worker endpoints', () => {
       { message: 'Teste', user_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff' },
     ))
     expect(impersonation.status).toBe(400)
+  })
+
+  it('lists only the authenticated user chat channels', async () => {
+    const response = await api.fetch(request('/v1/chat/channels'))
+
+    expect(response.status).toBe(200)
+    expect(chatRepository.getChatChannels).toHaveBeenCalledWith(USER_ID)
+  })
+
+  it('starts a private conversation using only authenticated and validated user ids', async () => {
+    const response = await api.fetch(request(
+      `/v1/chat/direct/${RECIPIENT_ID}`,
+      'POST',
+    ))
+
+    expect(response.status).toBe(201)
+    expect(chatRepository.startDirectChat).toHaveBeenCalledWith(USER_ID, RECIPIENT_ID)
+    expect(chatLimit.limit).toHaveBeenCalledWith({ key: `${USER_ID}:chat-direct-start` })
+    await expect(response.json()).resolves.toMatchObject({
+      channel: {
+        participant_id: RECIPIENT_ID,
+        type: 'direct',
+      },
+    })
+
+    const invalid = await api.fetch(request('/v1/chat/direct/not-a-uuid', 'POST'))
+    expect(invalid.status).toBe(400)
   })
 
   it('creates PIX from product_code only and forwards a stable idempotency key', async () => {

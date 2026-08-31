@@ -13,6 +13,8 @@ import type {
   AdminGameUpdate,
   AdminProduct,
   AdminProductUpdate,
+  AdminPublisherRequest,
+  AdminPublisherRequestStatus,
   AdminReferralLog,
   AdminReferralStats,
   AdminReferralStatus,
@@ -27,6 +29,7 @@ export class FakeAdminRepository implements AdminRepository {
   admin = false
   users: AdminUserDetail[] = []
   games: AdminGame[] = []
+  publisherRequests: AdminPublisherRequest[] = []
   config: AdminConfigEntry[] = []
   products: AdminProduct[] = []
   announcements: AdminAnnouncement[] = []
@@ -189,6 +192,36 @@ export class FakeAdminRepository implements AdminRepository {
 
   async getAdminGames(): Promise<AdminGame[]> {
     return [...this.games].sort((a, b) => a.sort_order - b.sort_order || a.slug.localeCompare(b.slug))
+  }
+
+  async getAdminPublisherRequests(
+    _actor: string,
+    status: AdminPublisherRequestStatus | null,
+  ): Promise<AdminPublisherRequest[]> {
+    return this.publisherRequests.filter((entry) => !status || entry.status === status)
+  }
+
+  async reviewAdminPublisherRequest(
+    actor: string,
+    requestId: string,
+    status: Extract<AdminPublisherRequestStatus, 'reviewing' | 'approved' | 'rejected'>,
+    notes: string | null,
+  ): Promise<AdminPublisherRequest> {
+    const entry = this.publisherRequests.find((candidate) => candidate.id === requestId)
+    if (!entry) throw new Error('Publisher request not found')
+    entry.status = status
+    entry.admin_notes = notes
+    entry.reviewed_by = actor
+    entry.reviewed_at = '2026-08-30T12:00:00.000Z'
+    entry.updated_at = entry.reviewed_at
+    if (entry.request_type === 'campaign' && status === 'approved') {
+      entry.campaign_starts_at = entry.reviewed_at
+      entry.campaign_ends_at = entry.plan_code === 'launch_30'
+        ? '2026-09-29T12:00:00.000Z'
+        : '2026-09-06T12:00:00.000Z'
+    }
+    this.record(actor, `site.publisher_request.${status}`, 'site_developer_request', requestId, entry as unknown as Json)
+    return entry
   }
 
   async createAdminGame(actor: string, input: AdminGameInput): Promise<AdminGame> {

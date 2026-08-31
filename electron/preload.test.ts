@@ -64,19 +64,12 @@ describe('desktop preload performance bridge', () => {
       | AltgridDesktopApi
       | undefined
 
-    await api!.sessions.createSession('account-1', 'https://game.example/', true)
+    await api!.sessions.createSession('account-1', 'https://game.example/', true, true)
     expect(electronMocks.invoke).toHaveBeenCalledWith(
       'altgrid:sessions:create',
       'account-1',
       'https://game.example/',
       true,
-      false,
-    )
-
-    await api!.sessions.setStonegyBot('account-1', true)
-    expect(electronMocks.invoke).toHaveBeenCalledWith(
-      'altgrid:sessions:set-stonegy-bot',
-      'account-1',
       true,
     )
 

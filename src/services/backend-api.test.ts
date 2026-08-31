@@ -537,6 +537,30 @@ describe('BackendApi', () => {
     expect((fetcher.mock.calls[3]?.[1] as RequestInit).body).toBeUndefined()
   })
 
+  it('starts a direct chat through the authenticated private endpoint', async () => {
+    const auth = authDouble()
+    const channel = {
+      game_id: null,
+      id: 'direct-channel',
+      name: 'Amigo',
+      participant_id: 'user/id',
+      type: 'direct',
+      unread: 0,
+    }
+    const fetcher = vi.fn().mockResolvedValue(json({ channel }, 201))
+    const api = new BackendApi({
+      authService: auth.service,
+      baseUrl: 'https://api.example.com',
+      fetch: fetcher,
+    })
+
+    await expect(api.startDirectChat('user/id')).resolves.toEqual({ channel })
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://api.example.com/v1/chat/direct/user%2Fid',
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+
   it('routes chat report review and moderation actions with encoded targets', async () => {
     const auth = authDouble()
     const expiresAt = '2026-08-27T12:00:00.000Z'

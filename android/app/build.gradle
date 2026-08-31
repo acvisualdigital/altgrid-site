@@ -9,8 +9,8 @@ def requestedReleaseBuild = gradle.startParameter.taskNames.any {
 }
 def configuredVersionName = normalizedEnvironmentValue('ALTGRID_ANDROID_VERSION_NAME')
 def configuredVersionCode = normalizedEnvironmentValue('ALTGRID_ANDROID_VERSION_CODE')
-def appVersionName = configuredVersionName ?: '1.0.0'
-def appVersionCode = configuredVersionCode == null ? 10000 : Integer.parseInt(configuredVersionCode)
+def appVersionName = configuredVersionName ?: '1.5.0'
+def appVersionCode = configuredVersionCode == null ? 10500 : Integer.parseInt(configuredVersionCode)
 if (!(appVersionName ==~ /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/)) {
     throw new GradleException('ALTGRID_ANDROID_VERSION_NAME precisa ser uma versão SemVer válida.')
 }

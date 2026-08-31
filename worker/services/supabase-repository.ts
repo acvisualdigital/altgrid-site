@@ -366,16 +366,36 @@ export class SupabaseRepository implements
     return (data ?? []) as PublicProductRecord[]
   }
 
-  async getChatChannels(): Promise<ChatChannelRecord[]> {
-    const { data, error } = await this.client
+  async getChatChannels(userId: string): Promise<ChatChannelRecord[]> {
+    const [{ data, error }, directResult] = await Promise.all([
+      this.client
       .from('chat_channels')
       .select('id,type,game_id,name')
       .eq('enabled', true)
+      .in('type', ['global', 'game'])
       .order('type', { ascending: true })
-      .order('name', { ascending: true })
+      .order('name', { ascending: true }),
+      this.client.rpc('chat_list_direct_channels', { p_user_id: userId }),
+    ])
 
     if (error) throwDataError(error)
-    return (data ?? []) as ChatChannelRecord[]
+    if (directResult.error) throwDataError(directResult.error)
+    return [
+      ...((data ?? []) as ChatChannelRecord[]),
+      ...((directResult.data ?? []) as unknown as ChatChannelRecord[]),
+    ]
+  }
+
+  async startDirectChat(
+    userId: string,
+    recipientId: string,
+  ): Promise<ChatChannelRecord> {
+    const { data, error } = await this.client.rpc('chat_start_direct', {
+      p_user_id: userId,
+      p_recipient_id: recipientId,
+    })
+    if (error) throwDataError(error)
+    return data as unknown as ChatChannelRecord
   }
 
   async getChatStatus(userId: string): Promise<ChatStatusRecord> {

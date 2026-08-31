@@ -1,13 +1,20 @@
 import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type {
+  SessionExtensionSummary,
+  SessionProxyInput,
+  SessionProxySummary,
+  SessionResourceUsage,
+} from '../electron/contracts'
 
 import {
   AuthApp,
   compareVersions,
+  extensionAccountLimitForPlan,
+  googleAuthRedirectUrl,
   passwordRecoveryRedirectUrl,
   renderPlanBadge,
   resolveChatScrollTop,
-  stonegyBotMenuLabel,
   type AccountSessionStatusEvent,
 } from './app'
 import {
@@ -28,7 +35,13 @@ import {
   SessionSurfaceManager,
   type SessionSurfaceElementFactory,
 } from './services/session-surface-manager'
-import type { ChatChannel, PublicGame, PublicProduct } from './types/backend-api'
+import {
+  UNLIMITED_ACCOUNT_LIMIT,
+  type ChatChannel,
+  type PublicGame,
+  type PublicProduct,
+  type ReferralProgramResponse,
+} from './types/backend-api'
 
 const user = {
   aud: 'authenticated',
@@ -90,6 +103,15 @@ describe('version comparison', () => {
 
 describe('plan badges', () => {
   it.each([
+    ['FREE', 0],
+    ['PRO', 3],
+    ['PRO_PLUS', 9],
+    ['FOUNDER', UNLIMITED_ACCOUNT_LIMIT],
+  ] as const)('limits extension accounts for %s', (plan, limit) => {
+    expect(extensionAccountLimitForPlan(plan)).toBe(limit)
+  })
+
+  it.each([
     ['FREE', 'free', 'FREE', 'Plano Free'],
     ['PRO', 'pro', 'PRO', 'Plano Pro'],
     ['PRO_PLUS', 'pro-plus', 'PRO+', 'Plano Pro Plus'],
@@ -116,11 +138,29 @@ describe('plan badges', () => {
   })
 })
 
-describe('AltGrid Bot account menu', () => {
-  it('reflects the saved bot state immediately', () => {
-    expect(stonegyBotMenuLabel(true, false)).toBe('Ativar AltGrid Bot')
-    expect(stonegyBotMenuLabel(true, true)).toBe('Desativar AltGrid Bot')
-    expect(stonegyBotMenuLabel(false, true)).toBe('AltGrid Bot · plano pago')
+describe('Google authentication redirect', () => {
+  it('returns to the packaged desktop app through its registered protocol', () => {
+    expect(googleAuthRedirectUrl({
+      origin: 'null',
+      pathname: '/',
+      protocol: 'altgrid:',
+    })).toBe('altgrid://app/?auth=oauth')
+  })
+
+  it('returns to the same page on the website', () => {
+    expect(googleAuthRedirectUrl({
+      origin: 'https://altgrid.com.br',
+      pathname: '/games.html',
+      protocol: 'https:',
+    })).toBe('https://altgrid.com.br/games.html?auth=oauth')
+  })
+
+  it('returns to the Android app from the Capacitor origin', () => {
+    expect(googleAuthRedirectUrl({
+      origin: 'https://localhost',
+      pathname: '/',
+      protocol: 'https:',
+    })).toBe('altgrid://app/?auth=oauth')
   })
 })
 
@@ -367,6 +407,7 @@ class AcceptanceElement {
     },
   }
   disabled = false
+  hidden = false
   isConnected = true
   parent: AcceptanceElement | null = null
   textContent: string | null = ''
@@ -532,6 +573,7 @@ function createAuthServiceDouble() {
   let listener: AuthStateListener | null = null
   const unsubscribe = vi.fn()
   const methods = {
+    completePasswordRecovery: vi.fn(),
     getSession: vi.fn(),
     onAuthStateChange: vi.fn((nextListener: AuthStateListener) => {
       listener = nextListener
@@ -545,6 +587,7 @@ function createAuthServiceDouble() {
     emit(event: AuthChangeEvent, nextSession: Session | null): void {
       listener?.(event, nextSession)
     },
+    completePasswordRecovery: methods.completePasswordRecovery,
     getSession: methods.getSession,
     service: methods as unknown as AuthService,
     signOut: methods.signOut,
@@ -567,6 +610,7 @@ function deferred<Value>() {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -585,13 +629,19 @@ describe('AuthApp session lifecycle', () => {
     app.destroy()
   })
 
-  it('keeps Chat in the sidebar and updates in notifications', async () => {
+  it('keeps Chat in the bottom utility bar and updates in notifications', async () => {
     installBrowser('https://app.example.com/')
     const root = createRoot()
     const auth = createAuthServiceDouble()
     auth.getSession.mockResolvedValue(session)
     const chat = new ChatService({
-      getChatChannels: vi.fn().mockResolvedValue({ channels: [] }),
+      getChatChannels: vi.fn().mockResolvedValue({ channels: [{
+        game_id: null,
+        id: 'global-channel',
+        name: 'Global',
+        type: 'global' as const,
+        unread: 2,
+      }] }),
       getChatMessages: vi.fn().mockResolvedValue({
         messages: [],
         pagination: { has_more: false, next_before: null },
@@ -601,6 +651,7 @@ describe('AuthApp session lifecycle', () => {
       }),
       reportChatMessage: vi.fn(),
       sendChatMessage: vi.fn(),
+      startDirectChat: vi.fn(),
     }, null, null)
     const app = new AuthApp(root, auth.service, { chatService: chat })
 
@@ -610,11 +661,36 @@ describe('AuthApp session lifecycle', () => {
       expect(root.innerHTML.match(/data-open-chat/g)).toHaveLength(1)
       expect(root.innerHTML).not.toContain('header-chat-button')
       expect(root.innerHTML).toContain('notification-update-action')
-      expect(root.innerHTML.indexOf('data-open-chat')).toBeLessThan(
+      expect(root.innerHTML.indexOf('data-open-chat')).toBeGreaterThan(
         root.innerHTML.indexOf('data-open-dialog="settings"'),
       )
+      expect(root.innerHTML).toContain('workspace-utility')
+      expect(root.innerHTML).toContain('chat-unread-badge')
+      expect(root.innerHTML).toContain('2 mensagens não lidas')
+      expect(root.innerHTML).toContain('data-toggle-utility-bar')
+      expect(root.innerHTML).toContain('sidebar-edge-toggle')
       expect(root.innerHTML).not.toContain('chat-fab')
     })
+    app.destroy()
+  })
+
+  it('restores the collapsed bottom utility bar with a visible pull handle', async () => {
+    installBrowser('https://app.example.com/')
+    const storage = installLocalStorage()
+    storage.setItem('altgrid.preference.utility-bar-collapsed.v1', 'true')
+    const root = createRoot()
+    const auth = createAuthServiceDouble()
+    auth.getSession.mockResolvedValue(session)
+    const app = new AuthApp(root, auth.service)
+
+    await app.start()
+
+    const pullHandle = root.innerHTML.match(
+      /<button class="utility-edge-toggle"[^>]*>/,
+    )?.[0]
+    expect(root.innerHTML).toContain('is-utility-collapsed')
+    expect(pullHandle).toContain('data-toggle-utility-bar')
+    expect(pullHandle).not.toContain('hidden')
     app.destroy()
   })
 
@@ -627,6 +703,15 @@ describe('AuthApp session lifecycle', () => {
       { game_id: null, id: 'global-channel', name: 'Global', type: 'global' as const },
       { game_id: 'game-huntera', id: 'huntera-channel', name: 'Huntera', type: 'game' as const },
     ]
+    const directChannel = {
+      game_id: null,
+      id: 'direct-channel',
+      name: 'Amigo',
+      participant_id: 'another-user',
+      type: 'direct' as const,
+      unread: 0,
+    }
+    const startDirectChat = vi.fn().mockResolvedValue({ channel: directChannel })
     const getChatMessages = vi.fn(async (channelId: string) => ({
       messages: [{
         channel_id: channelId,
@@ -649,6 +734,7 @@ describe('AuthApp session lifecycle', () => {
       }),
       reportChatMessage: vi.fn(),
       sendChatMessage: vi.fn(),
+      startDirectChat,
     }, null, null)
     const app = new AuthApp(root, auth.service, { chatService: chat })
     const harness = app as unknown as {
@@ -678,6 +764,7 @@ describe('AuthApp session lifecycle', () => {
       expect(root.innerHTML).toContain('chat-message__avatar')
       expect(root.innerHTML).toContain('plan-badge--free')
       expect(root.innerHTML).toContain('aria-label="Plano Free"')
+      expect(root.innerHTML).toContain('data-direct-chat-user="another-user"')
       expect(root.innerHTML).toContain('src="https://cdn.example.com/huntera.png"')
       expect(harness.renderChatChannelIcon(channels[1])).toContain(
         'src="https://cdn.example.com/huntera.png"',
@@ -713,6 +800,15 @@ describe('AuthApp session lifecycle', () => {
     await vi.waitFor(() => {
       expect(root.innerHTML).toContain('<circle cx="12" cy="12" r="9"')
       expect(root.innerHTML).toContain('data-chat-message-channel="global-channel"')
+    })
+
+    await chat.startDirectConversation('another-user')
+    expect(startDirectChat).toHaveBeenCalledWith('another-user')
+    expect(chat.getState().selectedChannelId).toBe('direct-channel')
+    await vi.waitFor(() => {
+      expect(root.innerHTML).toContain('data-chat-channel-type="direct"')
+      expect(root.innerHTML).toContain('data-chat-message-channel="direct-channel"')
+      expect(root.innerHTML).toContain('<circle cx="12" cy="8" r="4"')
     })
 
     app.destroy()
@@ -782,6 +878,7 @@ describe('AuthApp session lifecycle', () => {
       }),
       reportChatMessage: vi.fn(),
       sendChatMessage: vi.fn(),
+      startDirectChat: vi.fn(),
     }, null, null)
     const app = new AuthApp(root, auth.service, {
       accountService: accounts,
@@ -931,10 +1028,15 @@ describe('AuthApp session lifecycle', () => {
       configuredAccounts: ConfiguredAccount[]
       currentView: 'authenticated'
       ecoBackgroundFps: number
+      ecoModeEffective: boolean
       focusedAccountId: string | null
       handleSessionStatus(event: AccountSessionStatusEvent): void
       render: ReturnType<typeof vi.fn>
-      renderWorkspaceToolbar(): string
+      renderWorkspaceUtilityBar(): string
+      updateEcoModePreference(
+        enabled: boolean,
+        input: HTMLButtonElement,
+      ): Promise<void>
       updateEcoBackgroundFpsPreference(
         fps: 10 | 20 | 30,
         input: HTMLSelectElement,
@@ -951,7 +1053,16 @@ describe('AuthApp session lifecycle', () => {
 
     expect(setEcoMode).toHaveBeenLastCalledWith(true, 30)
     expect(localStorage.getItem('altgrid.preference.eco-background-fps.v1')).toBe('30')
-    expect(harness.renderWorkspaceToolbar()).toContain('ON · 30')
+    expect(harness.renderWorkspaceUtilityBar()).toContain('30 FPS')
+    expect(harness.renderWorkspaceUtilityBar()).toContain('Ligado')
+
+    await harness.updateEcoModePreference(false, {
+      disabled: false,
+    } as HTMLButtonElement)
+
+    expect(setEcoMode).toHaveBeenLastCalledWith(false, 30)
+    expect(harness.ecoModeEffective).toBe(false)
+    expect(harness.renderWorkspaceUtilityBar()).toContain('Desligado')
 
     harness.handleSessionStatus({ accountId: account.id, type: 'focused' })
     expect(harness.focusedAccountId).toBe(account.id)
@@ -1193,6 +1304,11 @@ describe('AuthApp session lifecycle', () => {
       expect(root.innerHTML).toContain('<strong>PRO</strong>')
       expect(root.innerHTML).toContain('0/10 sessões abertas')
       expect(root.innerHTML).not.toContain('data-grid-locked="true"')
+      expect(root.innerHTML).toContain('CONFIGURE SEU PERFIL')
+      expect(root.innerHTML).toContain('data-chat-nickname-form')
+      expect(root.innerHTML).toContain('Este será seu nick no chat e também identificará sua conta no suporte e nas compras.')
+      expect(root.innerHTML).toContain('Continuar')
+      expect(root.innerHTML).not.toContain('Conheça os planos')
     })
     app.destroy()
   })
@@ -1256,6 +1372,112 @@ describe('AuthApp session lifecycle', () => {
       expect((app as unknown as { serviceStatus: string }).serviceStatus)
         .toBe('online')
     })
+    app.destroy()
+  })
+
+  it('alerts only administrators about new purchase attempts and confirmations', async () => {
+    installBrowser('https://app.example.com/')
+    const root = createRoot()
+    const auth = createAuthServiceDouble()
+    const oldPayment = {
+      amount: 1990,
+      created_at: '2026-08-30T12:00:00.000Z',
+      currency: 'BRL',
+      failure_reason: null,
+      fulfilled_at: null,
+      id: 'payment-old',
+      paid_at: null,
+      product_code: 'PRO_MONTHLY',
+      provider: 'mercado_pago',
+      provider_payment_id: 'provider-old',
+      status: 'pending',
+      updated_at: '2026-08-30T12:00:00.000Z',
+      user_id: user.id,
+    }
+    const newPayment = {
+      ...oldPayment,
+      created_at: '2026-08-30T12:05:00.000Z',
+      id: 'payment-new',
+      provider_payment_id: 'provider-new',
+      updated_at: '2026-08-30T12:05:00.000Z',
+    }
+    const getAdminPaymentLogs = vi.fn()
+      .mockResolvedValueOnce({ payments: [oldPayment] })
+      .mockResolvedValueOnce({ payments: [newPayment, oldPayment] })
+      .mockResolvedValueOnce({
+        payments: [{
+          ...newPayment,
+          fulfilled_at: '2026-08-30T12:06:00.000Z',
+          paid_at: '2026-08-30T12:06:00.000Z',
+          status: 'approved',
+          updated_at: '2026-08-30T12:06:00.000Z',
+        }, oldPayment],
+      })
+    const getAdminUser = vi.fn().mockResolvedValue({
+      user: {
+        display_name: 'KnightBR',
+        email: 'knight@example.com',
+      },
+    })
+    const app = new AuthApp(root, auth.service, {
+      backendApi: {
+        getAdminPaymentLogs,
+        getAdminUser,
+        getEntitlements: vi.fn(),
+        getGames: vi.fn(),
+        getMe: vi.fn(),
+      },
+    })
+    const harness = app as unknown as {
+      adminAccess: boolean
+      notificationCenter: {
+        list(): Array<{ summary: string; title: string }>
+      }
+      refreshAdminPaymentAlerts(): Promise<void>
+      render(): void
+    }
+    harness.adminAccess = true
+    harness.render = vi.fn()
+
+    await harness.refreshAdminPaymentAlerts()
+    expect(harness.notificationCenter.list()).toEqual([])
+
+    await harness.refreshAdminPaymentAlerts()
+    expect(harness.notificationCenter.list()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        summary: expect.stringContaining('KnightBR · knight@example.com'),
+        title: 'Nova tentativa de compra',
+      }),
+    ]))
+
+    await harness.refreshAdminPaymentAlerts()
+    expect(harness.notificationCenter.list()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Compra aprovada' }),
+    ]))
+    expect(getAdminUser).toHaveBeenCalledTimes(2)
+
+    app.destroy()
+  })
+
+  it('does not show the Windows minimum-version warning on Android', () => {
+    installBrowser('capacitor://localhost/')
+    const root = createRoot()
+    const auth = createAuthServiceDouble()
+    const app = new AuthApp(root, auth.service, {
+      sessionLauncher: { mobileNative: true },
+    })
+    const harness = app as unknown as {
+      appConfig: Record<string, unknown>
+      renderBackendStatus(): string
+      requiresMinimumVersion(): boolean
+    }
+    harness.appConfig = {
+      latest_version: '99.0.0',
+      minimum_version: '99.0.0',
+    }
+
+    expect(harness.requiresMinimumVersion()).toBe(false)
+    expect(harness.renderBackendStatus()).not.toContain('Atualização necessária')
     app.destroy()
   })
 
@@ -1326,17 +1548,35 @@ describe('AuthApp session lifecycle', () => {
       launchUrl: huntera.launch_url,
     })
     expect(harness.resolveSessionLaunchTarget(customAccount)).toEqual({
+      allowExtension: false,
       allowProxy: false,
       game: null,
       kind: 'custom',
       launchUrl: 'https://custom.example.com/play',
-      stonegyBotEnabled: false,
     })
     expect(harness.resolveSessionLaunchTarget({
       ...customAccount,
       customLaunchUrl: 'javascript:alert(1)',
     })).toBeNull()
 
+  })
+
+  it('opens the reset form after explicitly completing a PKCE callback', async () => {
+    installBrowser('altgrid://app/?auth=recovery&code=opaque-code')
+    const root = createRoot()
+    const auth = createAuthServiceDouble()
+    auth.completePasswordRecovery.mockResolvedValue(session)
+    const app = new AuthApp(root, auth.service)
+
+    await app.start()
+
+    expect(auth.completePasswordRecovery).toHaveBeenCalledWith(
+      'altgrid://app/?auth=recovery&code=opaque-code',
+    )
+    expect(auth.getSession).not.toHaveBeenCalled()
+    expect(currentView(app)).toBe('reset')
+    expect(root.innerHTML).toContain('id="reset-form"')
+    app.destroy()
   })
 
   it('persists a per-account interface scale and offers automatic fit', async () => {
@@ -1384,57 +1624,11 @@ describe('AuthApp session lifecycle', () => {
     expect(select.value).toBe('')
   })
 
-  it('reopens a saved Stonegy account with its paid AltGrid Bot preference enabled', () => {
-    installBrowser('https://app.example.com/')
-    const auth = createAuthServiceDouble()
-    const permissions = new PermissionService({
-      account_limit: 5,
-      expires_at: null,
-      features: { stonegy_bot: true },
-      founder_number: null,
-      lifetime: false,
-      plan: 'PRO',
-    })
-    const app = new AuthApp(createRoot(), auth.service, {
-      permissionService: permissions,
-    })
-    const stonegy: PublicGame = {
-      developer_referral_url: null,
-      icon_url: null,
-      id: 'game-stonegy',
-      launch_url: 'https://stonegy-online.com/play',
-      metadata: {},
-      name: 'Stonegy',
-      slug: 'stonegy',
-      sort_order: 1,
-    }
-    const account: ConfiguredAccount = {
-      createdAt: '2026-08-29T00:00:00.000Z',
-      displayName: 'Stonegy salva',
-      gameSlug: 'stonegy',
-      id: 'stonegy-saved-account',
-      stonegyBotEnabled: true,
-    }
-    const harness = app as unknown as {
-      games: PublicGame[]
-      resolveSessionLaunchTarget(account: ConfiguredAccount): {
-        launchUrl: string
-        stonegyBotEnabled?: boolean
-      } | null
-    }
-    harness.games = [stonegy]
-
-    expect(harness.resolveSessionLaunchTarget(account)).toMatchObject({
-      launchUrl: 'https://stonegy-online.com/play',
-      stonegyBotEnabled: true,
-    })
-  })
-
   it('renders Founder proxy controls without exposing the stored password', () => {
     installBrowser('https://app.example.com/')
     const auth = createAuthServiceDouble()
     const permissions = new PermissionService({
-      account_limit: -1,
+      account_limit: 100,
       expires_at: null,
       features: { account_proxy: true },
       founder_number: 1,
@@ -1482,9 +1676,276 @@ describe('AuthApp session lifecycle', () => {
 
     const dialog = harness.renderDialog()
     expect(dialog).toContain('FOUNDER · ROTA POR CONTA')
+    expect(dialog).toContain('usuario:senha:host:porta')
     expect(dialog).toContain('proxy.example')
     expect(dialog).toContain('Senha protegida')
     expect(dialog).not.toContain('secret-value')
+  })
+
+  it('renders the referral command center with ranking, rewards, and share actions', () => {
+    installBrowser('https://app.example.com/')
+    const app = new AuthApp(createRoot(), createAuthServiceDouble().service)
+    const harness = app as unknown as {
+      activeDialog: 'referrals'
+      referralProgram: ReferralProgramResponse
+      renderDialog(): string
+    }
+    harness.activeDialog = 'referrals'
+    harness.referralProgram = {
+      code: 'GRID-TESTE1234',
+      share_url: 'https://altgrid.com.br/?ref=GRID-TESTE1234',
+      campaign: {
+        id: 'campaign-1',
+        name: 'Campanha de lançamento',
+        starts_at: '2026-08-01T00:00:00.000Z',
+        ends_at: '2026-10-01T00:00:00.000Z',
+        status: 'active',
+      },
+      stats: { pending: 1, position: 2, pro_days: 3, rejected: 0, total: 4, valid: 3 },
+      leaderboard: [{
+        display_name: 'Caco',
+        is_current_user: true,
+        position: 2,
+        prize_plan: 'PRO_PLUS',
+        valid_referrals: 3,
+      }],
+      recent_referrals: [{
+        created_at: '2026-08-31T12:00:00.000Z',
+        display_name: 'Amigo',
+        rewarded_at: null,
+        status: 'pending',
+      }],
+    }
+
+    const dialog = harness.renderDialog()
+    expect(dialog).toContain('referral-command-center')
+    expect(dialog).toContain('GRID-TESTE1234')
+    expect(dialog).toContain('data-share-referral')
+    expect(dialog).toContain('data-copy-referral')
+    expect(dialog).toContain('Quem está no topo')
+    expect(dialog).toContain('Pódio da campanha')
+    expect(dialog).toContain('referral-variant--compact')
+    expect(dialog).toContain('Indicações são validadas após 24h')
+  })
+
+  it('copies only the saved proxy into a selected existing account', async () => {
+    installBrowser('https://app.example.com/')
+    const permissions = new PermissionService({
+      account_limit: 100,
+      expires_at: null,
+      features: { account_proxy: true },
+      founder_number: 1,
+      lifetime: true,
+      plan: 'FOUNDER',
+    })
+    const source: ConfiguredAccount = {
+      createdAt: '2026-08-29T00:00:00.000Z',
+      displayName: 'Origem',
+      gameSlug: 'huntera',
+      id: 'proxy-source',
+    }
+    const target: ConfiguredAccount = {
+      createdAt: '2026-08-30T00:00:00.000Z',
+      displayName: 'Destino',
+      gameSlug: 'hunt-idle',
+      id: 'proxy-target',
+    }
+    const copied: SessionProxySummary = {
+      enabled: true,
+      hasPassword: true,
+      host: 'proxy.example.com',
+      port: 1080,
+      protocol: 'socks5',
+      username: 'player',
+    }
+    const copyProxy = vi.fn(async () => copied)
+    const app = new AuthApp(createRoot(), createAuthServiceDouble().service, {
+      permissionService: permissions,
+      sessionLauncher: {
+        copyProxy,
+        getProxy: vi.fn(async () => copied),
+        setProxy: vi.fn(),
+      },
+    })
+    const harness = app as unknown as {
+      accountProxyStates: Map<string, SessionProxySummary | null>
+      activeDialog: 'copy-proxy'
+      configuredAccounts: ConfiguredAccount[]
+      copyProxyToAccount(form: HTMLFormElement): Promise<void>
+      dialogAccountId: string
+      proxyConfig: SessionProxySummary
+      renderDialog(): string
+    }
+    harness.configuredAccounts = [source, target]
+    harness.dialogAccountId = source.id
+    harness.activeDialog = 'copy-proxy'
+    harness.proxyConfig = copied
+
+    const dialog = harness.renderDialog()
+    expect(dialog).toContain('Copiar proxy')
+    expect(dialog).toContain('proxy.example.com:1080')
+    expect(dialog).toContain('Destino · hunt-idle')
+    expect(dialog).toContain('sem copiar login, sessão, dados ou extensões')
+
+    vi.stubGlobal('FormData', class {
+      get(fieldName: string): string | null {
+        return fieldName === 'targetAccountId' ? target.id : null
+      }
+    })
+    await harness.copyProxyToAccount({} as HTMLFormElement)
+
+    expect(copyProxy).toHaveBeenCalledWith(source, target)
+    expect(harness.accountProxyStates.get(target.id)).toEqual(copied)
+  })
+
+  it('automatically hides temporary session alerts', () => {
+    installBrowser('https://app.example.com/')
+    const root = createRoot()
+    const alert = {
+      classList: {
+        remove: vi.fn(),
+        toggle: vi.fn(),
+      },
+      textContent: '',
+    }
+    vi.mocked(root.querySelector).mockImplementation((selector) => (
+      selector === '#session-alert' ? alert as unknown as Element : null
+    ))
+    const app = new AuthApp(root, createAuthServiceDouble().service)
+    const harness = app as unknown as { showSessionAlert(message: string): void }
+    vi.useFakeTimers()
+
+    harness.showSessionAlert('1 grade criada por jogo.')
+    expect(alert.classList.toggle).toHaveBeenCalledWith('is-visible', true)
+    vi.advanceTimersByTime(4_500)
+    expect(alert.classList.remove).toHaveBeenCalledWith('is-visible')
+    expect(alert.textContent).toBe('')
+  })
+
+  it('renders a sleeping screen while a live session keeps running', async () => {
+    installBrowser('https://app.example.com/')
+    const auth = createAuthServiceDouble()
+    const permissions = new PermissionService({
+      account_limit: 100,
+      expires_at: null,
+      features: { account_proxy: true },
+      founder_number: 1,
+      lifetime: true,
+      plan: 'FOUNDER',
+    })
+    const account: ConfiguredAccount = {
+      createdAt: '2026-08-30T00:00:00.000Z',
+      displayName: 'Huntera principal',
+      gameSlug: 'huntera',
+      id: 'background-account',
+    }
+    await permissions.openSession(account.id, () => undefined)
+    const app = new AuthApp(createRoot(), auth.service, {
+      permissionService: permissions,
+      sessionLauncher: {
+        copyProxy: vi.fn(async () => null),
+        getProxy: vi.fn(async () => null),
+        setProxy: vi.fn(),
+      },
+    })
+    const harness = app as unknown as {
+      backgroundAccountIds: Set<string>
+      configuredAccounts: ConfiguredAccount[]
+      resourceUsage: SessionResourceUsage[]
+      renderAccountTabs(): string
+      renderSessionCard(account: ConfiguredAccount): string
+      renderWorkspaceUtilityBar(): string
+    }
+    harness.configuredAccounts = [account]
+    harness.resourceUsage = [{
+      accountId: account.id,
+      cpuPercent: 12.5,
+      privateKb: 128_000,
+      sharedKb: 16_000,
+    }, {
+      accountId: 'closing-account',
+      cpuPercent: Number.NaN,
+      privateKb: Number.NaN,
+      sharedKb: Number.NaN,
+    }]
+
+    const card = harness.renderSessionCard(account)
+    expect(card).toContain('data-background-account')
+    expect(card).toContain('data-copy-proxy-account')
+    expect(card).not.toContain('data-duplicate-account')
+    const liveTabs = harness.renderAccountTabs()
+    expect(liveTabs).toContain('data-toggle-account-proxy')
+    expect(liveTabs).toContain('data-background-account')
+
+    harness.backgroundAccountIds.add(account.id)
+    const restingTabs = harness.renderAccountTabs()
+    expect(restingTabs).toContain('data-restore-account')
+    expect(restingTabs).toContain('Em descanso')
+    const restingCard = harness.renderSessionCard(account)
+    expect(restingCard).toContain('session-rest-screen')
+    expect(restingCard).toContain('Continua conectada em segundo plano')
+    expect(restingCard).toContain('Despertar tela')
+    expect(harness.renderWorkspaceUtilityBar()).toContain('1 descansando')
+    expect(harness.renderWorkspaceUtilityBar()).toContain('12.5%')
+    expect(harness.renderWorkspaceUtilityBar()).toContain('125 MB')
+  })
+
+  it('toggles a saved account proxy directly from its tab', async () => {
+    installBrowser('https://app.example.com/')
+    const permissions = new PermissionService({
+      account_limit: 100,
+      expires_at: null,
+      features: { account_proxy: true },
+      founder_number: 1,
+      lifetime: true,
+      plan: 'FOUNDER',
+    })
+    const account: ConfiguredAccount = {
+      createdAt: '2026-08-30T00:00:00.000Z',
+      displayName: 'Proxy tab',
+      gameSlug: 'huntera',
+      id: 'proxy-tab-account',
+    }
+    const setProxy = vi.fn(async (
+      _account: ConfiguredAccount,
+      input: SessionProxyInput,
+    ): Promise<SessionProxySummary> => ({
+      enabled: input.enabled,
+      hasPassword: true,
+      host: input.host,
+      port: input.port,
+      protocol: input.protocol,
+      username: input.username ?? '',
+    }))
+    const app = new AuthApp(createRoot(), createAuthServiceDouble().service, {
+      permissionService: permissions,
+      sessionLauncher: {
+        getProxy: vi.fn(async () => null),
+        setProxy,
+      },
+    })
+    const harness = app as unknown as {
+      accountProxyStates: Map<string, SessionProxySummary | null>
+      toggleAccountProxy(account: ConfiguredAccount, button: HTMLButtonElement): Promise<void>
+    }
+    harness.accountProxyStates.set(account.id, {
+      enabled: true,
+      hasPassword: true,
+      host: 'proxy.example.com',
+      port: 1080,
+      protocol: 'socks5',
+      username: 'player',
+    })
+
+    await harness.toggleAccountProxy(account, {
+      disabled: false,
+      isConnected: false,
+    } as HTMLButtonElement)
+    expect(setProxy).toHaveBeenCalledWith(account, expect.objectContaining({
+      enabled: false,
+      preservePassword: true,
+    }))
+    expect(harness.accountProxyStates.get(account.id)?.enabled).toBe(false)
   })
 
   it('stops loading and keeps a retryable authenticated UI when the API is offline', async () => {
@@ -1526,6 +1987,120 @@ describe('AuthApp session lifecycle', () => {
       expect(currentView(app)).toBe('authenticated')
       expect(root.innerHTML).toContain('Conta preservada')
     })
+    app.destroy()
+  })
+
+  it('enforces extension slots per account without deleting preserved configurations', async () => {
+    installBrowser('https://app.example.com/')
+    const root = createRoot()
+    const auth = createAuthServiceDouble()
+    const accounts = new ConfiguredAccountService({
+      createId: (() => {
+        let id = 0
+        return () => `extension-account-${++id}`
+      })(),
+      storage: null,
+    })
+    const configured = Array.from({ length: 10 }, (_, index) => accounts.add(user.id, {
+      customLaunchUrl: `https://game.example.com/${index + 1}`,
+      displayName: `Extensão ${index + 1}`,
+      gameSlug: CUSTOM_GAME_SLUG,
+    }))
+    const proEntitlements = {
+      account_limit: 6,
+      expires_at: null,
+      features: {},
+      founder_number: null,
+      lifetime: true,
+      plan: 'PRO' as const,
+    }
+    const permissions = new PermissionService(proEntitlements)
+    const replacement: SessionExtensionSummary = {
+      enabled: true,
+      folderName: 'autohunt-v2',
+      manifestVersion: 3,
+      name: 'Auto Hunt V2',
+      permissions: ['storage'],
+      version: '2.0.0',
+    }
+    const configuredExtension: SessionExtensionSummary = {
+      ...replacement,
+      folderName: 'autohunt',
+      name: 'Auto Hunt',
+      version: '1.0.0',
+    }
+    const chooseExtension = vi.fn(async () => replacement)
+    const app = new AuthApp(root, auth.service, {
+      accountService: accounts,
+      permissionService: permissions,
+      sessionLauncher: {
+        chooseExtension,
+        getExtension: vi.fn(async () => null),
+      },
+    })
+    const harness = app as unknown as {
+      accountExtensionStates: Map<string, SessionExtensionSummary | null>
+      activeDialog: 'extension' | null
+      canAssignAccountExtension(accountId: string): boolean
+      chooseAccountExtension(): Promise<void>
+      configuredAccounts: ConfiguredAccount[]
+      dialogAccountId: string | null
+      dialogError: string | null
+      extensionConfig: SessionExtensionSummary | null
+      extensionStatesReady: boolean
+      renderDialog(): string
+      resolveSessionLaunchTarget(account: ConfiguredAccount): {
+        allowExtension: boolean
+      } | null
+    }
+    harness.configuredAccounts = configured
+    harness.extensionStatesReady = true
+    configured.slice(0, 4).forEach((account) => {
+      harness.accountExtensionStates.set(account.id, configuredExtension)
+    })
+
+    expect(harness.resolveSessionLaunchTarget(configured[0]!)?.allowExtension).toBe(true)
+    expect(harness.resolveSessionLaunchTarget(configured[3]!)?.allowExtension).toBe(false)
+
+    harness.activeDialog = 'extension'
+    harness.dialogAccountId = configured[4]!.id
+    harness.extensionConfig = null
+    await harness.chooseAccountExtension()
+    expect(chooseExtension).not.toHaveBeenCalled()
+    expect(harness.dialogError).toContain('até 3 contas')
+
+    harness.dialogError = null
+    harness.dialogAccountId = configured[0]!.id
+    harness.extensionConfig = configuredExtension
+    await harness.chooseAccountExtension()
+    expect(chooseExtension).toHaveBeenCalledOnce()
+    expect(harness.accountExtensionStates.get(configured[0]!.id)).toEqual(replacement)
+
+    harness.dialogAccountId = configured[3]!.id
+    harness.extensionConfig = configuredExtension
+    const preservedDialog = harness.renderDialog()
+    expect(preservedDialog).toContain('Configuração preservada, mas fora do limite atual')
+    expect(preservedDialog).toContain('Fora do limite')
+    expect(preservedDialog).toContain('4 de 3 contas configuradas')
+
+    permissions.updateEntitlements({
+      ...proEntitlements,
+      account_limit: 10,
+      plan: 'PRO_PLUS',
+    })
+    configured.slice(4, 9).forEach((account) => {
+      harness.accountExtensionStates.set(account.id, configuredExtension)
+    })
+    expect(harness.canAssignAccountExtension(configured[8]!.id)).toBe(true)
+    expect(harness.canAssignAccountExtension(configured[9]!.id)).toBe(false)
+
+    permissions.updateEntitlements({
+      ...proEntitlements,
+      account_limit: UNLIMITED_ACCOUNT_LIMIT,
+      founder_number: 1,
+      plan: 'FOUNDER',
+    })
+    expect(harness.canAssignAccountExtension(configured[9]!.id)).toBe(true)
     app.destroy()
   })
 
@@ -1596,12 +2171,18 @@ describe('AuthApp session lifecycle', () => {
       sessionLauncher: launcher,
     })
     const harness = app as unknown as {
-      activeDialog: 'free-limit' | 'plans' | null
+      activeDialog: 'free-limit' | 'my-plan' | 'plans' | null
       openConfiguredAccount(
         accountId: string,
         button: HTMLButtonElement,
       ): Promise<void>
       render(): void
+      renderPlanOption(
+        plan: 'FREE' | 'PRO' | 'PRO_PLUS' | 'FOUNDER',
+        currentPlan: 'FREE' | 'PRO' | 'PRO_PLUS' | 'FOUNDER',
+        product: null,
+        recommended?: boolean,
+      ): string
       workspaceMode: 'account' | 'grid'
     }
 
@@ -1609,7 +2190,7 @@ describe('AuthApp session lifecycle', () => {
     await vi.waitFor(() => expect(root.innerHTML).toContain('Conta 4'))
     harness.workspaceMode = 'grid'
     harness.render()
-    expect(root.innerHTML.match(/data-grid-locked="true"/g)).toHaveLength(2)
+    expect(root.innerHTML.match(/data-grid-locked="true"/g)).toHaveLength(3)
 
     const button = () => ({
       disabled: false,
@@ -1638,16 +2219,38 @@ describe('AuthApp session lifecycle', () => {
     harness.render()
     expect(root.innerHTML).toContain('Planos AltGrid')
     expect(root.innerHTML).toContain('FREE')
-    expect(root.innerHTML).toContain('3 Huntera · 2 nos demais jogos')
+    expect(root.innerHTML).toContain('3 sessões no Huntera · 2 nos demais jogos')
     expect(root.innerHTML).toContain('PRO')
     expect(root.innerHTML).toContain('Até 6 contas simultâneas')
     expect(root.innerHTML).toContain('PLUS')
     expect(root.innerHTML).toContain('Até 10 contas simultâneas')
     expect(root.innerHTML).toContain('Mais escolhido')
     expect(root.innerHTML).toContain('FOUNDER')
-    expect(root.innerHTML).toContain('Benefícios Founder')
+    expect(root.innerHTML).toContain('Contas simultâneas ilimitadas')
+    expect(root.innerHTML).toContain('Proxy exclusivo, salvo e ativado por conta no Windows')
+    expect(root.innerHTML).toContain('Extensão isolada em até 3 contas no Windows')
+    expect(root.innerHTML).toContain('Extensão isolada em até 9 contas no Windows')
+    expect(root.innerHTML).toContain('Extensões ilimitadas, isoladas por conta no Windows')
+    expect(root.innerHTML).toContain('Todos os planos pagos são vitalícios')
+    expect(root.innerHTML).toContain('Você paga uma única vez, sem mensalidade')
+    expect(root.innerHTML).toContain('data-plan-code="PRO_PLUS"')
     expect(root.innerHTML).not.toContain('checkout')
     expect(root.innerHTML).not.toContain('Pix')
+
+    const currentPlus = harness.renderPlanOption('PRO_PLUS', 'PRO_PLUS', null, true)
+    expect(currentPlus).toContain('plan-option--current')
+    expect(currentPlus).toContain('data-plan-code="PRO_PLUS"')
+    expect(currentPlus).toContain('<strong>PLUS</strong>')
+    expect(currentPlus).toContain('Plano atual')
+    expect(currentPlus).not.toContain('recursos beta')
+    expect(currentPlus).not.toContain('Proxy exclusivo')
+
+    harness.activeDialog = 'my-plan'
+    harness.render()
+    expect(root.innerHTML).toContain('Comparativo completo')
+    expect(root.innerHTML).toContain('O que cada plano oferece')
+    expect(root.innerHTML).toContain('Pagamento único · vitalício · sem mensalidade')
+    expect(root.innerHTML).toContain('Grátis para sempre')
 
     auth.emit('SIGNED_OUT', null)
     await vi.waitFor(() => expect(launcher.close).toHaveBeenCalledTimes(3))
@@ -2414,7 +3017,7 @@ describe('AuthApp session lifecycle', () => {
     app.destroy()
   })
 
-  it('keeps six PRO surfaces alive in the continuous scrolling grid', async () => {
+  it('keeps six PRO surfaces alive while navigating customizable grid pages', async () => {
     installBrowser('https://app.example.com/')
 
     class AcceptanceKeyboardEvent {
@@ -2489,6 +3092,12 @@ describe('AuthApp session lifecycle', () => {
         displayName: `Conta ${index + 1}`,
         gameSlug: 'huntera',
       }))
+    const accountTabs = configured.map((account) => {
+      const tab = new AcceptanceElement()
+      tab.dataset.accountOrderId = account.id
+      return tab
+    })
+    rootElement.setQueryAll('[data-account-order-id]', accountTabs)
     configured.forEach((account) => manager.ensure(account.id))
     const permissions = new PermissionService({
       account_limit: 10,
@@ -2514,7 +3123,7 @@ describe('AuthApp session lifecycle', () => {
       bindAuthenticatedActions(): void
       configuredAccounts: typeof configured
       currentView: 'authenticated'
-      gridMode: 'auto' | '1x1' | '1x2' | '2x1' | '2x2' | '3x2' | '3x3'
+      gridMode: 'auto' | '1x1' | '1x2' | '2x1' | '2x2' | '3x2' | '3x3' | '4x4'
       handleKeyDown(event: KeyboardEvent): void
       maximizedAccountId: string | null
       openConfiguredAccount(
@@ -2555,8 +3164,8 @@ describe('AuthApp session lifecycle', () => {
 
     grid2x2.click()
     expect(harness.gridMode).toBe('2x2')
-    expect(pageStatus.textContent).toBe('1/1')
-    expect(pagination.getAttribute('hidden')).toBe('')
+    expect(pageStatus.textContent).toBe('1/2')
+    expect(pagination.getAttribute('hidden')).toBeNull()
     expect(
       (manager.get(configured[0]!.id)!.card as unknown as AcceptanceElement)
         .classList.contains('is-suppressed'),
@@ -2564,7 +3173,24 @@ describe('AuthApp session lifecycle', () => {
     expect(
       (manager.get(configured[5]!.id)!.card as unknown as AcceptanceElement)
         .classList.contains('is-suppressed'),
+    ).toBe(true)
+    expect(accountTabs.map((tab) => tab.hidden)).toEqual([
+      false, false, false, false, true, true,
+    ])
+
+    nextPage.click()
+    expect(pageStatus.textContent).toBe('2/2')
+    expect(
+      (manager.get(configured[0]!.id)!.card as unknown as AcceptanceElement)
+        .classList.contains('is-suppressed'),
+    ).toBe(true)
+    expect(
+      (manager.get(configured[5]!.id)!.card as unknown as AcceptanceElement)
+        .classList.contains('is-suppressed'),
     ).toBe(false)
+    expect(accountTabs.map((tab) => tab.hidden)).toEqual([
+      true, true, true, true, false, false,
+    ])
 
     expect(manager.get(configured[0]!.id)!.surface).toBe(firstSurface)
     expect(firstSurface.getAttribute('data-login-state')).toBe('authenticated')
@@ -2589,19 +3215,30 @@ describe('AuthApp session lifecycle', () => {
     expect(launcher.reload).not.toHaveBeenCalled()
   })
 
-  it('keeps 1x1 rows readable and recycles native surfaces while scrolling', async () => {
+  it('keeps 1x1 pages isolated and reuses native surfaces while paging', async () => {
     installBrowser('https://app.example.com/')
 
     const frame = new AcceptanceElement()
     const shell = new AcceptanceElement()
     const workspace = new AcceptanceElement()
     const grid = new AcceptanceElement()
+    const pagination = new AcceptanceElement()
+    const pageStatus = new AcceptanceElement()
+    const previousPage = new AcceptanceElement()
+    const nextPage = new AcceptanceElement()
     const rootElement = new AcceptanceElement()
+    previousPage.dataset.gridPage = 'previous'
+    nextPage.dataset.gridPage = 'next'
     rootElement.setQuery('.app-frame', frame)
     rootElement.setQuery('[data-authenticated-shell]', shell)
     rootElement.setQueryAll('button[data-grid-mode]', [])
+    rootElement.setQueryAll('[data-grid-page]', [previousPage, nextPage])
     shell.setQuery('[data-session-workspace]', workspace)
     shell.setQuery('[data-session-grid]', grid)
+    shell.setQuery('[data-session-pagination]', pagination)
+    pagination.setQuery('[data-grid-page-status]', pageStatus)
+    pagination.setQuery('[data-grid-page="previous"]', previousPage)
+    pagination.setQuery('[data-grid-page="next"]', nextPage)
 
     const factory: SessionSurfaceElementFactory = {
       createCard: () => asHtmlElement(new AcceptanceElement()),
@@ -2656,6 +3293,7 @@ describe('AuthApp session lifecycle', () => {
     })
     const harness = app as unknown as {
       applyWorkspacePresentation(): void
+      bindAuthenticatedActions(): void
       configuredAccounts: typeof accountA[]
       currentView: 'authenticated'
       gridMode: '1x1'
@@ -2694,8 +3332,9 @@ describe('AuthApp session lifecycle', () => {
     harness.applyWorkspacePresentation()
     await vi.waitFor(() => expect(launcher.applyLayout).toHaveBeenCalledTimes(2))
 
-    expect(grid.styles.get('--grid-rows')).toBe('2')
-    expect(grid.styles.get('--grid-row-height')).toBe('720px')
+    expect(grid.styles.get('--grid-rows')).toBe('1')
+    expect(grid.styles.get('--grid-row-height')).toBe('')
+    expect(pageStatus.textContent).toBe('1/2')
     expect(launcher.applyLayout.mock.calls[1]![0].slots.map(
       (slot: GridLayout['slots'][number]) => slot.sessionId,
     )).toEqual([accountA.id])
@@ -2703,9 +3342,8 @@ describe('AuthApp session lifecycle', () => {
       accountB.id,
     ])
 
-    ;(surfaceA as unknown as AcceptanceElement).bounds.y = -710
-    ;(surfaceB as unknown as AcceptanceElement).bounds.y = 10
-    harness.applyWorkspacePresentation()
+    harness.bindAuthenticatedActions()
+    nextPage.click()
     await vi.waitFor(() => expect(launcher.applyLayout).toHaveBeenCalledTimes(3))
 
     expect(launcher.applyLayout.mock.calls[2]![0].slots.map(

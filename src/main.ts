@@ -1,7 +1,6 @@
 import './styles.css'
 import altgridLogoUrl from './assets/altgrid-mark.png'
 
-import { AdminApp } from './admin-app'
 import { AuthApp } from './app'
 import { createSupabaseClient } from './lib/supabase'
 import { AuthService } from './services/auth-service'
@@ -21,6 +20,29 @@ const root = document.querySelector<HTMLElement>('#app')
 
 if (!root) {
   throw new Error('Application root was not found')
+}
+
+function renderStartupError(): void {
+  root!.innerHTML = `
+    <div class="app-frame">
+      <header class="topbar">
+        <div class="brand" aria-label="AltGrid">
+          <img class="brand__logo" src="${altgridLogoUrl}" alt="" />
+          <span class="brand__name">AltGrid</span>
+        </div>
+      </header>
+      <main class="auth-stage">
+        <section class="auth-card auth-card--message" aria-labelledby="config-title">
+          <span class="message-icon message-icon--warning" aria-hidden="true">!</span>
+          <p class="eyebrow">Configuração necessária</p>
+          <h1 id="config-title">Conecte o Supabase</h1>
+          <p class="auth-card__subtitle">
+            Configure as credenciais públicas do Supabase e a URL da API.
+          </p>
+        </section>
+      </main>
+    </div>
+  `
 }
 
 try {
@@ -78,9 +100,11 @@ try {
   if (adminRoute && !backendApi) {
     throw new Error('ALTGRID_API_BASE_URL is required for admin')
   }
-  const app = adminRoute
-    ? new AdminApp(root, authService, backendApi!)
-    : new AuthApp(root, authService, {
+  const appPromise = adminRoute
+    ? import('./admin-app').then(({ AdminApp }) => (
+        new AdminApp(root, authService, backendApi!)
+      ))
+    : Promise.resolve(new AuthApp(root, authService, {
         accountService: new ConfiguredAccountService(),
         backendApi: backendApi ?? undefined,
         chatService: chatService ?? undefined,
@@ -90,34 +114,22 @@ try {
         permissionService: new PermissionService(),
         sessionLauncher: desktop?.sessionLauncher ?? mobile ?? undefined,
         updater: desktop?.updater ?? mobileUpdater ?? undefined,
-      })
+      }))
 
-  void app.start()
-  window.addEventListener('beforeunload', () => {
+  void appPromise.then((app) => {
+    void app.start()
+    window.addEventListener('beforeunload', () => {
+      unsubscribeFromDeviceRegistration?.()
+      app.destroy()
+      desktop?.dispose()
+      mobileUpdater?.dispose()
+    }, { once: true })
+  }).catch(() => {
     unsubscribeFromDeviceRegistration?.()
-    app.destroy()
     desktop?.dispose()
     mobileUpdater?.dispose()
-  }, { once: true })
+    renderStartupError()
+  })
 } catch {
-  root.innerHTML = `
-    <div class="app-frame">
-      <header class="topbar">
-        <div class="brand" aria-label="AltGrid">
-          <img class="brand__logo" src="${altgridLogoUrl}" alt="" />
-          <span class="brand__name">AltGrid</span>
-        </div>
-      </header>
-      <main class="auth-stage">
-        <section class="auth-card auth-card--message" aria-labelledby="config-title">
-          <span class="message-icon message-icon--warning" aria-hidden="true">!</span>
-          <p class="eyebrow">Configuração necessária</p>
-          <h1 id="config-title">Conecte o Supabase</h1>
-          <p class="auth-card__subtitle">
-            Configure as credenciais públicas do Supabase e a URL da API.
-          </p>
-        </section>
-      </main>
-    </div>
-  `
+  renderStartupError()
 }

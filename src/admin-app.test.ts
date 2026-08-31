@@ -40,6 +40,8 @@ function authDouble(current: Session | null = session): AuthService {
 function backendDouble(overrides: Partial<Record<keyof BackendApi, unknown>> = {}): BackendApi {
   return {
     activateAdminLifetime: vi.fn(),
+    approveAdminReferral: vi.fn(),
+    clearAdminChat: vi.fn(),
     clearAdminChatRestriction: vi.fn(),
     createAdminAnnouncement: vi.fn(),
     createAdminGame: vi.fn(),
@@ -57,11 +59,22 @@ function backendDouble(overrides: Partial<Record<keyof BackendApi, unknown>> = {
     getAdminConfig: vi.fn().mockResolvedValue({ config: [] }),
     getAdminGames: vi.fn().mockResolvedValue({ games: [] }),
     getAdminProducts: vi.fn().mockResolvedValue({ products: [] }),
+    getAdminPaymentLogs: vi.fn().mockResolvedValue({
+      pagination: { has_more: false, page: 1, page_size: 50, total: 0 },
+      payments: [],
+    }),
+    getAdminReferrals: vi.fn().mockResolvedValue({
+      pagination: { has_more: false, page: 1, page_size: 50, total: 0 },
+      referrals: [],
+      stats: { pending: 0, qualified: 0, rejected: 0, rewarded: 0, total: 0 },
+    }),
     getAdminSession: vi.fn().mockResolvedValue({
       admin: { role: 'admin', user_id: user.id },
     }),
     getAdminUser: vi.fn(),
     grantAdminProDays: vi.fn(),
+    reconcileAdminPayment: vi.fn(),
+    rejectAdminReferral: vi.fn(),
     resetAdminDevice: vi.fn(),
     reviewAdminChatReport: vi.fn(),
     revokeAdminDevice: vi.fn(),
@@ -70,7 +83,7 @@ function backendDouble(overrides: Partial<Record<keyof BackendApi, unknown>> = {
       pagination: { has_more: false, page: 1, page_size: 50, total: 1 },
       users: [{
         created_at: user.created_at,
-        display_name: null,
+        display_name: 'Caco',
         email: user.email,
         expires_at: null,
         founder_number: null,
@@ -125,6 +138,11 @@ describe('AdminApp', () => {
     expect(backend.getAdminSession).toHaveBeenCalledOnce()
     expect(backend.searchAdminUsers).toHaveBeenCalledWith('', 1, 50)
     expect(root.innerHTML).toContain('Administração')
+    expect(root.innerHTML).toContain('Control Center')
+    expect(root.innerHTML).toContain('Resumo operacional')
+    expect(root.innerHTML).toContain('data-admin-refresh')
+    expect(root.innerHTML).toContain('data-admin-shortcut="payments"')
+    expect(root.innerHTML).toContain('Comunicação e sistema')
     expect(root.innerHTML).toContain('Usuários')
     expect(root.innerHTML).toContain('Jogos')
     expect(root.innerHTML).toContain('Configuração')
@@ -133,8 +151,9 @@ describe('AdminApp', () => {
     expect(root.innerHTML).toContain('Chat')
     expect(root.innerHTML).toContain('Auditoria')
     expect(root.innerHTML).toContain('admin@altgrid.local')
+    expect(root.innerHTML).toContain('Caco')
     expect(root.innerHTML).toContain('HUNT-ABCD2345')
-    expect(root.innerHTML).toContain('E-mail, user ID ou referral code')
+    expect(root.innerHTML).toContain('E-mail, nick, user ID ou referral code')
     expect(root.innerHTML).not.toContain('<canvas')
     app.destroy()
   })
@@ -297,7 +316,7 @@ describe('AdminApp', () => {
     await app.start()
     await loadTab('announcements')
 
-    expect(backend.getAdminAnnouncements).toHaveBeenCalledOnce()
+    expect(backend.getAdminAnnouncements).toHaveBeenCalledTimes(2)
     expect(root.innerHTML).toContain('Publicar aviso')
     expect(root.innerHTML).toContain('Manutenção programada')
     expect(root.innerHTML).toContain('data-edit-announcement="announcement-id"')

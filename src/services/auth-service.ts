@@ -49,6 +49,53 @@ interface AuthErrorLike {
   status?: number
 }
 
+export type PasswordRecoveryCallback =
+  | { code: string; kind: 'pkce' }
+  | {
+      accessToken: string
+      kind: 'implicit'
+      refreshToken: string
+    }
+
+export function parsePasswordRecoveryCallback(
+  candidate: unknown,
+): PasswordRecoveryCallback | null {
+  if (typeof candidate !== 'string') {
+    return null
+  }
+
+  try {
+    const url = new URL(candidate)
+    if (url.searchParams.get('auth') !== 'recovery') {
+      return null
+    }
+
+    const code = url.searchParams.get('code')?.trim()
+    if (code) {
+      return { code, kind: 'pkce' }
+    }
+
+    const fragment = new URLSearchParams(url.hash.replace(/^#/, ''))
+    const accessToken = fragment.get('access_token')?.trim()
+    const refreshToken = fragment.get('refresh_token')?.trim()
+    if (
+      fragment.get('type') === 'recovery'
+      && accessToken
+      && refreshToken
+    ) {
+      return {
+        accessToken,
+        kind: 'implicit',
+        refreshToken,
+      }
+    }
+  } catch {
+    return null
+  }
+
+  return null
+}
+
 export function mapAuthError(
   error: unknown,
   isOnline = true,
@@ -210,6 +257,28 @@ export class AuthService {
     })
   }
 
+  async startGoogleSignIn(redirectTo: string): Promise<string> {
+    return this.execute(async () => {
+      const { data, error } = await this.client.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo,
+          skipBrowserRedirect: true,
+        },
+      })
+
+      if (error) {
+        throw error
+      }
+
+      if (!data.url) {
+        throw new AuthServiceError('unknown')
+      }
+
+      return data.url
+    })
+  }
+
   async signOut(): Promise<void> {
     await this.execute(async () => {
       const { error } = await this.client.auth.signOut({ scope: 'local' })
@@ -279,6 +348,28 @@ export class AuthService {
       if (error) {
         throw error
       }
+    })
+  }
+
+  async completePasswordRecovery(callbackUrl: string): Promise<Session | null> {
+    const callback = parsePasswordRecoveryCallback(callbackUrl)
+    if (!callback) {
+      return null
+    }
+
+    return this.execute(async () => {
+      const result = callback.kind === 'pkce'
+        ? await this.client.auth.exchangeCodeForSession(callback.code)
+        : await this.client.auth.setSession({
+            access_token: callback.accessToken,
+            refresh_token: callback.refreshToken,
+          })
+
+      if (result.error) {
+        throw result.error
+      }
+
+      return result.data.session
     })
   }
 

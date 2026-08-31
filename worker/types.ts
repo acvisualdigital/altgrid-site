@@ -26,6 +26,8 @@ import type {
   AdminGameUpdate,
   AdminProduct,
   AdminProductUpdate,
+  AdminPublisherRequest,
+  AdminPublisherRequestStatus,
   AdminPaymentLog,
   AdminUserDetail,
   AdminUserSummary,
@@ -127,9 +129,13 @@ export interface PublicProductRecord {
 
 export interface ChatChannelRecord {
   id: string
-  type: 'global' | 'game'
+  type: 'direct' | 'global' | 'game'
   game_id: string | null
   name: string
+  participant_id?: string | null
+  participant_plan?: string | null
+  participant_founder_number?: number | null
+  unread?: number
 }
 
 export interface ChatMessageRecord {
@@ -195,7 +201,8 @@ export interface PlatformRepository {
 }
 
 export interface ChatRepository {
-  getChatChannels(): Promise<ChatChannelRecord[]>
+  getChatChannels(userId: string): Promise<ChatChannelRecord[]>
+  startDirectChat(userId: string, recipientId: string): Promise<ChatChannelRecord>
   getChatStatus(userId: string): Promise<ChatStatusRecord>
   getChatMessages(
     userId: string,
@@ -316,6 +323,13 @@ export interface AdminRepository {
     gameId: string,
     input: AdminGameUpdate,
   ): Promise<AdminGame | null>
+  getAdminPublisherRequests(actorUserId: string, status: AdminPublisherRequestStatus | null): Promise<AdminPublisherRequest[]>
+  reviewAdminPublisherRequest(
+    actorUserId: string,
+    requestId: string,
+    status: Extract<AdminPublisherRequestStatus, 'reviewing' | 'approved' | 'rejected'>,
+    notes: string | null,
+  ): Promise<AdminPublisherRequest>
   getAdminConfig(): Promise<AdminConfigEntry[]>
   updateAdminConfig(
     actorUserId: string,

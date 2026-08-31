@@ -142,6 +142,14 @@ export class ProxyConfigStore {
     }
   }
 
+  copy(sourceAccountId: unknown, targetAccountId: unknown): SessionProxySummary | null {
+    const source = this.get(sourceAccountId)
+    if (!source) {
+      return null
+    }
+    return this.set(targetAccountId, source)
+  }
+
   set(accountId: unknown, input: unknown): SessionProxySummary {
     const normalizedId = normalizedAccountId(accountId)
     if (!this.encryption.isEncryptionAvailable()) {

@@ -10,6 +10,9 @@ import type {
   AdminGameResponse,
   AdminGamesResponse,
   AdminProductResponse,
+  AdminPublisherRequestResponse,
+  AdminPublisherRequestsResponse,
+  AdminPublisherRequestStatus,
   AdminProductsResponse,
   AdminPaymentLogsResponse,
   AdminReferralResponse,
@@ -46,6 +49,7 @@ export function adminAllowedMethods(pathname: string): string[] | null {
   if (pathname === '/v1/admin/chat/reports') return ['GET']
   if (pathname === '/v1/admin/chat/clear') return ['POST']
   if (pathname === '/v1/admin/referrals') return ['GET']
+  if (pathname === '/v1/admin/publisher-requests') return ['GET']
 
   if (
     pathname === '/v1/admin/session'
@@ -67,6 +71,7 @@ export function adminAllowedMethods(pathname: string): string[] | null {
     || /^\/v1\/admin\/chat\/messages\/[^/]+\/delete$/.test(pathname)
     || /^\/v1\/admin\/payments\/[^/]+\/reconcile$/.test(pathname)
     || /^\/v1\/admin\/referrals\/[^/]+\/(approve|reject)$/.test(pathname)
+    || /^\/v1\/admin\/publisher-requests\/[^/]+\/review$/.test(pathname)
   ) return ['POST']
 
   if (
@@ -209,6 +214,42 @@ export async function handleAdminRequest(
     }
     const game = await repository.createAdminGame(actorUserId, await readAdminGameInput(request))
     return jsonResponse({ game } satisfies AdminGameResponse, 201)
+  }
+
+  if (pathname === '/v1/admin/publisher-requests') {
+    const rawStatus = new URL(request.url).searchParams.get('status')
+    const allowed: AdminPublisherRequestStatus[] = ['pending', 'reviewing', 'approved', 'rejected', 'cancelled']
+    if (rawStatus && !allowed.includes(rawStatus as AdminPublisherRequestStatus)) {
+      throw new ApiError(400, 'invalid_publisher_status', 'Status de solicitação inválido.')
+    }
+    const requests = await repository.getAdminPublisherRequests(
+      actorUserId,
+      rawStatus as AdminPublisherRequestStatus | null,
+    )
+    return jsonResponse({ requests } satisfies AdminPublisherRequestsResponse)
+  }
+
+  const publisherReviewMatch = /^\/v1\/admin\/publisher-requests\/([^/]+)\/review$/.exec(pathname)
+  if (publisherReviewMatch) {
+    const requestId = routeId(publisherReviewMatch, 'publisher request id')
+    let body: { status?: unknown; notes?: unknown }
+    try { body = await request.json() as { status?: unknown; notes?: unknown } } catch {
+      throw new ApiError(400, 'invalid_json', 'Corpo da solicitação inválido.')
+    }
+    if (!['reviewing', 'approved', 'rejected'].includes(String(body.status))) {
+      throw new ApiError(400, 'invalid_publisher_review', 'Escolha revisar, aprovar ou recusar.')
+    }
+    const notes = body.notes === undefined || body.notes === null ? null : String(body.notes).trim()
+    if (notes && notes.length > 2000) {
+      throw new ApiError(400, 'publisher_notes_too_long', 'As observações devem ter até 2.000 caracteres.')
+    }
+    const reviewed = await repository.reviewAdminPublisherRequest(
+      actorUserId,
+      requestId,
+      String(body.status) as 'reviewing' | 'approved' | 'rejected',
+      notes,
+    )
+    return jsonResponse({ request: reviewed } satisfies AdminPublisherRequestResponse)
   }
 
   const gameMatch = /^\/v1\/admin\/games\/([^/]+)$/.exec(pathname)

@@ -5,6 +5,7 @@ import { SupabaseRepository } from './supabase-repository'
 
 const USER_ID = '00000000-0000-4000-8000-000000000001'
 const CHANNEL_ID = '10000000-0000-4000-8000-000000000001'
+const RECIPIENT_ID = '00000000-0000-4000-8000-000000000099'
 
 describe('SupabaseRepository presence and metrics RPC boundary', () => {
   it('reads only the aggregate metrics returned by the database function', async () => {
@@ -62,6 +63,26 @@ describe('SupabaseRepository presence and metrics RPC boundary', () => {
       p_user_id: USER_ID,
       p_channel_id: CHANNEL_ID,
       p_message: 'Olá',
+    })
+  })
+
+  it('starts direct conversations through the protected database function', async () => {
+    const directChannel = {
+      id: CHANNEL_ID,
+      type: 'direct',
+      game_id: null,
+      name: 'Amigo',
+      participant_id: RECIPIENT_ID,
+      unread: 0,
+    }
+    const rpc = vi.fn(async () => ({ data: directChannel, error: null }))
+    const repository = new SupabaseRepository({ rpc } as unknown as SupabaseClient)
+
+    await expect(repository.startDirectChat(USER_ID, RECIPIENT_ID))
+      .resolves.toEqual(directChannel)
+    expect(rpc).toHaveBeenCalledWith('chat_start_direct', {
+      p_user_id: USER_ID,
+      p_recipient_id: RECIPIENT_ID,
     })
   })
 

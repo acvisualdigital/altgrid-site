@@ -119,6 +119,25 @@ describe('proxy configuration', () => {
     })
   })
 
+  it('copies a proxy to a new isolated account without exposing its password', () => {
+    const { store } = createStore()
+    store.set('account-1', {
+      enabled: true,
+      host: 'proxy.example.com',
+      password: 'secret',
+      port: 1080,
+      protocol: 'socks5',
+      username: 'player',
+    })
+
+    expect(store.copy('account-1', 'account-2')).toEqual(expect.objectContaining({
+      hasPassword: true,
+      host: 'proxy.example.com',
+    }))
+    expect(store.get('account-2')).toEqual(store.get('account-1'))
+    expect(store.copy('missing', 'account-3')).toBeNull()
+  })
+
   it('refuses to persist proxy credentials without OS encryption', () => {
     const { store } = createStore(false)
     expect(() => store.set('account-1', {

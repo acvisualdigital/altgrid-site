@@ -4,6 +4,7 @@ import planFounderBadgeUrl from './assets/plans/plan-founder.png'
 import planFreeBadgeUrl from './assets/plans/plan-free.png'
 import planProBadgeUrl from './assets/plans/plan-pro.png'
 import planProPlusBadgeUrl from './assets/plans/plan-pro-plus.png'
+import { getBundledGameIconUrl } from './game-icon-assets'
 
 import {
   validateEmail,
@@ -15,6 +16,7 @@ import {
 import {
   AuthService,
   AuthServiceError,
+  parsePasswordRecoveryCallback,
   type SignUpResult,
 } from './services/auth-service'
 import {
@@ -38,12 +40,18 @@ import {
 } from './services/permission-service'
 import { UNLIMITED_ACCOUNT_LIMIT } from './types/backend-api'
 import {
+  GRID_MODES,
   GridLayoutService,
   type ConcreteGridMode,
   type GridLayout,
   type GridMode,
 } from './services/grid-layout-service'
+import {
+  GridWorkspaceService,
+  type SavedGridWorkspace,
+} from './services/grid-workspace-service'
 import { SessionSurfaceManager } from './services/session-surface-manager'
+import { parseProxyLine } from './services/proxy-line-parser'
 import { ChatService, type ChatState } from './services/chat-service'
 import { NotificationCenterService } from './services/notification-center-service'
 import type {
@@ -61,8 +69,10 @@ import type {
   ReferralProgramResponse,
   ResolvedEntitlements,
 } from './types/backend-api'
+import type { AdminPaymentLog, AdminUserDetail } from './types/admin-api'
 import type { PlanCode } from './types/database'
 import type {
+  SessionExtensionSummary,
   SessionProxyInput,
   SessionProxySummary,
   SessionProxyTestResult,
@@ -90,10 +100,13 @@ type ActiveDialog =
   | 'delete-account'
   | 'chat-nickname'
   | 'free-limit'
+  | 'extension'
+  | 'grid-manager'
   | 'more-games'
   | 'my-plan'
   | 'payment'
   | 'plans'
+  | 'copy-proxy'
   | 'proxy'
   | 'rename-account'
   | 'referrals'
@@ -104,32 +117,94 @@ type ActiveDialog =
 type BackendLoadStatus = 'error' | 'idle' | 'loading' | 'ready'
 type ServiceStatus = 'checking' | 'offline' | 'online' | 'unknown'
 type WorkspaceMode = 'account' | 'grid'
+
+interface PlanPresentation {
+  benefits: readonly string[]
+  capacity: string
+  displayName: string
+  summary: string
+  tierLabel: string
+}
+
+const PLAN_ORDER: readonly PlanCode[] = ['FREE', 'PRO', 'PRO_PLUS', 'FOUNDER']
+const PLAN_RANK: Record<PlanCode, number> = {
+  FREE: 0,
+  PRO: 1,
+  PRO_PLUS: 2,
+  FOUNDER: 3,
+}
+
+export const EXTENSION_ACCOUNT_LIMITS: Readonly<Record<PlanCode, number>> = {
+  FREE: 0,
+  PRO: 3,
+  PRO_PLUS: 9,
+  FOUNDER: UNLIMITED_ACCOUNT_LIMIT,
+}
+
+export function extensionAccountLimitForPlan(plan: PlanCode): number {
+  return EXTENSION_ACCOUNT_LIMITS[plan]
+}
+
+const PLAN_PRESENTATION: Record<PlanCode, PlanPresentation> = {
+  FREE: {
+    benefits: [
+      'Grades básicas para organizar suas telas',
+      'Tela cheia e modo Somente telas',
+      'Presets de jogos e contas isoladas',
+      'Dados e logins dos jogos mantidos localmente',
+    ],
+    capacity: '3 sessões no Huntera · 2 nos demais jogos',
+    displayName: 'FREE',
+    summary: 'O essencial para começar a organizar suas contas sem custo.',
+    tierLabel: 'Grátis para sempre',
+  },
+  PRO: {
+    benefits: [
+      'Tudo o que está disponível no FREE',
+      'Até 6 sessões abertas ao mesmo tempo',
+      'Grades avançadas e personalizadas',
+      'Eco Mode para limitar FPS e reduzir consumo',
+      'Extensão isolada em até 3 contas no Windows',
+    ],
+    capacity: 'Até 6 contas simultâneas',
+    displayName: 'PRO',
+    summary: 'Mais controle e economia de recursos para quem usa várias contas.',
+    tierLabel: 'Plano avançado',
+  },
+  PRO_PLUS: {
+    benefits: [
+      'Tudo o que está disponível no PRO',
+      'Até 10 sessões abertas ao mesmo tempo',
+      'Grades avançadas para operações maiores',
+      'Eco Mode para limitar FPS e reduzir consumo',
+      'Extensão isolada em até 9 contas no Windows',
+      'Mais capacidade sem perder a organização',
+    ],
+    capacity: 'Até 10 contas simultâneas',
+    displayName: 'PLUS',
+    summary: 'A melhor capacidade para quem gerencia muitas contas todos os dias.',
+    tierLabel: 'Melhor custo-benefício',
+  },
+  FOUNDER: {
+    benefits: [
+      'Tudo o que está disponível no PLUS',
+      'Contas simultâneas ilimitadas',
+      'Proxy exclusivo, salvo e ativado por conta no Windows',
+      'Extensões ilimitadas, isoladas por conta no Windows',
+      'Acesso aos recursos beta do AltGrid',
+      'Badge e número Founder no chat',
+    ],
+    capacity: 'Contas simultâneas ilimitadas',
+    displayName: 'FOUNDER',
+    summary: 'O nível máximo do AltGrid, com recursos exclusivos e sem limite de contas.',
+    tierLabel: 'Plano máximo',
+  },
+}
+
 const CHAT_GAME_SELECTION_STORAGE_KEY = 'altgrid.chat.visible-game-channels.v1'
+const SELECTED_GRID_STORAGE_KEY = 'altgrid.selected-grid.v1'
 const CHAT_BOTTOM_THRESHOLD_PX = 48
 const RMT_DISCORD_URL = 'https://discord.gg/jqbWgSPVe'
-const STONEGY_BOT_FEATURE = 'stonegy_bot'
-
-export function isStonegyLaunchUrl(input: unknown): boolean {
-  if (typeof input !== 'string') {
-    return false
-  }
-
-  try {
-    const url = new URL(input)
-    return url.protocol === 'https:' && (
-      url.hostname === 'stonegy-online.com'
-      || url.hostname.endsWith('.stonegy-online.com')
-    )
-  } catch {
-    return false
-  }
-}
-
-export function stonegyBotMenuLabel(entitled: boolean, enabled: boolean): string {
-  if (!entitled) return 'AltGrid Bot · plano pago'
-  return enabled ? 'Desativar AltGrid Bot' : 'Ativar AltGrid Bot'
-}
-
 export interface ChatScrollSnapshot {
   channelId: string
   clientHeight: number
@@ -176,6 +251,8 @@ type ApplicationBackend = Pick<BackendApi, 'getEntitlements' | 'getGames' | 'get
     | 'getAnnouncements'
     | 'getHealth'
     | 'getAdminSession'
+    | 'getAdminPaymentLogs'
+    | 'getAdminUser'
     | 'getPayment'
     | 'getProducts'
     | 'getReferralProgram'
@@ -196,7 +273,14 @@ export interface AccountSessionLauncher {
   applyLayout(layout: GridLayout): Promise<void> | void
   clearData(account: ConfiguredAccount): Promise<void> | void
   close(account: ConfiguredAccount): Promise<void> | void
+  chooseExtension?(account: ConfiguredAccount): Promise<SessionExtensionSummary | null>
+  copyExtension?(source: ConfiguredAccount, target: ConfiguredAccount): Promise<SessionExtensionSummary | null>
+  copyProxy?(
+    source: ConfiguredAccount,
+    target: ConfiguredAccount,
+  ): Promise<SessionProxySummary | null>
   focus(account: ConfiguredAccount): Promise<void> | void
+  getExtension?(account: ConfiguredAccount): Promise<SessionExtensionSummary | null>
   getProxy?(account: ConfiguredAccount): Promise<SessionProxySummary | null>
   getResourceUsage?(): Promise<SessionResourceUsage[]>
   open(
@@ -208,6 +292,7 @@ export interface AccountSessionLauncher {
     handler: (event: AccountSessionStatusEvent) => void,
   ): (() => void) | void
   reload(account: ConfiguredAccount): Promise<void> | void
+  removeExtension?(account: ConfiguredAccount): Promise<boolean>
   removeProxy?(account: ConfiguredAccount): Promise<boolean>
   setEcoMode(enabled: boolean, backgroundFps: EcoBackgroundFps): Promise<boolean> | boolean
   setFrameRate(account: ConfiguredAccount, fps: number): Promise<void> | void
@@ -217,7 +302,7 @@ export interface AccountSessionLauncher {
   ): Promise<void> | void
   setFullscreen?(enabled: boolean): Promise<void> | void
   setMuted(account: ConfiguredAccount, muted: boolean): Promise<void> | void
-  setStonegyBot?(account: ConfiguredAccount, enabled: boolean): Promise<void> | void
+  setExtensionEnabled?(account: ConfiguredAccount, enabled: boolean): Promise<SessionExtensionSummary>
   setProxy?(
     account: ConfiguredAccount,
     input: SessionProxyInput,
@@ -235,20 +320,19 @@ export interface AccountSessionStatusEvent {
     | 'load-failed'
     | 'loading'
     | 'ready'
-    | 'stonegy-bot-failed'
-    | 'stonegy-bot-ready'
 }
 
 export interface AccountSessionLaunchTarget {
+  allowExtension: boolean
   allowProxy: boolean
   kind: 'custom' | 'preset'
   launchUrl: string
   game: PublicGame | null
-  stonegyBotEnabled?: boolean
 }
 
 export interface AuthAppOptions {
   accountService?: ConfiguredAccountService
+  gridWorkspaceService?: GridWorkspaceService
   backendApi?: ApplicationBackend
   chatService?: ChatService
   gamePresetService?: GamePresetService
@@ -286,12 +370,15 @@ export interface AppUpdater {
 }
 
 const RECOVERY_QUERY_VALUE = 'recovery'
+const OAUTH_QUERY_VALUE = 'oauth'
 const APP_VERSION = __APP_VERSION__
 const ECO_MODE_STORAGE_KEY = 'altgrid.preference.eco-mode.v1'
 const ECO_BACKGROUND_FPS_STORAGE_KEY = 'altgrid.preference.eco-background-fps.v1'
 const SESSION_FPS_STORAGE_KEY = 'altgrid.preference.session-fps.v1'
 const SESSION_INTERFACE_SCALE_STORAGE_KEY = 'altgrid.preference.session-interface-scale.v1'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'altgrid.preference.sidebar-collapsed.v1'
+const UTILITY_BAR_COLLAPSED_STORAGE_KEY = 'altgrid.preference.utility-bar-collapsed.v1'
+const GRID_MODE_STORAGE_KEY = 'altgrid.preference.grid-mode.v1'
 const REFERRAL_CODE_STORAGE_KEY = 'altgrid.referral-code.v1'
 
 function initialReferralCode(): string {
@@ -319,25 +406,71 @@ type UiIconName =
   | 'add'
   | 'bell'
   | 'chat'
+  | 'check'
   | 'chevron'
+  | 'clock'
+  | 'close'
+  | 'copy'
+  | 'cpu'
+  | 'edit'
+  | 'gauge'
+  | 'gift'
   | 'globe'
   | 'grid'
   | 'leaf'
+  | 'memory'
+  | 'moon'
+  | 'power'
+  | 'puzzle'
   | 'refresh'
+  | 'route'
   | 'screens'
   | 'settings'
+  | 'share'
+  | 'shield'
+  | 'sparkles'
+  | 'star'
+  | 'trash'
+  | 'trophy'
+  | 'user'
+  | 'users'
+  | 'volume'
+  | 'external'
 
 const UI_ICON_PATHS: Record<UiIconName, string> = {
   add: '<path d="M12 5v14M5 12h14"/>',
   bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/>',
   chat: '<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>',
+  check: '<path d="m5 12 4 4L19 6"/>',
   chevron: '<path d="m8 10 4 4 4-4"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  close: '<path d="m6 6 12 12M18 6 6 18"/>',
+  copy: '<rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
+  cpu: '<rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3M10 10h4v4h-4z"/>',
+  edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/>',
+  gauge: '<path d="M4 18a8 8 0 1 1 16 0"/><path d="m12 14 4-4M8 18h8"/>',
+  gift: '<path d="M20 12v9H4v-9M2 7h20v5H2zM12 7v14"/><path d="M12 7H7.5A2.5 2.5 0 1 1 10 4.5C10 7 12 7 12 7Zm0 0h4.5A2.5 2.5 0 1 0 14 4.5C14 7 12 7 12 7Z"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   leaf: '<path d="M20 4C11 4 5 7 5 13c0 3.9 3.1 7 7 7 6 0 8-7 8-16Z"/><path d="M4 20c3-4 6-7 12-9"/>',
+  memory: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h2v4H7zM12 10h2v4h-2zM17 10h1v4h-1zM7 3v3M12 3v3M17 3v3M7 18v3M12 18v3M17 18v3"/>',
+  moon: '<path d="M20.5 15.2A8.5 8.5 0 0 1 8.8 3.5 8.5 8.5 0 1 0 20.5 15.2Z"/><path d="M15.5 5.5h3M17 4v3"/>',
+  power: '<path d="M12 2v10"/><path d="M18.4 6.6a8 8 0 1 1-12.8 0"/>',
+  puzzle: '<path d="M19 13h-2.2a2.8 2.8 0 1 0 0-2H19V6a1 1 0 0 0-1-1h-5V3a2 2 0 1 0-4 0v2H5a1 1 0 0 0-1 1v4h2a2 2 0 1 1 0 4H4v4a1 1 0 0 0 1 1h13a1 1 0 0 0 1-1Z"/>',
   refresh: '<path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/>',
+  route: '<circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h3a3 3 0 0 0 3-3V9a3 3 0 0 1 3-3"/>',
   screens: '<rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3"/>',
   settings: '<path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.97 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.52-1.03H3v-4h.08A1.7 1.7 0 0 0 4.6 8.97a1.7 1.7 0 0 0-.34-1.88l-.06-.06L7.03 4.2l.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 10 3.08V3h4v.08a1.7 1.7 0 0 0 1.03 1.52 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.92 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z"/>',
+  share: '<circle cx="18" cy="5" r="2"/><circle cx="6" cy="12" r="2"/><circle cx="18" cy="19" r="2"/><path d="m8 11 8-5M8 13l8 5"/>',
+  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/>',
+  sparkles: '<path d="m12 3 1.4 4.1L17.5 8.5l-4.1 1.4L12 14l-1.4-4.1-4.1-1.4 4.1-1.4Z"/><path d="m19 14 .8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8Z"/>',
+  star: '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/>',
+  trophy: '<path d="M8 4h8v4a4 4 0 0 1-8 0Z"/><path d="M8 6H4v1a4 4 0 0 0 4 4M16 6h4v1a4 4 0 0 1-4 4M12 12v5M8 21h8M9 17h6v4"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  users: '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 5a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5"/>',
+  volume: '<path d="M11 5 6 9H3v6h3l5 4Z"/><path d="M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/>',
+  external: '<path d="M14 3h7v7M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/>',
 }
 
 function uiIcon(name: UiIconName): string {
@@ -380,12 +513,63 @@ function formatDate(value: string | null): string {
     : new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium' }).format(parsed)
 }
 
+export function googleAuthRedirectUrl(
+  location: Pick<Location, 'origin' | 'pathname' | 'protocol'> = window.location,
+): string {
+  if (
+    location.protocol === 'altgrid:'
+    || location.origin === 'https://localhost'
+    || location.origin === 'capacitor://localhost'
+  ) {
+    return `altgrid://app/?auth=${OAUTH_QUERY_VALUE}`
+  }
+
+  return `${location.origin}${location.pathname}?auth=${OAUTH_QUERY_VALUE}`
+}
+
 function formatMemoryKb(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '0 MB'
   const megabytes = value / 1_024
   return megabytes >= 1_024
     ? `${(megabytes / 1_024).toFixed(2)} GB`
     : `${Math.round(megabytes)} MB`
+}
+
+function finiteResourceValue(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, value)
+    : 0
+}
+
+function playAdminPaymentAlertSound(confirmed: boolean): void {
+  try {
+    const AudioContextConstructor = window.AudioContext
+      ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AudioContextConstructor) return
+
+    const context = new AudioContextConstructor()
+    const oscillator = context.createOscillator()
+    const gain = context.createGain()
+    const startedAt = context.currentTime
+    oscillator.type = confirmed ? 'sine' : 'triangle'
+    oscillator.frequency.setValueAtTime(confirmed ? 880 : 560, startedAt)
+    if (confirmed) {
+      oscillator.frequency.setValueAtTime(1_120, startedAt + 0.12)
+    }
+    gain.gain.setValueAtTime(0.0001, startedAt)
+    gain.gain.exponentialRampToValueAtTime(0.16, startedAt + 0.015)
+    gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + 0.32)
+    oscillator.connect(gain)
+    gain.connect(context.destination)
+    oscillator.start(startedAt)
+    oscillator.stop(startedAt + 0.34)
+    oscillator.addEventListener('ended', () => {
+      void context.close().catch(() => undefined)
+    }, { once: true })
+    void context.resume().catch(() => undefined)
+  } catch {
+    // Sound is supplemental; notification delivery must remain reliable.
+  }
 }
 
 function escapeHtml(value: string): string {
@@ -601,6 +785,7 @@ export class AuthApp {
   private readonly permissionService: PermissionService
   private readonly offlineLicenseService: OfflineLicenseService | null
   private readonly accountService: ConfiguredAccountService
+  private readonly gridWorkspaceService: GridWorkspaceService
   private readonly sessionLauncher: AccountSessionLauncher
   private readonly mobileSessionMode: boolean
   private readonly ecoModeSupported: boolean
@@ -619,8 +804,15 @@ export class AuthApp {
   private backendStateRevision = 0
   private backendUserId: string | null = null
   private adminAccess = false
+  private adminPaymentAlertTimer: ReturnType<typeof setInterval> | null = null
+  private readonly adminPaymentStates = new Map<string, string>()
+  private adminPaymentsInitialized = false
+  private adminPaymentAlertLoading = false
   private freePlanPromptShown = false
   private configuredAccounts: ConfiguredAccount[] = []
+  private savedGridWorkspaces: SavedGridWorkspace[] = []
+  private selectedGridWorkspaceId: string | null = null
+  private dialogGridWorkspaceId: string | null = null
   private games: PublicGame[] = []
   private gameCatalogError: string | null = null
   private me: MeResponse | null = null
@@ -638,12 +830,25 @@ export class AuthApp {
   private paymentError: string | null = null
   private paymentPollTimer: ReturnType<typeof setTimeout> | null = null
   private proxyConfig: SessionProxySummary | null = null
+  private readonly accountProxyStates = new Map<string, SessionProxySummary | null>()
+  private readonly proxyStateLoadingAccountIds = new Set<string>()
   private proxyLoading = false
   private proxySaving = false
   private proxyTestResult: SessionProxyTestResult | null = null
+  private extensionConfig: SessionExtensionSummary | null = null
+  private readonly accountExtensionStates = new Map<string, SessionExtensionSummary | null>()
+  private readonly extensionStateLoadingAccountIds = new Set<string>()
+  private extensionStatesReady = false
+  private extensionStateRefreshInFlight: Promise<void> | null = null
+  private extensionLoading = false
+  private extensionSaving = false
   private resourceUsage: SessionResourceUsage[] = []
   private resourceUsageLoading = false
+  private resourceUsageTimer: ReturnType<typeof setInterval> | null = null
+  private sessionAlertTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly backgroundAccountIds = new Set<string>()
   private chatNicknameSaving = false
+  private nicknameOnboarding = false
   private selectedChatGameChannelIds: Set<string> | null = null
   private accountOrderChanged = false
   private reorderedAccountId: string | null = null
@@ -660,12 +865,14 @@ export class AuthApp {
   private previousAutoMode: ConcreteGridMode | undefined
   private screensOnly = false
   private sidebarCollapsed = false
+  private utilityBarCollapsed = false
   private maximizedAccountId: string | null = null
   private dialogAccountId: string | null = null
   private workspaceResizeObserver: ResizeObserver | null = null
   private workspaceResizeFrame: number | null = null
   private lastLayoutSignature = ''
   private renderedDialogSignature = ''
+  private readonly workspaceMarkupCache = new Map<string, string>()
   private sessionLayoutQueue: Promise<void> = Promise.resolve()
   private sessionLayoutSuspended = false
   private sessionCleanupInFlight: Promise<boolean> | null = null
@@ -699,6 +906,7 @@ export class AuthApp {
     this.permissionService = options.permissionService ?? new PermissionService()
     this.offlineLicenseService = options.offlineLicenseService ?? null
     this.accountService = options.accountService ?? new ConfiguredAccountService()
+    this.gridWorkspaceService = options.gridWorkspaceService ?? new GridWorkspaceService()
     this.updater = options.updater ?? null
     const sessionLauncher = options.sessionLauncher
     this.mobileSessionMode = sessionLauncher?.mobileNative === true
@@ -721,8 +929,12 @@ export class AuthApp {
     })
     try {
       this.sidebarCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true'
+      this.utilityBarCollapsed = localStorage.getItem(
+        UTILITY_BAR_COLLAPSED_STORAGE_KEY,
+      ) === 'true'
     } catch {
       this.sidebarCollapsed = false
+      this.utilityBarCollapsed = false
     }
     this.sessionLauncher = {
       mobileNative: sessionLauncher?.mobileNative,
@@ -733,7 +945,19 @@ export class AuthApp {
       applyLayout: (layout) => sessionLauncher?.applyLayout?.(layout),
       clearData: (account) => sessionLauncher?.clearData?.(account),
       close: (account) => sessionLauncher?.close?.(account),
+      chooseExtension: sessionLauncher?.chooseExtension
+        ? (account) => sessionLauncher.chooseExtension!(account)
+        : undefined,
+      copyExtension: sessionLauncher?.copyExtension
+        ? (source, target) => sessionLauncher.copyExtension!(source, target)
+        : undefined,
+      copyProxy: sessionLauncher?.copyProxy
+        ? (source, target) => sessionLauncher.copyProxy!(source, target)
+        : undefined,
       focus: (account) => sessionLauncher?.focus?.(account),
+      getExtension: sessionLauncher?.getExtension
+        ? (account) => sessionLauncher.getExtension!(account)
+        : undefined,
       getProxy: sessionLauncher?.getProxy
         ? (account) => sessionLauncher.getProxy!(account)
         : undefined,
@@ -748,6 +972,9 @@ export class AuthApp {
         sessionLauncher?.registerStatusHandler?.(handler)
       ),
       reload: (account) => sessionLauncher?.reload?.(account),
+      removeExtension: sessionLauncher?.removeExtension
+        ? (account) => sessionLauncher.removeExtension!(account)
+        : undefined,
       removeProxy: sessionLauncher?.removeProxy
         ? (account) => sessionLauncher.removeProxy!(account)
         : undefined,
@@ -760,8 +987,8 @@ export class AuthApp {
         : undefined,
       setFullscreen: (enabled) => sessionLauncher?.setFullscreen?.(enabled),
       setMuted: (account, muted) => sessionLauncher?.setMuted?.(account, muted),
-      setStonegyBot: sessionLauncher?.setStonegyBot
-        ? (account, enabled) => sessionLauncher.setStonegyBot!(account, enabled)
+      setExtensionEnabled: sessionLauncher?.setExtensionEnabled
+        ? (account, enabled) => sessionLauncher.setExtensionEnabled!(account, enabled)
         : undefined,
       setProxy: sessionLauncher?.setProxy
         ? (account, input) => sessionLauncher.setProxy!(account, input)
@@ -800,6 +1027,26 @@ export class AuthApp {
     this.unsubscribeFromSessionStatus =
       this.sessionLauncher.registerStatusHandler(this.handleSessionStatus)
       ?? null
+
+    if (parsePasswordRecoveryCallback(window.location.href)) {
+      try {
+        const recoverySession = await this.authService.completePasswordRecovery(
+          window.location.href,
+        )
+        if (recoverySession) {
+          await this.enterPasswordRecovery(recoverySession)
+          return
+        }
+      } catch (error) {
+        this.recoveryMode = false
+        this.session = null
+        this.currentView = 'login'
+        this.initialAlert = `${errorMessage(error)} Solicite um novo link de recuperação.`
+        window.history.replaceState({}, '', window.location.pathname)
+        this.render()
+        return
+      }
+    }
 
     await this.restoreSession()
   }
@@ -870,8 +1117,12 @@ export class AuthApp {
 
   destroy(): void {
     this.destroyed = true
+    if (this.sessionAlertTimer) clearTimeout(this.sessionAlertTimer)
+    this.sessionAlertTimer = null
     this.stopPaymentPolling()
     this.stopPresenceTracking()
+    this.stopResourceMonitoring()
+    this.stopAdminPaymentAlerts()
     void this.releaseTrackedSessions()
     this.sessionSurfaceManager?.clear()
     this.sessionSurfaceManager = null
@@ -1085,16 +1336,6 @@ export class AuthApp {
       return
     }
 
-    if (event.type === 'stonegy-bot-failed') {
-      this.showSessionAlert(event.detail ?? 'Não foi possível iniciar o AltGrid Bot.')
-      return
-    }
-
-    if (event.type === 'stonegy-bot-ready') {
-      this.showSessionAlert(event.detail ?? 'AltGrid Bot ativo nesta conta.')
-      return
-    }
-
     if (event.type === 'crashed' || event.type === 'load-failed') {
       this.sessionIssues.set(
         event.accountId,
@@ -1190,26 +1431,7 @@ export class AuthApp {
     }
 
     if (event === 'PASSWORD_RECOVERY') {
-      const revision = this.authStateRevision
-      if (
-        this.permissionService.getActiveSessionCount() > 0
-        || this.sessionOpeningInFlight.size > 0
-        || this.sessionReleaseInFlight.size > 0
-      ) {
-        await this.releaseTrackedSessions()
-      }
-
-      if (this.destroyed || revision !== this.authStateRevision) {
-        return
-      }
-
-      this.retrySessionOnReconnect = false
-      this.sessionCheckError = null
-      this.clearAuthenticatedState()
-      this.recoveryMode = true
-      this.session = session
-      this.currentView = 'reset'
-      this.render()
+      await this.enterPasswordRecovery(session)
       return
     }
 
@@ -1274,7 +1496,9 @@ export class AuthApp {
       this.offlineLicenseSource = null
       this.backendLoadInFlight = null
       this.adminAccess = false
+      this.stopAdminPaymentAlerts()
       this.freePlanPromptShown = false
+      this.nicknameOnboarding = false
       this.me = null
       this.games = this.gamePresetService?.getCachedGames() ?? []
       this.gameCatalogError = null
@@ -1287,7 +1511,7 @@ export class AuthApp {
       this.activeDialog = null
       this.dialogAccountId = null
       this.dialogReturnFocus = null
-      this.gridMode = 'auto'
+      this.gridMode = this.readGridModePreference()
       this.workspaceMode = 'account'
       this.gridPageIndex = 0
       this.previousAutoMode = undefined
@@ -1296,21 +1520,32 @@ export class AuthApp {
       this.focusedAccountId = null
       this.sessionIssues.clear()
       this.mutedAccountIds.clear()
+      this.backgroundAccountIds.clear()
+      this.accountProxyStates.clear()
+      this.proxyStateLoadingAccountIds.clear()
+      this.accountExtensionStates.clear()
+      this.extensionStateLoadingAccountIds.clear()
+      this.extensionStatesReady = false
+      this.extensionStateRefreshInFlight = null
       this.permissionService.updateEntitlements(SAFE_FREE_ENTITLEMENTS)
       this.ecoModeEffective = false
       void this.syncEcoMode()
       this.configuredAccounts = this.accountService.list(session.user.id)
+      this.loadSavedGridWorkspaces(session.user.id)
       void this.chatService?.start()
     }
 
     this.session = session
     this.currentView = 'authenticated'
     this.startPresenceTracking(session.user.id)
+    this.startResourceMonitoring()
   }
 
   private clearAuthenticatedState(): void {
     this.stopPresenceTracking()
     this.stopPaymentPolling()
+    this.stopResourceMonitoring()
+    this.stopAdminPaymentAlerts()
     this.backendStateRevision += 1
     void this.releaseTrackedSessions()
     this.backendUserId = null
@@ -1321,6 +1556,7 @@ export class AuthApp {
     this.offlineLicenseSource = null
     this.backendLoadInFlight = null
     this.adminAccess = false
+    this.nicknameOnboarding = false
     this.me = null
     this.games = []
     this.announcements = []
@@ -1335,6 +1571,13 @@ export class AuthApp {
     this.paymentLoading = false
     this.gameCatalogError = null
     this.configuredAccounts = []
+    this.accountExtensionStates.clear()
+    this.extensionStateLoadingAccountIds.clear()
+    this.extensionStatesReady = false
+    this.extensionStateRefreshInFlight = null
+    this.savedGridWorkspaces = []
+    this.selectedGridWorkspaceId = null
+    this.dialogGridWorkspaceId = null
     this.activeDialog = null
     this.dialogError = null
     this.dialogReturnFocus = null
@@ -1348,6 +1591,12 @@ export class AuthApp {
     this.focusedAccountId = null
     this.sessionIssues.clear()
     this.mutedAccountIds.clear()
+    this.backgroundAccountIds.clear()
+    this.resourceUsage = []
+    this.accountProxyStates.clear()
+    this.proxyStateLoadingAccountIds.clear()
+    this.accountExtensionStates.clear()
+    this.extensionStateLoadingAccountIds.clear()
     this.sessionSurfaceManager = null
     this.disconnectWorkspaceObserver()
     this.permissionService.updateEntitlements(SAFE_FREE_ENTITLEMENTS)
@@ -1388,12 +1637,15 @@ export class AuthApp {
   private async refreshPresenceAndMetrics(userId: string): Promise<void> {
     const backendApi = this.backendApi
     if (
-      !backendApi?.sendPresenceHeartbeat
-      || !backendApi.getAppMetrics
-      || this.destroyed
+      this.destroyed
       || this.session?.user.id !== userId
       || !navigator.onLine
     ) {
+      return
+    }
+
+    void this.chatService?.refreshUnread()
+    if (!backendApi?.sendPresenceHeartbeat || !backendApi.getAppMetrics) {
       return
     }
 
@@ -1725,6 +1977,12 @@ export class AuthApp {
       this.adminAccess = adminResult.status === 'fulfilled'
         && adminResult.value !== null
 
+      if (this.adminAccess) {
+        this.startAdminPaymentAlerts()
+      } else {
+        this.stopAdminPaymentAlerts()
+      }
+
       this.backendLoadStatus =
         entitlementsResult.status === 'fulfilled'
         || meResult.status === 'fulfilled'
@@ -1735,6 +1993,12 @@ export class AuthApp {
         : null
       if (
         this.backendLoadStatus === 'ready'
+        && !this.me?.profile.display_name?.trim()
+      ) {
+        this.nicknameOnboarding = true
+        this.activeDialog = 'chat-nickname'
+      } else if (
+        this.backendLoadStatus === 'ready'
         && !this.freePlanPromptShown
         && !this.activeDialog
         && this.permissionService.getCurrentPlan() === 'FREE'
@@ -1743,6 +2007,8 @@ export class AuthApp {
         this.activeDialog = 'plans'
       }
       this.render()
+      void this.refreshAccountProxyStates()
+      void this.refreshAccountExtensionStates()
       void this.syncEcoMode()
         .then(() => {
           if (!this.destroyed && this.session?.user.id === session.user.id) {
@@ -1795,6 +2061,30 @@ export class AuthApp {
         this.render()
       }
     }
+  }
+
+  private async enterPasswordRecovery(session: Session | null): Promise<void> {
+    const revision = this.authStateRevision
+    if (
+      this.permissionService.getActiveSessionCount() > 0
+      || this.sessionOpeningInFlight.size > 0
+      || this.sessionReleaseInFlight.size > 0
+    ) {
+      await this.releaseTrackedSessions()
+    }
+
+    if (this.destroyed || revision !== this.authStateRevision) {
+      return
+    }
+
+    this.retrySessionOnReconnect = false
+    this.sessionCheckError = null
+    this.clearAuthenticatedState()
+    this.recoveryMode = true
+    this.session = session
+    this.currentView = 'reset'
+    window.history.replaceState({}, '', window.location.pathname)
+    this.render()
   }
 
   private async refreshGamePresets(): Promise<void> {
@@ -1851,6 +2141,9 @@ export class AuthApp {
     this.disconnectWorkspaceObserver()
     this.sessionSurfaceManager = null
     const authenticated = this.currentView === 'authenticated'
+    if (!authenticated) {
+      this.workspaceMarkupCache.clear()
+    }
     this.root.innerHTML = `
       <div class="app-frame ${authenticated ? 'app-frame--workspace' : ''} ${this.mobileSessionMode ? 'is-mobile-session' : ''} ${this.screensOnly ? 'is-screens-only' : ''} ${this.ecoModeEffective ? 'is-eco-mode' : ''}">
         <header class="topbar ${authenticated ? 'topbar--workspace' : ''}">
@@ -1888,7 +2181,12 @@ export class AuthApp {
         <main class="${
           this.currentView === 'authenticated' ? 'app-stage' : 'auth-stage'
         }">
-          ${this.renderView()}
+          ${authenticated
+            ? this.renderView()
+            : `<div class="auth-shell auth-shell--${this.currentView}">
+                ${this.renderAuthShowcase()}
+                <div class="auth-panel">${this.renderView()}</div>
+              </div>`}
         </main>
 
         <div data-overlay-region>${this.renderDialog()}</div>
@@ -1926,10 +2224,12 @@ export class AuthApp {
     const toolbar = this.root.querySelector<HTMLElement>('.topbar__workspace-tools')
     const backendRegion = shell.querySelector<HTMLElement>('[data-backend-region]')
     const sidebarRegion = shell.querySelector<HTMLElement>('[data-sidebar-region]')
+    const sidebarToggle = shell.querySelector<HTMLButtonElement>('.sidebar-edge-toggle')
     const mobileNavigationRegion = shell.querySelector<HTMLElement>(
       '[data-mobile-navigation-region]',
     )
     const gridControlsRegion = shell.querySelector<HTMLElement>('[data-grid-controls-region]')
+    const statusbarRegion = shell.querySelector<HTMLElement>('[data-statusbar-region]')
     const chatRegion = shell.querySelector<HTMLElement>('[data-chat-region]')
     const previousChatScroll = this.captureChatScroll(chatRegion)
     const overlayRegion = this.root.querySelector<HTMLElement>('[data-overlay-region]')
@@ -1948,7 +2248,11 @@ export class AuthApp {
     )
 
     if (toolbar) {
-      toolbar.innerHTML = this.renderWorkspaceToolbar()
+      const toolbarMarkup = this.renderWorkspaceToolbar()
+      const toolbarChanged = this.workspaceMarkupChanged('toolbar', toolbarMarkup)
+      if (toolbarChanged) {
+        toolbar.innerHTML = toolbarMarkup
+      }
       const accountScroller = toolbar.querySelector<HTMLElement>('[data-account-tabs-scroll]')
       if (accountScroller) {
         accountScroller.scrollLeft = this.accountOrderChanged
@@ -1963,20 +2267,44 @@ export class AuthApp {
       }
     }
     if (backendRegion) {
-      backendRegion.innerHTML = this.renderBackendStatus()
+      const markup = this.renderBackendStatus()
+      if (this.workspaceMarkupChanged('backend', markup)) {
+        backendRegion.innerHTML = markup
+      }
     }
     if (sidebarRegion) {
-      sidebarRegion.outerHTML = this.renderSidebar()
+      const markup = this.renderSidebar()
+      if (this.workspaceMarkupChanged('sidebar', markup)) {
+        sidebarRegion.outerHTML = markup
+      }
+    }
+    if (sidebarToggle) {
+      sidebarToggle.hidden = !this.sidebarCollapsed
     }
     if (mobileNavigationRegion) {
-      mobileNavigationRegion.outerHTML = this.renderMobileNavigation()
+      const markup = this.renderMobileNavigation()
+      if (this.workspaceMarkupChanged('mobile-navigation', markup)) {
+        mobileNavigationRegion.outerHTML = markup
+      }
     }
     if (gridControlsRegion) {
-      gridControlsRegion.innerHTML = this.renderGridControls()
+      const markup = this.renderGridControls()
+      if (this.workspaceMarkupChanged('grid-controls', markup)) {
+        gridControlsRegion.innerHTML = markup
+      }
+    }
+    if (statusbarRegion) {
+      const markup = this.renderWorkspaceStatusbar()
+      if (this.workspaceMarkupChanged('statusbar', markup)) {
+        statusbarRegion.innerHTML = markup
+      }
     }
     if (chatRegion) {
-      chatRegion.innerHTML = this.renderChat()
-      this.restoreChatScroll(chatRegion, previousChatScroll)
+      const markup = this.renderChat()
+      if (this.workspaceMarkupChanged('chat', markup)) {
+        chatRegion.innerHTML = markup
+        this.restoreChatScroll(chatRegion, previousChatScroll)
+      }
     }
     if (overlayRegion) {
       const signature = this.getDialogSignature()
@@ -2003,6 +2331,14 @@ export class AuthApp {
     if (dialogReplaced && this.activeDialog) {
       this.focusCurrentView()
     }
+    return true
+  }
+
+  private workspaceMarkupChanged(region: string, markup: string): boolean {
+    if (this.workspaceMarkupCache.get(region) === markup) {
+      return false
+    }
+    this.workspaceMarkupCache.set(region, markup)
     return true
   }
 
@@ -2043,6 +2379,10 @@ export class AuthApp {
   private getDialogSignature(): string {
     const dependency = this.activeDialog === 'add-account'
       ? [this.games, this.gameCatalogError]
+      : this.activeDialog === 'grid-manager'
+        ? [this.configuredAccounts, this.savedGridWorkspaces, this.dialogGridWorkspaceId]
+      : this.activeDialog === 'extension'
+        ? [this.extensionConfig, this.extensionLoading, this.extensionSaving]
       : this.activeDialog === 'plans'
         ? [
             this.permissionService.getCurrentPlan(),
@@ -2071,7 +2411,7 @@ export class AuthApp {
                   ? this.me
                 : this.activeDialog === 'referrals'
                   ? [this.referralLoading, this.referralError, this.referralProgram]
-                  : this.activeDialog === 'proxy'
+                  : this.activeDialog === 'proxy' || this.activeDialog === 'copy-proxy'
                     ? [
                         this.proxyConfig,
                         this.proxyLoading,
@@ -2149,7 +2489,7 @@ export class AuthApp {
 
     return plan === 'FOUNDER' && this.me?.founder_number
       ? `FOUNDER #${String(this.me.founder_number).padStart(4, '0')}`
-      : plan
+      : PLAN_PRESENTATION[plan].displayName
   }
 
   private renderSessionLimitSummary(activeSessions: number): string {
@@ -2184,13 +2524,24 @@ export class AuthApp {
         <div class="account-tabs__scroll" id="account-tabs-scroll" data-account-tabs-scroll role="region" aria-label="Contas configuradas" tabindex="0">
           ${this.configuredAccounts.map((account) => {
             const active = this.permissionService.isSessionActive(account.id)
+            const resting = active && this.backgroundAccountIds.has(account.id)
+            const proxyState = this.accountProxyStates.get(account.id)
+            const proxyEnabled = proxyState?.enabled === true
+            const proxyLoading = this.proxyStateLoadingAccountIds.has(account.id)
+            const extensionState = this.accountExtensionStates.get(account.id)
+            const extensionWithinLimit = extensionState
+              ? this.isAccountExtensionWithinLimit(account.id)
+              : true
+            const extensionEnabled = extensionState?.enabled === true && extensionWithinLimit
+            const extensionLoading = this.extensionStateLoadingAccountIds.has(account.id)
             const selected = this.workspaceMode === 'account'
               && active
+              && !resting
               && account.id === this.focusedAccountId
             return `
-              <div class="account-tab-shell ${selected ? 'is-active' : ''} ${active ? 'is-open' : ''} ${account.id === this.reorderedAccountId ? 'is-reordered' : ''}" draggable="${this.mobileSessionMode ? 'false' : 'true'}" data-account-order-id="${escapeHtml(account.id)}">
+              <div class="account-tab-shell ${selected ? 'is-active' : ''} ${active ? 'is-open' : ''} ${resting ? 'is-resting' : ''} ${account.id === this.reorderedAccountId ? 'is-reordered' : ''}" draggable="${this.mobileSessionMode ? 'false' : 'true'}" data-account-order-id="${escapeHtml(account.id)}">
                 <button
-                  class="account-tab ${selected ? 'is-active' : ''} ${active ? 'is-open' : ''}"
+                  class="account-tab ${selected ? 'is-active' : ''} ${active ? 'is-open' : ''} ${resting ? 'is-resting' : ''}"
                   data-account-tab
                   data-account-id="${escapeHtml(account.id)}"
                   type="button"
@@ -2199,11 +2550,18 @@ export class AuthApp {
                   <span class="account-tab__game-icon">${this.renderAccountGameIcon(account)}</span>
                   <span class="account-tab__copy">
                     <strong>${escapeHtml(account.displayName)}</strong>
-                    <small><i class="account-tab__indicator ${active ? 'is-online' : ''}" aria-hidden="true"></i>${escapeHtml(this.gameNameFor(account))} · ${active ? (this.mobileSessionMode ? 'Conectada' : 'Conectado') : (this.mobileSessionMode ? 'Salva' : 'Offline')}</small>
+                    <small><i class="account-tab__indicator ${active ? 'is-online' : ''}" aria-hidden="true"></i>${escapeHtml(this.gameNameFor(account))} · ${resting ? 'Em descanso' : active ? (this.mobileSessionMode ? 'Conectada' : 'Conectado') : (this.mobileSessionMode ? 'Salva' : 'Offline')}</small>
                   </span>
                 </button>
                 ${active
-                  ? `<button class="account-tab__close" data-close-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Fechar sessão ${escapeHtml(account.displayName)}" title="Fechar sessão">×</button>`
+                  ? this.mobileSessionMode
+                    ? `<button class="account-tab__close" data-close-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Fechar sessão ${escapeHtml(account.displayName)}" title="Fechar sessão">×</button>`
+                    : `<div class="account-tab__actions">
+                      ${this.extensionControlAvailable() ? `<button class="account-tab__action account-tab__action--extension ${extensionEnabled ? 'is-active' : ''}" data-extension-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Extensão de ${escapeHtml(account.displayName)}" title="${extensionState && !extensionWithinLimit ? 'Extensão preservada · fora do limite atual' : extensionEnabled ? `${escapeHtml(extensionState?.name ?? 'Extensão')} ativa` : extensionState ? 'Extensão configurada, mas desativada' : 'Configurar extensão por conta'}" ${extensionLoading ? 'disabled' : ''}>${extensionLoading ? '…' : 'E'}</button>` : ''}
+                      ${this.proxyControlAvailable() ? `<button class="account-tab__action account-tab__action--proxy ${proxyEnabled ? 'is-active' : ''}" data-toggle-account-proxy data-account-id="${escapeHtml(account.id)}" type="button" aria-label="${proxyEnabled ? 'Desativar' : proxyState ? 'Ativar' : 'Configurar'} proxy de ${escapeHtml(account.displayName)}" title="${proxyEnabled ? 'Proxy ativo · clique para desativar' : proxyState ? 'Proxy salvo · clique para ativar' : 'Configurar proxy'}" ${proxyLoading ? 'disabled' : ''}>${proxyLoading ? '…' : 'P'}</button>` : ''}
+                      <button class="account-tab__action account-tab__action--rest ${resting ? 'is-active' : ''}" ${resting ? 'data-restore-account' : 'data-background-account'} data-account-id="${escapeHtml(account.id)}" type="button" aria-label="${resting ? 'Restaurar' : 'Colocar em descanso'} ${escapeHtml(account.displayName)}" title="${resting ? 'Em descanso · clique para restaurar' : 'Descansar tela mantendo o jogo ativo'}">${resting ? '<span class="account-tab__play" aria-hidden="true">▶</span>' : uiIcon('moon')}</button>
+                      <button class="account-tab__action account-tab__action--close" data-close-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Fechar sessão ${escapeHtml(account.displayName)}" title="Fechar sessão">${uiIcon('close')}</button>
+                    </div>`
                   : `<button class="account-tab__close" data-delete-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Remover conta ${escapeHtml(account.displayName)}" title="Remover conta">×</button>`}
               </div>
             `
@@ -2260,7 +2618,6 @@ export class AuthApp {
             ${this.renderNotificationCenter()}
           </div>
         ` : `
-          ${this.sidebarCollapsed ? `<button class="header-icon-button sidebar-restore-button" data-toggle-sidebar type="button" aria-label="Mostrar jogos e perfil" title="Mostrar menu lateral">›</button>` : ''}
           <div class="header-view-actions" role="group" aria-label="Visualização">
             <button
               class="header-command-button ${this.workspaceMode === 'grid' ? 'is-active' : ''}"
@@ -2272,19 +2629,8 @@ export class AuthApp {
               ${uiIcon('grid')}
               <span class="header-command-button__copy"><strong>Grades</strong><small>${active} ${active === 1 ? 'aberta' : 'abertas'}</small></span>
             </button>
-            <button class="header-command-button ${this.screensOnly ? 'is-active' : ''}" data-toggle-screens-only type="button" aria-label="Somente telas" aria-pressed="${this.screensOnly}">
-              ${uiIcon('screens')}
-              <span>Somente telas</span>
-            </button>
           </div>
-          <div class="header-utility-actions" role="group" aria-label="Comunicação e preferências">
-            <button class="header-command-button" data-open-rmt type="button" aria-label="Abrir RMT no Discord">
-              <span aria-hidden="true">RMT</span>
-            </button>
-            <button class="header-command-button eco-mode-button ${this.ecoModeEffective ? 'is-active' : ''}" data-toggle-eco-mode type="button" aria-label="${this.ecoModeSupported ? 'Desativar' : 'Eco Mode indisponível'} Eco Mode" aria-pressed="${this.ecoModeEffective}" ${this.ecoModeSupported ? '' : 'disabled'}>
-              ${uiIcon('leaf')}
-              <span>Eco <small>${this.ecoModeEffective ? `ON · ${this.ecoBackgroundFps}` : 'OFF'}</small></span>
-            </button>
+          <div class="header-utility-actions" role="group" aria-label="Notificações">
             ${this.renderNotificationCenter()}
           </div>
         `}
@@ -2370,6 +2716,8 @@ export class AuthApp {
           </button>
         </form>
 
+        ${this.renderGoogleAuthButton()}
+
         <div class="auth-links" aria-label="Outras opções">
           <button class="text-button text-button--strong" data-view="signup" type="button">
             Criar conta
@@ -2385,7 +2733,7 @@ export class AuthApp {
 
   private renderSignup(): string {
     return `
-      <section class="auth-card" aria-labelledby="signup-title">
+      <section class="auth-card auth-card--signup" aria-labelledby="signup-title">
         <div class="auth-card__heading">
           <p class="eyebrow">Nova conta</p>
           <h1 id="signup-title">Criar conta</h1>
@@ -2413,6 +2761,8 @@ export class AuthApp {
             Criar conta
           </button>
         </form>
+
+        ${this.renderGoogleAuthButton('Criar conta com Google')}
 
         <div class="auth-links auth-links--single">
           <button class="text-button" data-view="login" type="button">
@@ -2503,7 +2853,8 @@ export class AuthApp {
   }
 
   private renderGameIcon(game: PublicGame): string {
-    const iconUrl = normalizeSafeGameUrl(game.icon_url)
+    const iconUrl = getBundledGameIconUrl(game.slug)
+      ?? normalizeSafeGameUrl(game.icon_url)
 
     return iconUrl
       ? `<img src="${escapeHtml(iconUrl)}" alt="" loading="lazy" />`
@@ -2524,8 +2875,14 @@ export class AuthApp {
       <aside class="game-sidebar" data-sidebar-region aria-label="Navegação principal">
         <div class="game-sidebar__catalog">
           <div class="sidebar-heading">
-            <p class="sidebar-label">Jogos suportados</p>
-            <button class="sidebar-collapse-button" data-toggle-sidebar type="button" aria-label="Ocultar menu lateral" title="Ocultar menu lateral">‹</button>
+            <div class="sidebar-heading__copy">
+              <span class="sidebar-eyebrow">Biblioteca</span>
+              <div class="sidebar-heading__title">
+                <p class="sidebar-label">Jogos suportados</p>
+                <span class="sidebar-game-count" aria-label="${this.games.length} jogos no catálogo">${this.games.length}</span>
+              </div>
+            </div>
+            <button class="sidebar-collapse-button" data-toggle-sidebar type="button" aria-label="Ocultar painel lateral" title="Ocultar painel lateral">‹</button>
           </div>
           <nav class="game-list" aria-label="Jogos suportados">
             ${visibleGames.length > 0
@@ -2542,11 +2899,11 @@ export class AuthApp {
         </div>
 
         <nav class="sidebar-menu" aria-label="Preferências">
-          ${this.chatService ? `<button data-open-chat type="button" aria-pressed="${this.chatService.getState().open}"><span aria-hidden="true">◉</span> ${this.chatService.getState().open ? 'Fechar chat' : 'Chat'}</button>` : ''}
-          <button data-open-dialog="referrals" type="button"><span aria-hidden="true">✦</span> Indique e ganhe</button>
-          <button data-open-dialog="settings" type="button"><span aria-hidden="true">⚙</span> Configurações</button>
-          <button data-open-dialog="shortcuts" type="button"><span aria-hidden="true">⌨</span> Atalhos</button>
-          <button data-open-dialog="about" type="button"><span aria-hidden="true">ⓘ</span> Sobre o AltGrid</button>
+          <p class="sidebar-menu__label">Conta e preferências</p>
+          <button data-open-dialog="referrals" type="button"><span aria-hidden="true">✦</span><b>Indique e ganhe</b><i aria-hidden="true">›</i></button>
+          <button data-open-dialog="settings" type="button"><span aria-hidden="true">⚙</span><b>Configurações</b><i aria-hidden="true">›</i></button>
+          <button data-open-dialog="shortcuts" type="button"><span aria-hidden="true">⌨</span><b>Atalhos</b><i aria-hidden="true">›</i></button>
+          <button data-open-dialog="about" type="button"><span aria-hidden="true">ⓘ</span><b>Sobre o AltGrid</b><i aria-hidden="true">›</i></button>
         </nav>
 
         <details class="toolbar-menu sidebar-profile-menu" data-toolbar-menu>
@@ -2558,21 +2915,26 @@ export class AuthApp {
           <div class="menu-popover menu-popover--up sidebar-profile-popover" aria-label="Conta e plano">
             <div class="sidebar-profile-popover__identity">
               <span class="profile-avatar">${escapeHtml(this.profileDisplayName().slice(0, 1).toUpperCase())}</span>
-              <div><span class="profile-name-with-plan"><strong>${escapeHtml(this.profileDisplayName())}</strong>${profilePlanBadge}</span><small>Conta AltGrid</small></div>
+              <div>
+                <small>Conta AltGrid</small>
+                <span class="profile-name-with-plan"><strong>${escapeHtml(this.profileDisplayName())}</strong>${profilePlanBadge}</span>
+              </div>
             </div>
             <div class="sidebar-profile-popover__plan">
-              <div class="sidebar-profile-popover__plan-label"><small>Plano atual</small><span class="sidebar-profile-popover__plan-dot"></span></div>
-              <div><strong>${escapeHtml(this.renderPlanName())}</strong><span>${escapeHtml(this.renderSessionLimitSummary(activeSessions))}</span></div>
+              <div class="sidebar-profile-popover__plan-label"><span class="sidebar-profile-popover__plan-dot"></span><small>Plano ativo</small></div>
+              <div class="sidebar-profile-popover__plan-main"><strong>${escapeHtml(this.renderPlanName())}</strong><span>${uiIcon('chevron')}</span></div>
+              <div class="sidebar-profile-popover__usage"><span class="visually-hidden">${escapeHtml(this.renderSessionLimitSummary(activeSessions))}</span><span><b>${activeSessions}</b> ${activeSessions === 1 ? 'sessão aberta' : 'sessões abertas'}</span><span>${escapeHtml(this.renderSessionLimitSummary(activeSessions).split('·').at(-1)?.trim() ?? '')}</span></div>
             </div>
+            <p class="sidebar-profile-popover__section-label">Sua conta</p>
             <div class="sidebar-profile-popover__actions">
-              <button class="menu-item" data-open-dialog="my-plan" type="button"><span><i aria-hidden="true">◆</i>Meu plano</span><b aria-hidden="true">›</b></button>
-              <button class="menu-item" data-open-dialog="referrals" type="button"><span><i aria-hidden="true">✦</i>Indique e ganhe</span><b aria-hidden="true">›</b></button>
-              <button class="menu-item" data-open-dialog="about" type="button"><span><i aria-hidden="true">◎</i>Minha conta</span><b aria-hidden="true">›</b></button>
-              <button class="menu-item" data-open-dialog="settings" type="button"><span><i aria-hidden="true">⚙</i>Configurações</span><b aria-hidden="true">›</b></button>
+              <button class="menu-item" data-open-dialog="my-plan" type="button"><span><i aria-hidden="true">${uiIcon('gauge')}</i><span><b>Meu plano</b><small>Benefícios e limites</small></span></span><b aria-hidden="true">›</b></button>
+              <button class="menu-item" data-open-dialog="referrals" type="button"><span><i aria-hidden="true">${uiIcon('gift')}</i><span><b>Indique e ganhe</b><small>Convites e recompensas</small></span></span><b aria-hidden="true">›</b></button>
+              <button class="menu-item" data-open-dialog="about" type="button"><span><i aria-hidden="true">${uiIcon('user')}</i><span><b>Minha conta</b><small>Perfil e informações</small></span></span><b aria-hidden="true">›</b></button>
+              <button class="menu-item" data-open-dialog="settings" type="button"><span><i aria-hidden="true">${uiIcon('settings')}</i><span><b>Configurações</b><small>Preferências do aplicativo</small></span></span><b aria-hidden="true">›</b></button>
             </div>
             <div class="sidebar-profile-popover__footer-actions">
-              ${this.adminAccess ? '<a class="menu-item" href="/admin"><span><i aria-hidden="true">▣</i>Painel administrativo</span><b aria-hidden="true">↗</b></a>' : ''}
-              <button class="menu-item menu-item--danger" id="logout-button" type="button"><span><i aria-hidden="true">↪</i>Sair</span></button>
+              ${this.adminAccess ? `<a class="menu-item sidebar-profile-popover__admin" href="/admin"><span><i aria-hidden="true">${uiIcon('grid')}</i><span><b>Painel administrativo</b><small>Gerenciar o AltGrid</small></span></span>${uiIcon('external')}</a>` : ''}
+              <button class="menu-item menu-item--danger" id="logout-button" type="button"><span><i aria-hidden="true">${uiIcon('power')}</i><span><b>Sair da conta</b><small>Encerrar esta sessão</small></span></span></button>
             </div>
           </div>
         </details>
@@ -2581,7 +2943,12 @@ export class AuthApp {
   }
 
   private renderMobileNavigation(): string {
-    const chatOpen = Boolean(this.chatService?.getState().open)
+    const chatState = this.chatService?.getState()
+    const chatOpen = Boolean(chatState?.open)
+    const chatUnread = Object.values(chatState?.unread ?? {}).reduce(
+      (total, count) => total + Math.max(0, count),
+      0,
+    )
     const profilePlanBadge = renderPlanBadge(
       this.permissionService.getCurrentPlan(),
       this.me?.founder_number ?? null,
@@ -2602,9 +2969,10 @@ export class AuthApp {
           <span>Adicionar</span>
         </button>
         ${this.chatService ? `
-          <button class="mobile-navigation__item ${chatOpen ? 'is-active' : ''}" data-open-chat type="button" aria-pressed="${chatOpen}">
+          <button class="mobile-navigation__item ${chatOpen ? 'is-active' : ''}" data-open-chat type="button" aria-label="${chatOpen ? 'Fechar chat' : 'Abrir chat'}${chatUnread ? `, ${chatUnread} ${chatUnread === 1 ? 'mensagem não lida' : 'mensagens não lidas'}` : ''}" aria-pressed="${chatOpen}">
             ${uiIcon('chat')}
             <span>Chat</span>
+            ${chatUnread ? `<b class="chat-unread-badge" aria-hidden="true">${Math.min(chatUnread, 99)}</b>` : ''}
           </button>
         ` : `
           <button class="mobile-navigation__item" data-open-dialog="my-plan" type="button">
@@ -2640,6 +3008,16 @@ export class AuthApp {
 
     const modes = this.gridLayoutService.listModes().map((item) => {
       const selected = item.mode === this.gridMode
+      const capacities: Partial<Record<GridMode, number>> = {
+        '1x1': 1,
+        '1x2': 2,
+        '2x1': 2,
+        '2x2': 4,
+        '3x2': 6,
+        '3x3': 9,
+        '4x4': 16,
+      }
+      const capacity = capacities[item.mode]
       return `<button
         class="menu-item ${selected ? 'is-selected' : ''}"
         data-grid-mode="${item.mode}"
@@ -2648,20 +3026,111 @@ export class AuthApp {
         aria-checked="${selected}"
         ${item.available ? '' : 'data-grid-locked="true"'}
       >
-        <span>${item.mode === 'auto' ? 'Auto' : item.mode}</span>
+        <span class="grid-mode-option"><b>${item.mode === 'auto' ? 'Automático' : item.mode}</b><small>${capacity ? `${capacity} ${capacity === 1 ? 'conta' : 'contas'} por página` : 'Ajusta conforme as contas'}</small></span>
         ${item.available ? (selected ? '<span aria-hidden="true">✓</span>' : '') : '<span class="menu-lock">PRO</span>'}
       </button>`
     }).join('')
 
+    const activeIds = new Set(this.getActiveAccounts().map((account) => account.id))
+    const workspaceTabs = this.savedGridWorkspaces.map((grid) => {
+      const selected = grid.id === this.selectedGridWorkspaceId
+      const openCount = grid.accountIds.filter((id) => activeIds.has(id)).length
+      return `<span class="grid-workspace-tab ${selected ? 'is-active' : ''}">
+        <button data-select-grid-workspace="${escapeHtml(grid.id)}" type="button" aria-pressed="${selected}"><strong>${escapeHtml(grid.name)}</strong><small>${openCount}/${grid.accountIds.length}</small></button>
+        <button data-edit-grid-workspace="${escapeHtml(grid.id)}" type="button" aria-label="Editar ${escapeHtml(grid.name)}" title="Editar grade">•••</button>
+      </span>`
+    }).join('')
+
     return `
       <div class="workspace-modebar">
-        <span><b aria-hidden="true">▦</b> Organizar telas</span>
+        <span class="workspace-modebar__title"><b aria-hidden="true">▦</b> Organizar telas</span>
+        <div class="grid-workspace-tabs" aria-label="Grades salvas">
+          <button class="grid-workspace-all ${this.selectedGridWorkspaceId === null ? 'is-active' : ''}" data-select-grid-workspace="" type="button" aria-pressed="${this.selectedGridWorkspaceId === null}"><strong>Todas</strong><small>${activeIds.size}</small></button>
+          ${workspaceTabs}
+          <button class="grid-workspace-add" data-create-grid-workspace type="button" aria-label="Criar nova grade" title="Criar nova grade">＋ Nova grade</button>
+        </div>
+        <span class="workspace-modebar__page" data-grid-page-summary>Página 1 · preparando</span>
         <details class="toolbar-menu" data-toolbar-menu>
           <summary class="tool-button" aria-label="Escolher layout">Layout <small data-grid-mode-label>${this.gridMode === 'auto' ? 'Auto' : this.gridMode}</small></summary>
           <div class="menu-popover menu-popover--grid" role="menu" aria-label="Layouts de sessão">${modes}</div>
         </details>
       </div>
     `
+  }
+
+  private renderGoogleAuthButton(label = 'Continuar com Google'): string {
+    return `
+      <div class="auth-provider">
+        <div class="auth-provider__divider"><span>ou</span></div>
+        <button class="button button--google" data-google-auth type="button">
+          <span class="google-mark" aria-hidden="true">G</span>
+          <span>${label}</span>
+        </button>
+      </div>
+    `
+  }
+
+  private readGridModePreference(): GridMode {
+    try {
+      const stored = localStorage.getItem(GRID_MODE_STORAGE_KEY)
+      return stored && (GRID_MODES as readonly string[]).includes(stored)
+        ? stored as GridMode
+        : 'auto'
+    } catch {
+      return 'auto'
+    }
+  }
+
+  private storeGridModePreference(mode: GridMode): void {
+    try {
+      localStorage.setItem(GRID_MODE_STORAGE_KEY, mode)
+    } catch {
+      // The selected layout remains active for the current run.
+    }
+  }
+
+  private loadSavedGridWorkspaces(userId: string): void {
+    this.savedGridWorkspaces = this.gridWorkspaceService.list(
+      userId,
+      this.configuredAccounts.map((account) => account.id),
+    )
+    try {
+      const selected = localStorage.getItem(`${SELECTED_GRID_STORAGE_KEY}:${userId}`)
+      this.selectedGridWorkspaceId = selected
+        && this.savedGridWorkspaces.some((grid) => grid.id === selected)
+        ? selected
+        : null
+    } catch { this.selectedGridWorkspaceId = null }
+  }
+
+  private selectGridWorkspace(gridId: string | null): void {
+    const userId = this.session?.user.id
+    this.selectedGridWorkspaceId = gridId
+      && this.savedGridWorkspaces.some((grid) => grid.id === gridId)
+      ? gridId
+      : null
+    this.gridPageIndex = 0
+    this.maximizedAccountId = null
+    if (userId) {
+      try {
+        const key = `${SELECTED_GRID_STORAGE_KEY}:${userId}`
+        if (this.selectedGridWorkspaceId) localStorage.setItem(key, this.selectedGridWorkspaceId)
+        else localStorage.removeItem(key)
+      } catch { /* selection remains active during this run */ }
+    }
+  }
+
+  private selectedGridWorkspace(): SavedGridWorkspace | null {
+    return this.savedGridWorkspaces.find((grid) => grid.id === this.selectedGridWorkspaceId) ?? null
+  }
+
+  private getGridVisibleAccounts(): ConfiguredAccount[] {
+    const active = this.getActiveAccounts()
+    if (this.workspaceMode !== 'grid' || !this.selectedGridWorkspaceId) return active
+    const selected = this.selectedGridWorkspace()
+    if (!selected) return active
+    const accountIds = new Set(selected.accountIds)
+    return active.filter((account) => accountIds.has(account.id))
   }
 
   private configFlag(key: string): boolean {
@@ -2743,6 +3212,65 @@ export class AuthApp {
     return this.sessionFrameRates.get(accountId) ?? 0
   }
 
+  private renderAuthShowcase(): string {
+    return `
+      <aside class="auth-showcase" aria-label="Conheça o AltGrid">
+        <div class="auth-showcase__glow" aria-hidden="true"></div>
+        <div class="auth-showcase__brand">
+          <span class="auth-showcase__logo"><img src="${altgridLogoUrl}" alt="" /></span>
+          <span><small>SEU HUB DE JOGOS IDLE</small><strong>AltGrid</strong></span>
+        </div>
+        <div class="auth-showcase__content">
+          <span class="auth-showcase__pill"><i aria-hidden="true"></i> Tudo em um só lugar</span>
+          <h2>Suas contas.<br /><em>Seu ritmo.</em></h2>
+          <p>Organize múltiplas sessões, acompanhe seus jogos e mantenha o controle em qualquer tela.</p>
+          <div class="auth-showcase__features" aria-label="Recursos principais">
+            <span><b aria-hidden="true">▦</b><small>Multissessão</small><strong>Contas organizadas</strong></span>
+            <span><b aria-hidden="true">◇</b><small>Experiência</small><strong>Desktop e Android</strong></span>
+            <span><b aria-hidden="true">⌁</b><small>Privacidade</small><strong>Sessões isoladas</strong></span>
+          </div>
+        </div>
+        <div class="auth-showcase__footer">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>Serviços AltGrid protegidos e online</span>
+        </div>
+      </aside>
+    `
+  }
+
+  private syncAccountTabsForGridPage(visibleAccountIds: readonly string[]): void {
+    const filterToCurrentPage = this.workspaceMode === 'grid'
+    const visible = new Set(visibleAccountIds)
+    this.root
+      .querySelectorAll<HTMLElement>('[data-account-order-id]')
+      .forEach((tab) => {
+        const accountId = tab.dataset.accountOrderId
+        tab.hidden = filterToCurrentPage && (!accountId || !visible.has(accountId))
+      })
+
+    const scroller = this.root.querySelector<HTMLElement>('[data-account-tabs-scroll]')
+    if (scroller && filterToCurrentPage) scroller.scrollLeft = 0
+    queueMicrotask(() => this.updateAccountTabNavigation())
+  }
+
+  private updateAccountTabNavigation(): void {
+    const accountScroller = this.root.querySelector<HTMLElement>('[data-account-tabs-scroll]')
+    const previous = this.root.querySelector<HTMLButtonElement>('[data-scroll-accounts="previous"]')
+    const next = this.root.querySelector<HTMLButtonElement>('[data-scroll-accounts="next"]')
+    if (!accountScroller) return
+
+    const overflow = accountScroller.scrollWidth > accountScroller.clientWidth + 2
+    if (previous) {
+      previous.hidden = !overflow
+      previous.disabled = accountScroller.scrollLeft <= 1
+    }
+    if (next) {
+      next.hidden = !overflow
+      next.disabled = accountScroller.scrollLeft + accountScroller.clientWidth
+        >= accountScroller.scrollWidth - 1
+    }
+  }
+
   private readSessionInterfaceScalePreferences(): Map<string, number> {
     try {
       const parsed = JSON.parse(
@@ -2796,13 +3324,22 @@ export class AuthApp {
           target,
           this.ecoBackgroundFps,
         )
-        this.ecoModeEffective = confirmed === target
+        this.ecoModeEffective = confirmed
       })
 
     this.ecoModeOperation = operation.catch(() => {
       this.ecoModeEffective = false
     })
     return operation
+  }
+
+  private async syncEcoModeWithRetry(): Promise<void> {
+    try {
+      await this.syncEcoMode()
+    } catch {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 140))
+      await this.syncEcoMode()
+    }
   }
 
   private async updateEcoModePreference(
@@ -2815,7 +3352,7 @@ export class AuthApp {
     input.disabled = true
 
     try {
-      await this.syncEcoMode()
+      await this.syncEcoModeWithRetry()
       if (this.ecoModeEffective !== enabled) {
         throw new Error('Eco Mode indisponível')
       }
@@ -2840,7 +3377,7 @@ export class AuthApp {
     input.disabled = true
 
     try {
-      await this.syncEcoMode()
+      await this.syncEcoModeWithRetry()
       this.showSessionAlert('')
     } catch {
       this.ecoBackgroundFps = previous
@@ -2909,6 +3446,13 @@ export class AuthApp {
   }
 
   private requiresMinimumVersion(): boolean {
+    // The server's minimum_version policy targets the Windows desktop release.
+    // Android uses its own APK update channel and must never be blocked by a
+    // desktop version number.
+    if (this.mobileSessionMode) {
+      return false
+    }
+
     const minimumVersion = this.configText('minimum_version')
     return minimumVersion !== null
       && compareVersions(APP_VERSION, minimumVersion) === -1
@@ -2947,6 +3491,9 @@ export class AuthApp {
     if (channel?.type === 'global') {
       return uiIcon('globe')
     }
+    if (channel?.type === 'direct') {
+      return uiIcon('user')
+    }
 
     const game = this.gameForChatChannel(channel)
     return game ? this.renderGameIcon(game) : uiIcon('chat')
@@ -2954,12 +3501,13 @@ export class AuthApp {
 
   private visibleChatChannels(channels: ChatState['channels']): ChatState['channels'] {
     const global = channels.filter((channel) => channel.type === 'global')
-    const games = channels.filter((channel) => channel.type !== 'global')
+    const directs = channels.filter((channel) => channel.type === 'direct')
+    const games = channels.filter((channel) => channel.type === 'game')
       .filter((channel) => (
         this.selectedChatGameChannelIds === null
         || this.selectedChatGameChannelIds.has(channel.id)
       ))
-    return [...global, ...games]
+    return [...global, ...directs, ...games]
   }
 
   private readChatGameSelection(channels: ChatState['channels']): void {
@@ -2973,10 +3521,10 @@ export class AuthApp {
       )
       this.selectedChatGameChannelIds = Array.isArray(stored)
         ? new Set(stored.filter((id): id is string => typeof id === 'string'))
-        : new Set(channels.filter((channel) => channel.type !== 'global').map((channel) => channel.id))
+        : new Set(channels.filter((channel) => channel.type === 'game').map((channel) => channel.id))
     } catch {
       this.selectedChatGameChannelIds = new Set(
-        channels.filter((channel) => channel.type !== 'global').map((channel) => channel.id),
+        channels.filter((channel) => channel.type === 'game').map((channel) => channel.id),
       )
     }
   }
@@ -3027,6 +3575,7 @@ export class AuthApp {
             ${own ? '' : `<details class="chat-message__menu">
               <summary aria-label="Opções da mensagem">•••</summary>
               <div>
+                ${channel?.type === 'direct' ? '' : `<button data-direct-chat-user="${escapeHtml(message.user_id)}" type="button">Mensagem direta</button>`}
                 <button data-report-chat-message="${escapeHtml(message.id)}" type="button">Denunciar</button>
                 <button data-block-chat-user="${escapeHtml(message.user_id)}" type="button">Bloquear localmente</button>
               </div>
@@ -3063,7 +3612,7 @@ export class AuthApp {
         <header class="chat-panel__header">
           <div class="chat-panel__identity">
             <span class="chat-panel__game-icon">${this.renderChatChannelIcon(currentChannel)}</span>
-            <div><strong>Chat</strong><small>${escapeHtml(currentChannel?.name ?? 'AltGrid')}</small>${communityStats}</div>
+            <div><strong>${currentChannel?.type === 'direct' ? 'Mensagem direta' : 'Chat'}</strong><small>${escapeHtml(currentChannel?.name ?? 'AltGrid')}</small>${communityStats}</div>
           </div>
           <button data-close-chat type="button" aria-label="Fechar chat">×</button>
         </header>
@@ -3082,7 +3631,7 @@ export class AuthApp {
         <details class="chat-channel-picker">
           <summary>Selecionar chats</summary>
           <div class="chat-channel-picker__menu">
-            ${state.channels.filter((channel) => channel.type !== 'global').map((channel) => `
+            ${state.channels.filter((channel) => channel.type === 'game').map((channel) => `
               <label>
                 <input type="checkbox" data-chat-game-toggle="${escapeHtml(channel.id)}" ${this.selectedChatGameChannelIds?.has(channel.id) ? 'checked' : ''} />
                 <span class="chat-channel__icon">${this.renderChatChannelIcon(channel)}</span>
@@ -3097,14 +3646,14 @@ export class AuthApp {
             ? '<span class="chat-loading"><i class="spinner spinner--green"></i> Carregando conversa…</span>'
             : state.messages.length > 0
               ? state.messages.map((message) => this.renderChatMessage(message, currentChannel)).join('')
-              : '<p class="chat-empty">Seja a primeira pessoa a conversar por aqui.</p>'}
+              : `<p class="chat-empty">${currentChannel?.type === 'direct' ? `Envie uma mensagem privada para ${escapeHtml(currentChannel.name)}.` : 'Seja a primeira pessoa a conversar por aqui.'}</p>`}
         </div>
         ${state.banned || state.mutedUntil
           ? `<p class="chat-moderation">${state.banned ? 'Seu acesso ao chat está bloqueado.' : `Silenciado até ${escapeHtml(formatDate(state.mutedUntil))}.`} ${escapeHtml(state.moderationReason ?? '')}</p>`
           : ''}
         ${state.error ? `<p class="chat-error" role="alert">${escapeHtml(state.error)}</p>` : ''}
         <form class="chat-composer" id="chat-form">
-          <textarea name="message" maxlength="500" rows="2" placeholder="Escreva uma mensagem…" aria-label="Mensagem" ${state.banned ? 'disabled' : ''}></textarea>
+          <textarea name="message" maxlength="500" rows="2" placeholder="${currentChannel?.type === 'direct' ? `Mensagem para ${escapeHtml(currentChannel.name)}…` : 'Escreva uma mensagem…'}" aria-label="Mensagem" ${state.banned ? 'disabled' : ''}></textarea>
           <button type="submit" aria-label="Enviar mensagem" ${state.sending || state.banned ? 'disabled' : ''}>➤</button>
         </form>
       </aside>
@@ -3118,12 +3667,16 @@ export class AuthApp {
 
     this.chatNicknameSaving = true
     this.dialogError = null
+    const openChatAfterSave = !this.nicknameOnboarding
     this.render()
     try {
       const response = await this.backendApi.updateProfile({ display_name: field.value })
       if (this.me) this.me = { ...this.me, profile: response.profile }
+      this.nicknameOnboarding = false
       this.activeDialog = null
-      await this.chatService?.open(this.focusedGameId())
+      if (openChatAfterSave) {
+        await this.chatService?.open(this.focusedGameId())
+      }
     } catch (error) {
       this.dialogError = error instanceof Error ? error.message : 'Não foi possível salvar o nick.'
     } finally {
@@ -3138,9 +3691,10 @@ export class AuthApp {
     const chatOpen = Boolean(this.chatService?.getState().open)
 
     return `
-      <section class="session-shell ${this.mobileSessionMode ? 'is-mobile-session' : ''} ${chatOpen ? 'has-chat-open' : ''} ${this.sidebarCollapsed ? 'is-sidebar-collapsed' : ''}" data-authenticated-shell data-user-id="${userId}" aria-labelledby="accounts-title">
+      <section class="session-shell ${this.mobileSessionMode ? 'is-mobile-session' : ''} ${chatOpen ? 'has-chat-open' : ''} ${this.sidebarCollapsed ? 'is-sidebar-collapsed' : ''} ${this.utilityBarCollapsed ? 'is-utility-collapsed' : ''}" data-authenticated-shell data-user-id="${userId}" aria-labelledby="accounts-title">
         <h1 class="visually-hidden" id="accounts-title">Minhas contas e sessões</h1>
         ${this.mobileSessionMode ? '' : this.renderSidebar()}
+        ${this.mobileSessionMode ? '' : `<button class="sidebar-edge-toggle" data-toggle-sidebar type="button" aria-label="Mostrar painel lateral" title="Mostrar painel lateral" ${this.sidebarCollapsed ? '' : 'hidden'}>›</button>`}
         <div class="workspace-column">
           <div class="backend-region" data-backend-region>${this.renderBackendStatus()}</div>
           <div data-grid-controls-region>${this.renderGridControls()}</div>
@@ -3154,11 +3708,22 @@ export class AuthApp {
               <button data-grid-page="next" type="button" aria-label="Próxima página">›</button>
             </nav>
             <div class="session-empty" data-session-empty ${activeAccounts.length > 0 ? 'hidden' : ''}>
-              <span aria-hidden="true">▦</span>
-              <p><strong>Nenhuma conta aberta</strong><small>Adicione uma conta para começar.</small></p>
-              <button class="button button--primary" data-add-account type="button">＋ Adicionar conta</button>
+              <div class="session-empty__glow" aria-hidden="true"></div>
+              <div class="session-empty__hero">
+                <span class="session-empty__mark" aria-hidden="true"><img src="${altgridLogoUrl}" alt="" /></span>
+                <span class="session-empty__eyebrow"><i></i> CENTRAL PRONTA</span>
+                <h2>Seu grid começa aqui</h2>
+                <p>Abra suas contas em ambientes isolados e organize tudo em uma única central.</p>
+                <button class="button button--primary session-empty__action" data-add-account type="button">${uiIcon('add')} Adicionar primeira conta</button>
+              </div>
+              <div class="session-empty__features" aria-label="Recursos de desempenho">
+                <span>${uiIcon('cpu')}<b>FPS adaptativo</b><small>Prioridade para a tela em uso</small></span>
+                <span>${uiIcon('memory')}<b>Memória monitorada</b><small>Consumo visível em tempo real</small></span>
+                <span>${uiIcon('leaf')}<b>Eco inteligente</b><small>Sessões ocultas mais leves</small></span>
+              </div>
             </div>
           </div>
+          <div data-statusbar-region>${this.renderWorkspaceStatusbar()}</div>
         </div>
         <div data-chat-region>${this.renderChat()}</div>
         ${this.mobileSessionMode ? this.renderMobileNavigation() : ''}
@@ -3251,6 +3816,7 @@ export class AuthApp {
 
   private renderSessionCard(account: ConfiguredAccount): string {
     const muted = this.mutedAccountIds.has(account.id)
+    const resting = this.backgroundAccountIds.has(account.id)
     const frameRate = this.sessionFrameRateFor(account.id)
     const interfaceScale = this.sessionInterfaceScaleFor(account.id)
     const mobileFullscreen = this.mobileSessionMode
@@ -3258,7 +3824,7 @@ export class AuthApp {
       && this.maximizedAccountId === account.id
 
     return `
-      <article class="session-card" data-session-card data-account-id="${escapeHtml(account.id)}">
+      <article class="session-card ${resting ? 'is-resting' : ''}" data-session-card data-account-id="${escapeHtml(account.id)}">
         <header class="session-card__header">
           <div class="session-card__identity">
             <strong data-session-name>${escapeHtml(account.displayName)}</strong>
@@ -3266,27 +3832,56 @@ export class AuthApp {
           </div>
           <details class="session-menu" data-session-menu>
             <summary class="session-menu__trigger" aria-label="Opções de ${escapeHtml(account.displayName)}">⋯</summary>
-            <div class="menu-popover" role="menu">
-              <button class="menu-item" data-rename-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Renomear</button>
-              <button class="menu-item" data-reload-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Recarregar</button>
-              <button class="menu-item" data-maximize-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">${this.mobileSessionMode ? (mobileFullscreen ? 'Sair da tela cheia' : 'Tela cheia · zoom automático') : 'Maximizar'}</button>
-              <button class="menu-item" data-toggle-session-mute data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">${muted ? 'Ativar som' : 'Silenciar'}</button>
-              ${this.renderStonegyBotMenuItem(account)}
-              ${this.proxyControlAvailable() ? `<button class="menu-item" data-proxy-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Proxy exclusivo</button>` : ''}
-              ${this.frameRateControlSupported ? `<label class="menu-item menu-item--field">
-                <span>FPS desta conta<small>0 ou vazio = Auto</small></span>
-                <input data-session-frame-rate data-account-id="${escapeHtml(account.id)}" type="number" inputmode="numeric" min="0" max="240" step="1" value="${frameRate === 0 ? '' : frameRate}" placeholder="Auto" aria-label="FPS de ${escapeHtml(account.displayName)}" />
-              </label>` : ''}
-              ${this.interfaceScaleControlSupported ? `<label class="menu-item menu-item--field">
-                <span>Escala da interface<small>Menor mostra mais itens do HUD</small></span>
-                <select data-session-interface-scale data-account-id="${escapeHtml(account.id)}" aria-label="Escala da interface de ${escapeHtml(account.displayName)}">
-                  <option value="" ${interfaceScale === null ? 'selected' : ''}>Automático</option>
-                  ${[50, 55, 60, 67, 75, 80, 90, 100].map((percent) => `<option value="${percent}" ${interfaceScale === percent / 100 ? 'selected' : ''}>${percent}%</option>`).join('')}
-                </select>
-              </label>` : ''}
-              <button class="menu-item" data-close-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Fechar</button>
-              <button class="menu-item menu-item--danger" data-clear-session-data data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Limpar dados</button>
-              <button class="menu-item menu-item--danger" data-delete-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Excluir configuração</button>
+            <div class="menu-popover session-menu__popover" role="menu">
+              <header class="session-menu__heading">
+                <span>${this.renderAccountGameIcon(account)}</span>
+                <div><strong>${escapeHtml(account.displayName)}</strong><small>${escapeHtml(this.gameNameFor(account))} · ${resting ? 'Em descanso' : 'Conectado'}</small></div>
+              </header>
+
+              <section class="session-menu__group" aria-label="Ações da tela">
+                <span class="session-menu__label">Tela</span>
+                <div class="session-menu__action-grid">
+                  <button class="session-menu__action" data-reload-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem"><i>${uiIcon('refresh')}</i><span>Recarregar</span></button>
+                  <button class="session-menu__action" data-maximize-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem"><i>${uiIcon('screens')}</i><span>${this.mobileSessionMode ? (mobileFullscreen ? 'Sair da tela cheia' : 'Tela cheia · zoom automático') : 'Maximizar'}</span></button>
+                  <button class="session-menu__action ${muted ? 'is-active' : ''}" data-toggle-session-mute data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem"><i>${uiIcon('volume')}</i><span>${muted ? 'Ativar som' : 'Silenciar'}</span></button>
+                  ${this.mobileSessionMode ? '' : `<button class="session-menu__action ${resting ? 'is-active' : ''}" ${resting ? 'data-restore-account' : 'data-background-account'} data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem"><i>${uiIcon('moon')}</i><span>${resting ? 'Despertar' : 'Descansar'}</span></button>`}
+                </div>
+              </section>
+
+              ${this.frameRateControlSupported || this.interfaceScaleControlSupported ? `<section class="session-menu__group" aria-label="Desempenho">
+                <span class="session-menu__label">Desempenho</span>
+                <div class="session-menu__controls">
+                  ${this.frameRateControlSupported ? `<label class="session-menu__control">
+                    <span><i>${uiIcon('gauge')}</i><b>FPS</b><small>Vazio = Auto</small></span>
+                    <input data-session-frame-rate data-account-id="${escapeHtml(account.id)}" type="number" inputmode="numeric" min="0" max="240" step="1" value="${frameRate === 0 ? '' : frameRate}" placeholder="Auto" aria-label="FPS de ${escapeHtml(account.displayName)}" />
+                  </label>` : ''}
+                  ${this.interfaceScaleControlSupported ? `<label class="session-menu__control">
+                    <span><i>${uiIcon('screens')}</i><b>Interface</b><small>Mais espaço no HUD</small></span>
+                    <select data-session-interface-scale data-account-id="${escapeHtml(account.id)}" aria-label="Escala da interface de ${escapeHtml(account.displayName)}">
+                      <option value="" ${interfaceScale === null ? 'selected' : ''}>Automático</option>
+                      ${[50, 55, 60, 67, 75, 80, 90, 100].map((percent) => `<option value="${percent}" ${interfaceScale === percent / 100 ? 'selected' : ''}>${percent}%</option>`).join('')}
+                    </select>
+                  </label>` : ''}
+                </div>
+              </section>` : ''}
+
+              <section class="session-menu__group" aria-label="Configuração da conta">
+                <span class="session-menu__label">Conta</span>
+                <div class="session-menu__account-grid">
+                  <button class="session-menu__row" data-rename-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem"><i>${uiIcon('edit')}</i><span>Renomear</span></button>
+                  ${this.proxyControlAvailable() ? `<button class="session-menu__row" data-copy-proxy-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem"><i>${uiIcon('copy')}</i><span>Copiar proxy</span></button>` : ''}
+                  ${this.extensionControlAvailable() ? `<button class="session-menu__row" data-extension-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem"><i>${uiIcon('puzzle')}</i><span>Extensão</span></button>` : ''}
+                  ${this.proxyControlAvailable() ? `<button class="session-menu__row" data-proxy-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem"><i>${uiIcon('route')}</i><span>Proxy</span></button>` : ''}
+                </div>
+              </section>
+
+              <footer class="session-menu__footer">
+                <button class="session-menu__close" data-close-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem"><i>${uiIcon('power')}</i><span>Fechar sessão</span></button>
+                <div>
+                  <button class="session-menu__danger" data-clear-session-data data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem"><i>${uiIcon('trash')}</i><span>Limpar dados</span></button>
+                  <button class="session-menu__danger" data-delete-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem"><i>${uiIcon('trash')}</i><span>Excluir conta</span></button>
+                </div>
+              </footer>
             </div>
           </details>
         </header>
@@ -3294,6 +3889,98 @@ export class AuthApp {
           ${this.renderSessionSurfaceContent(account)}
         </div>
       </article>
+    `
+  }
+
+  private utilityRestTargets(): ConfiguredAccount[] {
+    const activeAccounts = this.getActiveAccounts()
+
+    if (this.workspaceMode === 'grid' && !this.maximizedAccountId) {
+      return this.getGridVisibleAccounts()
+    }
+
+    const targetId = this.maximizedAccountId ?? this.focusedAccountId
+    const target = activeAccounts.find((account) => account.id === targetId)
+      ?? activeAccounts[0]
+    return target ? [target] : []
+  }
+
+  private renderWorkspaceUtilityBar(): string {
+    if (this.mobileSessionMode) {
+      return ''
+    }
+
+    const activeAccounts = this.getActiveAccounts()
+    const restTargets = this.utilityRestTargets()
+    const restingCount = activeAccounts.filter(
+      (account) => this.backgroundAccountIds.has(account.id),
+    ).length
+    const wakesTargets = restTargets.length > 0
+      && restTargets.every((account) => this.backgroundAccountIds.has(account.id))
+    const totalPrivateKb = this.resourceUsage.reduce(
+      (total, usage) => total + finiteResourceValue(usage.privateKb),
+      0,
+    )
+    const totalCpu = Math.min(999, this.resourceUsage.reduce(
+      (total, usage) => total + finiteResourceValue(usage.cpuPercent),
+      0,
+    ))
+    const ecoAvailable = this.ecoModeSupported
+      && this.permissionService.canUseFeature('eco_mode')
+    const chatState = this.chatService?.getState()
+    const chatOpen = Boolean(chatState?.open)
+    const chatUnread = Object.values(chatState?.unread ?? {}).reduce(
+      (total, count) => total + Math.max(0, count),
+      0,
+    )
+    const adaptiveEcoFps = activeAccounts.length >= 8
+      ? Math.min(this.ecoBackgroundFps, 5)
+      : activeAccounts.length >= 4
+        ? Math.min(this.ecoBackgroundFps, 10)
+        : this.ecoBackgroundFps
+
+    return `
+      <section class="workspace-utility" aria-label="Central de desempenho" data-workspace-utility>
+        <div class="workspace-utility__metrics" aria-label="Uso das sessões">
+          <span class="utility-live-dot ${this.resourceUsageLoading ? 'is-loading' : ''}" aria-hidden="true"></span>
+          <span class="utility-metric" title="CPU usada pelos processos das contas">
+            ${uiIcon('cpu')}
+            <span><small>CPU</small><strong data-utility-cpu>${this.resourceUsage.length > 0 ? `${totalCpu.toFixed(totalCpu >= 100 ? 0 : 1)}%` : '—'}</strong></span>
+          </span>
+          <span class="utility-metric" title="Memória privada usada pelas contas">
+            ${uiIcon('memory')}
+            <span><small>RAM</small><strong data-utility-memory>${this.resourceUsage.length > 0 ? escapeHtml(formatMemoryKb(totalPrivateKb)) : '—'}</strong></span>
+          </span>
+          <span class="utility-session-count"><strong>${activeAccounts.length}</strong> ${activeAccounts.length === 1 ? 'sessão' : 'sessões'}${restingCount > 0 ? ` · <b>${restingCount} descansando</b>` : ''}</span>
+          <button class="utility-refresh" data-refresh-resource-usage type="button" aria-label="Atualizar dados de desempenho" title="Atualizar agora" ${this.resourceUsageLoading ? 'disabled' : ''}>${uiIcon('refresh')}</button>
+        </div>
+        <div class="workspace-utility__actions" role="group" aria-label="Utilitários das sessões">
+          <button class="utility-action ${chatOpen ? 'is-active' : ''}" data-open-chat type="button" aria-label="${chatOpen ? 'Fechar chat' : 'Abrir chat'}${chatUnread ? `, ${chatUnread} ${chatUnread === 1 ? 'mensagem não lida' : 'mensagens não lidas'}` : ''}" aria-pressed="${chatOpen}">${uiIcon('chat')}<span>Chat</span>${chatUnread ? `<b class="chat-unread-badge" aria-hidden="true">${Math.min(chatUnread, 99)}</b>` : ''}</button>
+          <button class="utility-action" data-open-rmt type="button" aria-label="Abrir RMT no Discord"><strong>RMT</strong></button>
+          <button class="utility-action ${this.screensOnly ? 'is-active' : ''}" data-toggle-screens-only type="button" aria-label="${this.screensOnly ? 'Sair de Somente telas' : 'Ativar Somente telas'}" aria-pressed="${this.screensOnly}">${uiIcon('screens')}<span>Somente telas</span></button>
+          <button class="utility-action utility-action--rest ${wakesTargets ? 'is-resting' : ''}" data-toggle-workspace-rest type="button" ${restTargets.length > 0 ? '' : 'disabled'} aria-label="${wakesTargets ? 'Despertar' : 'Descansar'} ${this.workspaceMode === 'grid' ? 'contas da grade' : 'conta atual'}">
+            ${uiIcon('moon')}<span>${wakesTargets ? 'Despertar' : 'Descanso'}</span>
+          </button>
+          <div class="utility-eco ${this.ecoModeEffective ? 'is-active' : ''}">
+            <button data-toggle-eco-mode type="button" role="switch" aria-label="${this.ecoModeEffective ? 'Desligar Eco Mode' : 'Ligar Eco Mode'}" aria-checked="${this.ecoModeEffective}" ${ecoAvailable ? '' : 'disabled'}>
+              ${uiIcon('leaf')}<span><small>Eco Mode</small><strong>${this.ecoModeEffective ? 'Ligado' : 'Desligado'}</strong></span><i aria-hidden="true"></i>
+            </button>
+            <label title="Limite adaptativo atual: ${adaptiveEcoFps} FPS nas contas secundárias"><span class="visually-hidden">FPS em segundo plano</span><select data-eco-background-fps ${ecoAvailable ? '' : 'disabled'} aria-label="FPS máximo em segundo plano"><option value="10" ${this.ecoBackgroundFps === 10 ? 'selected' : ''}>Até 10 FPS</option><option value="20" ${this.ecoBackgroundFps === 20 ? 'selected' : ''}>Até 20 FPS</option><option value="30" ${this.ecoBackgroundFps === 30 ? 'selected' : ''}>Até 30 FPS</option></select></label>
+          </div>
+          <button class="utility-collapse-button" data-toggle-utility-bar type="button" aria-label="Ocultar barra de utilitários" title="Ocultar barra de utilitários">⌄</button>
+        </div>
+      </section>
+    `
+  }
+
+  private renderWorkspaceStatusbar(): string {
+    if (this.mobileSessionMode) {
+      return ''
+    }
+
+    return `
+      ${this.renderWorkspaceUtilityBar()}
+      <button class="utility-edge-toggle" data-toggle-utility-bar type="button" aria-label="Mostrar barra de utilitários" title="Mostrar barra de utilitários" ${this.utilityBarCollapsed ? '' : 'hidden'}>⌃</button>
     `
   }
 
@@ -3321,7 +4008,8 @@ export class AuthApp {
                 <summary aria-label="Opções de ${escapeHtml(account.displayName)}">⋯</summary>
                 <div class="menu-popover menu-popover--up" role="menu">
                   <button class="menu-item" data-rename-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Renomear</button>
-                  ${this.renderStonegyBotMenuItem(account)}
+                  ${this.proxyControlAvailable() ? `<button class="menu-item" data-copy-proxy-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Copiar proxy para outra conta</button>` : ''}
+                  ${this.extensionControlAvailable() ? `<button class="menu-item" data-extension-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Extensão desta conta</button>` : ''}
                   ${this.proxyControlAvailable() ? `<button class="menu-item" data-proxy-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Proxy exclusivo</button>` : ''}
                   <button class="menu-item menu-item--danger" data-clear-session-data data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Limpar dados</button>
                   <button class="menu-item menu-item--danger" data-delete-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">Excluir configuração</button>
@@ -3349,6 +4037,18 @@ export class AuthApp {
 
     if (this.mobileSessionMode) {
       return ''
+    }
+
+    if (this.backgroundAccountIds.has(account.id)) {
+      return `
+        <button class="session-rest-screen" data-restore-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Despertar ${escapeHtml(account.displayName)}">
+          <span class="session-rest-screen__moon">${uiIcon('moon')}</span>
+          <span class="session-rest-screen__zzz" aria-hidden="true"><i>Z</i><i>Z</i><i>Z</i></span>
+          <strong>${escapeHtml(account.displayName)}</strong>
+          <small>Continua conectada em segundo plano</small>
+          <b>Despertar tela</b>
+        </button>
+      `
     }
 
     return `
@@ -3420,11 +4120,12 @@ export class AuthApp {
       }
 
       if (card) {
+        const resting = this.backgroundAccountIds.has(account.id)
+        card.classList.toggle('is-resting', resting)
         const name = card.querySelector<HTMLElement>('[data-session-name]')
         const game = card.querySelector<HTMLElement>('[data-session-game]')
         const surface = card.querySelector<HTMLElement>('[data-session-surface-id]')
         const muteButton = card.querySelector<HTMLButtonElement>('[data-toggle-session-mute]')
-        const stonegyBotButton = card.querySelector<HTMLButtonElement>('[data-stonegy-bot-account]')
         const frameRateInput = card.querySelector<HTMLInputElement>('[data-session-frame-rate]')
         const interfaceScaleSelect = card.querySelector<HTMLSelectElement>('[data-session-interface-scale]')
 
@@ -3436,7 +4137,7 @@ export class AuthApp {
         }
         if (surface) {
           const issue = this.sessionIssues.get(account.id)
-          const contentSignature = issue ? `issue:${issue}` : 'ready'
+          const contentSignature = issue ? `issue:${issue}` : resting ? 'resting' : 'ready'
 
           if (surface.dataset.contentSignature !== contentSignature) {
             surface.innerHTML = this.renderSessionSurfaceContent(account)
@@ -3448,12 +4149,6 @@ export class AuthApp {
           muteButton.textContent = this.mutedAccountIds.has(account.id)
             ? 'Ativar som'
             : 'Silenciar'
-        }
-        if (stonegyBotButton) {
-          stonegyBotButton.textContent = stonegyBotMenuLabel(
-            this.permissionService.canUseFeature(STONEGY_BOT_FEATURE),
-            account.stonegyBotEnabled === true,
-          )
         }
         if (frameRateInput && document.activeElement !== frameRateInput) {
           const frameRate = this.sessionFrameRateFor(account.id)
@@ -3549,6 +4244,35 @@ export class AuthApp {
     return operation
   }
 
+  private async openGridManagerDialog(gridId: string | null): Promise<void> {
+    const activeIds = this.getActiveAccounts().map((account) => account.id)
+
+    // Electron native views always sit above the renderer, including <dialog>.
+    // Hide them before showing the grid editor so the game cannot cover the
+    // modal while only its backdrop remains visible.
+    if (activeIds.length > 0) {
+      const hiddenLayout: GridLayout = {
+        capacity: 1,
+        columns: 1,
+        overflowSessionIds: activeIds,
+        pageCount: 1,
+        pageIndex: 0,
+        requestedMode: '1x1',
+        resolvedMode: '1x1',
+        rows: 1,
+        slots: [],
+      }
+
+      await this.enqueueSessionLayout(hiddenLayout).catch(() => undefined)
+    }
+
+    this.dialogGridWorkspaceId = gridId
+    this.dialogError = null
+    this.activeDialog = 'grid-manager'
+    this.lastLayoutSignature = ''
+    this.render()
+  }
+
   private applyWorkspacePresentation(): void {
     if (this.sessionLayoutSuspended) {
       return
@@ -3567,6 +4291,7 @@ export class AuthApp {
     frame.classList.toggle('is-eco-mode', this.ecoModeEffective)
     shell.classList.toggle('is-screens-only', this.screensOnly)
     shell.classList.toggle('is-sidebar-collapsed', this.sidebarCollapsed)
+    shell.classList.toggle('is-utility-collapsed', this.utilityBarCollapsed)
     shell.classList.toggle('has-maximized-session', Boolean(this.maximizedAccountId))
     shell.classList.toggle(
       'is-grid-mode',
@@ -3585,7 +4310,7 @@ export class AuthApp {
         })
     }
 
-    const activeIds = this.getActiveAccounts().map((account) => account.id)
+    const activeIds = this.getGridVisibleAccounts().map((account) => account.id)
     const overlayMenuOpen = Boolean(this.root.querySelector(
       'details[data-session-menu][open], details[data-toolbar-menu][open]',
     ))
@@ -3617,6 +4342,7 @@ export class AuthApp {
 
     if (!resolution.ok) {
       this.gridMode = 'auto'
+      this.storeGridModePreference('auto')
       resolution = this.gridLayoutService.resolve({
         area: { height, width, x: rectangle.x, y: rectangle.y },
         gap: this.screensOnly ? 4 : 10,
@@ -3633,50 +4359,7 @@ export class AuthApp {
       return
     }
 
-    let layout = resolution.layout
-    const viewportRows = layout.rows
-    const scrollingGrid = this.workspaceMode === 'grid' && !this.maximizedAccountId
-    const hasScrollableOverflow = scrollingGrid && layout.pageCount > 1
-
-    if (hasScrollableOverflow) {
-      const rows = Math.max(viewportRows, Math.ceil(layoutIds.length / layout.columns))
-      const verticalGap = this.screensOnly ? 4 : 10
-      const usableWidth = width - verticalGap * (layout.columns - 1)
-      const usableViewportHeight = Math.max(
-        1,
-        height - verticalGap * (viewportRows - 1),
-      )
-      const rowHeight = viewportRows === 1
-        ? Math.max(1, height)
-        : Math.max(1, Math.floor(usableViewportHeight / viewportRows))
-      layout = {
-        ...layout,
-        capacity: layout.columns * rows,
-        overflowSessionIds: [],
-        pageCount: 1,
-        pageIndex: 0,
-        rows,
-        slots: layoutIds.map((sessionId, index) => ({
-          bounds: (() => {
-            const column = index % layout.columns
-            const row = Math.floor(index / layout.columns)
-            const left = Math.round(column * usableWidth / layout.columns)
-            const right = Math.round((column + 1) * usableWidth / layout.columns)
-
-            return {
-              height: rowHeight,
-              width: right - left,
-              x: rectangle.x + left + column * verticalGap,
-              y: rectangle.y + row * (rowHeight + verticalGap),
-            }
-          })(),
-          column: index % layout.columns,
-          index,
-          row: Math.floor(index / layout.columns),
-          sessionId,
-        })),
-      }
-    }
+    const layout = resolution.layout
 
     this.gridPageIndex = layout.pageIndex
     this.resolvedGridMode = layout.resolvedMode
@@ -3686,28 +4369,32 @@ export class AuthApp {
 
     const rows = layout.rows
     const visibleIds = layout.slots.map((slot) => slot.sessionId)
+    this.syncAccountTabsForGridPage(visibleIds)
     grid.style.setProperty('--grid-columns', String(layout.columns))
     grid.style.setProperty('--grid-rows', String(rows))
-    if (scrollingGrid) {
-      const verticalGap = this.screensOnly ? 4 : 10
-      const availableHeight = Math.max(1, height - verticalGap * (viewportRows - 1))
-      const rowHeight = viewportRows === 1
-        ? Math.max(1, height)
-        : Math.max(1, Math.floor(availableHeight / viewportRows))
-      grid.style.setProperty('--grid-row-height', `${rowHeight}px`)
-    } else {
-      grid.style.setProperty('--grid-row-height', '')
-    }
+    grid.style.setProperty('--grid-row-height', '')
     grid.dataset.resolvedGrid = layout.resolvedMode
+    // Opening/closing a native session and reconciling its DOM card happen on
+    // separate async turns. During that short gap, present only surfaces that
+    // are already adopted; the next scheduled layout includes the new card.
+    // This prevents a transient layout race from aborting the whole shell.
+    const adoptedVisibleIds = this.sessionSurfaceManager
+      ? visibleIds.filter((accountId) => this.sessionSurfaceManager!.has(accountId))
+      : []
+    const adoptedMaximizedId = this.maximizedAccountId
+      && this.sessionSurfaceManager?.has(this.maximizedAccountId)
+        ? this.maximizedAccountId
+        : null
     this.sessionSurfaceManager?.applyPresentation({
       layout: `grid-${layout.resolvedMode}`,
-      maximizedAccountId: this.maximizedAccountId,
+      maximizedAccountId: adoptedMaximizedId,
       screensOnly: this.screensOnly,
-      visibleAccountIds: visibleIds,
+      visibleAccountIds: adoptedVisibleIds,
     })
 
     const pagination = shell.querySelector<HTMLElement>('[data-session-pagination]')
     const pageStatus = pagination?.querySelector<HTMLElement>('[data-grid-page-status]')
+    const pageSummary = this.root.querySelector<HTMLElement>('[data-grid-page-summary]')
     const previousPage = pagination?.querySelector<HTMLButtonElement>('[data-grid-page="previous"]')
     const nextPage = pagination?.querySelector<HTMLButtonElement>('[data-grid-page="next"]')
     const paginationVisible = !this.maximizedAccountId
@@ -3717,6 +4404,11 @@ export class AuthApp {
     pagination?.toggleAttribute('hidden', !paginationVisible)
     if (pageStatus) {
       pageStatus.textContent = `${layout.pageIndex + 1}/${layout.pageCount}`
+    }
+    if (pageSummary) {
+      const accountCount = visibleIds.length
+      const gridName = this.selectedGridWorkspace()?.name ?? 'Todas'
+      pageSummary.textContent = `${gridName} · Página ${layout.pageIndex + 1} de ${layout.pageCount} · ${accountCount} ${accountCount === 1 ? 'conta' : 'contas'}`
     }
     if (previousPage) {
       previousPage.disabled = layout.pageIndex === 0
@@ -3744,6 +4436,9 @@ export class AuthApp {
     // Measure the actual surface rectangles after CSS layout. Native WebViews
     // receive content bounds—not the card bounds—so headers and gaps stay clear.
     const slots = (suppressNativeSessions ? [] : layout.slots).flatMap((slot) => {
+      if (this.backgroundAccountIds.has(slot.sessionId)) {
+        return []
+      }
       const surface = this.sessionSurfaceManager?.get(slot.sessionId)?.surface
 
       if (!surface) {
@@ -3751,22 +4446,6 @@ export class AuthApp {
       }
 
       const bounds = surface.getBoundingClientRect()
-      // Only pagination overflow needs this all-or-nothing guard: when every
-      // session already fits on one page, a tiny scroll/rounding difference
-      // must not hide an otherwise-visible account behind the placeholder.
-      if (hasScrollableOverflow) {
-        const fullyInsideViewport = bounds.x >= rectangle.x - 1
-          && bounds.y >= rectangle.y - 1
-          && bounds.x + bounds.width <= rectangle.x + rectangle.width + 1
-          && bounds.y + bounds.height <= rectangle.y + rectangle.height + 1
-
-        // Native WebContentsViews are direct window children and cannot be
-        // clipped by DOM overflow. Keep offscreen rows hidden, then reuse and
-        // reposition the same views as their cards enter the scroll viewport.
-        if (!fullyInsideViewport) {
-          return []
-        }
-      }
       return [{
         bounds: {
           height: bounds.height,
@@ -3829,16 +4508,17 @@ export class AuthApp {
       return `
         <dialog class="modal modal--chat-nickname" id="app-dialog" aria-labelledby="dialog-title">
           <div class="modal__header">
-            <p class="eyebrow">Primeiro acesso ao chat</p>
+            <p class="eyebrow">${this.nicknameOnboarding ? 'CONFIGURE SEU PERFIL' : 'PRIMEIRO ACESSO AO CHAT'}</p>
             <h2 id="dialog-title">Como quer ser chamado?</h2>
-            <p>Escolha um nick para aparecer nas suas mensagens.</p>
+            <p>Este será seu nick no chat e também identificará sua conta no suporte e nas compras.</p>
           </div>
+          ${this.renderDialogError()}
           <form class="chat-nickname-form" data-chat-nickname-form>
             <label for="chat-nickname">Nick</label>
             <input id="chat-nickname" name="display_name" minlength="2" maxlength="24" autocomplete="nickname" placeholder="Seu nick" required />
             <small>Use de 2 a 24 caracteres.</small>
             <div class="modal__actions">
-              <button class="button button--primary" type="submit" ${this.chatNicknameSaving ? 'disabled' : ''}>${this.chatNicknameSaving ? 'Salvando…' : 'Entrar no chat'}</button>
+              <button class="button button--primary" type="submit" ${this.chatNicknameSaving ? 'disabled' : ''}>${this.chatNicknameSaving ? 'Salvando…' : this.nicknameOnboarding ? 'Continuar' : 'Entrar no chat'}</button>
             </div>
           </form>
         </dialog>
@@ -3849,6 +4529,73 @@ export class AuthApp {
 
     if (utilityDialog !== null) {
       return utilityDialog
+    }
+
+    if (this.activeDialog === 'extension') {
+      const account = this.configuredAccounts.find(
+        (candidate) => candidate.id === this.dialogAccountId,
+      )
+      if (!account) return ''
+      const config = this.extensionConfig
+      const permissions = config?.permissions ?? []
+      const extensionLimit = this.extensionAccountLimit()
+      const configuredExtensionCount = this.configuredExtensionCount()
+      const unlimitedExtensions = extensionLimit === UNLIMITED_ACCOUNT_LIMIT
+      const extensionWithinLimit = config
+        ? this.isAccountExtensionWithinLimit(account.id)
+        : true
+      const canChooseExtension = this.canAssignAccountExtension(account.id)
+      const quotaIsFull = !unlimitedExtensions && configuredExtensionCount >= extensionLimit
+      const quotaLabel = unlimitedExtensions
+        ? `${configuredExtensionCount} ${configuredExtensionCount === 1 ? 'conta configurada' : 'contas configuradas'} · sem limite`
+        : `${configuredExtensionCount} de ${extensionLimit} contas configuradas`
+      return `
+        <dialog class="modal modal--extension" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="modal__header">
+            <p class="eyebrow">RECURSO DE PLANO PAGO · ISOLADO POR CONTA</p>
+            <h2 id="dialog-title">Extensão de ${escapeHtml(account.displayName)}</h2>
+            <p>Carregue uma extensão descompactada somente nesta conta. Outras contas não recebem seus scripts ou permissões.</p>
+          </div>
+          ${this.renderDialogError()}
+          ${this.extensionLoading ? '<div class="proxy-loading"><i class="spinner spinner--green"></i> Verificando extensão local…</div>' : `
+            <section class="extension-quota ${quotaIsFull ? 'is-full' : ''}">
+              <span><strong>${escapeHtml(PLAN_PRESENTATION[this.permissionService.getCurrentPlan()].displayName)}</strong><small>Extensões isoladas por conta</small></span>
+              <strong>${quotaLabel}</strong>
+            </section>
+            ${config && !extensionWithinLimit ? `
+              <div class="extension-limit-alert" role="status">
+                <strong>Configuração preservada, mas fora do limite atual</strong>
+                <p>Esta extensão não será carregada até você liberar uma vaga ou mudar para um plano com mais contas.</p>
+              </div>
+            ` : ''}
+            ${!config && !canChooseExtension ? `
+              <div class="extension-limit-alert" role="status">
+                <strong>Limite de extensões atingido</strong>
+                <p>${escapeHtml(this.extensionLimitMessage())}</p>
+              </div>
+            ` : ''}
+            ${config ? `
+              <section class="extension-card ${config.enabled && extensionWithinLimit ? 'is-active' : ''}">
+                <span class="extension-card__mark" aria-hidden="true">E</span>
+                <div><strong>${escapeHtml(config.name)}</strong><small>Versão ${escapeHtml(config.version)} · Manifest V${config.manifestVersion} · ${escapeHtml(config.folderName)}</small></div>
+                <span class="extension-card__status">${extensionWithinLimit ? (config.enabled ? 'Ativa' : 'Desativada') : 'Fora do limite'}</span>
+              </section>
+              <div class="extension-permissions">
+                <strong>Permissões declaradas</strong>
+                <div>${permissions.length > 0 ? permissions.map((permission) => `<span>${escapeHtml(permission)}</span>`).join('') : '<small>Nenhuma permissão adicional declarada.</small>'}</div>
+              </div>
+              <label class="setting-toggle"><span><strong>Ativar nesta conta</strong><small>${extensionWithinLimit ? 'A conta será recarregada ao alterar.' : 'Libere uma vaga para voltar a carregar esta extensão.'}</small></span><input data-extension-enabled type="checkbox" ${config.enabled ? 'checked' : ''} ${this.extensionSaving || !extensionWithinLimit ? 'disabled' : ''} /></label>
+            ` : '<div class="extension-empty"><span aria-hidden="true">▧</span><strong>Nenhuma extensão configurada</strong><small>Selecione a pasta descompactada que contém o arquivo manifest.json.</small></div>'}
+            <div class="extension-security"><strong>Importante</strong><p>Extensões podem ler e alterar páginas permitidas no próprio manifest. Adicione somente arquivos de uma fonte em que você confia.</p></div>
+            <div class="modal__actions">
+              <button class="button button--primary" data-choose-extension type="button" ${this.extensionSaving || !canChooseExtension ? 'disabled' : ''}>${config ? 'Trocar pasta' : 'Selecionar pasta'}</button>
+              ${config ? '<button class="text-button text-button--danger" data-remove-extension type="button">Remover extensão</button>' : ''}
+              ${!canChooseExtension && this.permissionService.getCurrentPlan() !== 'FOUNDER' ? '<button class="button button--secondary" data-show-plans type="button">Ver planos</button>' : ''}
+              <button class="button button--secondary" data-close-dialog type="button">Fechar</button>
+            </div>
+          `}
+        </dialog>
+      `
     }
 
     if (this.activeDialog === 'proxy') {
@@ -3875,6 +4622,7 @@ export class AuthApp {
           ${this.proxyLoading ? '<div class="proxy-loading"><i class="spinner spinner--green"></i> Abrindo cofre seguro…</div>' : `
             <form id="proxy-form">
               <label class="setting-toggle proxy-enable"><span><strong>Usar proxy nesta conta</strong><small>Aplicado antes de abrir o jogo e isolado das outras contas.</small></span><input name="enabled" type="checkbox" ${config?.enabled ? 'checked' : ''} /></label>
+              <label class="field proxy-compact"><span>Colar proxy em uma linha <small>(opcional)</small></span><input name="compact" placeholder="usuario:senha:host:porta" autocomplete="off" /><small>Ao preencher, esta linha substitui os quatro campos abaixo. Também aceita protocolo://usuario:senha@host:porta.</small></label>
               <div class="proxy-grid">
                 <label class="field"><span>Protocolo</span><select name="protocol"><option value="http" ${config?.protocol === 'http' || !config ? 'selected' : ''}>HTTP</option><option value="https" ${config?.protocol === 'https' ? 'selected' : ''}>HTTPS</option><option value="socks5" ${config?.protocol === 'socks5' ? 'selected' : ''}>SOCKS5</option><option value="socks4" ${config?.protocol === 'socks4' ? 'selected' : ''}>SOCKS4</option></select></label>
                 <label class="field proxy-host"><span>Servidor</span><input name="host" value="${escapeHtml(config?.host ?? '')}" placeholder="proxy.exemplo.com" autocomplete="off" required /></label>
@@ -3886,7 +4634,7 @@ export class AuthApp {
               ${this.proxyTestResult ? `<div class="proxy-result ${resultClass}" role="status"><strong>${escapeHtml(this.proxyTestResult.message)}</strong><span>${escapeHtml(this.proxyTestResult.route)} · ${this.proxyTestResult.latencyMs} ms</span></div>` : ''}
               <div class="modal__actions">
                 <button class="button button--primary" type="submit" ${this.proxySaving ? 'disabled' : ''}>${this.proxySaving ? 'Salvando…' : 'Salvar e aplicar'}</button>
-                <button class="button button--secondary" data-test-proxy type="button" ${!config?.enabled || !active || this.proxySaving ? 'disabled' : ''}>Validar rota</button>
+                <button class="button button--secondary" data-test-proxy type="button" ${!active || this.proxySaving ? 'disabled' : ''}>Salvar e validar rota</button>
                 ${config ? '<button class="text-button text-button--danger" data-remove-proxy type="button">Remover proxy</button>' : ''}
                 <button class="button button--secondary" data-close-dialog type="button">Fechar</button>
               </div>
@@ -3897,12 +4645,114 @@ export class AuthApp {
       `
     }
 
+    if (this.activeDialog === 'copy-proxy') {
+      const source = this.configuredAccounts.find(
+        (candidate) => candidate.id === this.dialogAccountId,
+      )
+      if (!source) return ''
+
+      const destinations = this.configuredAccounts.filter(
+        (candidate) => candidate.id !== source.id,
+      )
+      const sourceRoute = this.proxyConfig
+        ? `${this.proxyConfig.protocol.toUpperCase()} · ${this.proxyConfig.host}:${this.proxyConfig.port}`
+        : 'Nenhum proxy configurado'
+
+      return `
+        <dialog class="modal modal--copy-proxy" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="modal__header">
+            <p class="eyebrow">ROTA ISOLADA POR CONTA</p>
+            <h2 id="dialog-title">Copiar proxy</h2>
+            <p>Use a rota de <strong>${escapeHtml(source.displayName)}</strong> em outra conta, sem copiar login, sessão, dados ou extensões.</p>
+          </div>
+          ${this.renderDialogError()}
+          ${this.proxyLoading ? '<div class="proxy-loading"><i class="spinner spinner--green"></i> Verificando a rota de origem…</div>' : `
+            <form id="copy-proxy-form">
+              <section class="proxy-copy-route ${this.proxyConfig ? 'is-ready' : 'is-empty'}">
+                <i>${uiIcon('route')}</i>
+                <span><small>Proxy de origem</small><strong>${escapeHtml(sourceRoute)}</strong><em>${this.proxyConfig?.hasPassword ? 'Credencial protegida incluída' : 'Sem senha salva'}</em></span>
+              </section>
+              <label class="field">
+                <span>Copiar para</span>
+                <select name="targetAccountId" ${!this.proxyConfig || destinations.length === 0 ? 'disabled' : ''} required>
+                  <option value="">Escolha a conta de destino</option>
+                  ${destinations.map((account) => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.displayName)} · ${escapeHtml(this.gameNameFor(account))}</option>`).join('')}
+                </select>
+                <small>Se a conta já tiver um proxy, ele será substituído. Se estiver aberta, a nova rota será aplicada imediatamente.</small>
+              </label>
+              <div class="proxy-security"><span aria-hidden="true">◆</span><p><strong>Somente o proxy será copiado</strong><small>A senha continua protegida localmente pelo Windows e não será exibida.</small></p></div>
+              <div class="modal__actions">
+                <button class="button button--secondary" data-close-dialog type="button">Cancelar</button>
+                <button class="button button--primary" type="submit" ${!this.proxyConfig || destinations.length === 0 || this.proxySaving ? 'disabled' : ''}>${this.proxySaving ? 'Copiando…' : 'Copiar e aplicar'}</button>
+              </div>
+            </form>
+          `}
+        </dialog>
+      `
+    }
+
+    if (this.activeDialog === 'grid-manager') {
+      const editing = this.savedGridWorkspaces.find(
+        (grid) => grid.id === this.dialogGridWorkspaceId,
+      ) ?? null
+      const activeIds = new Set(this.getActiveAccounts().map((account) => account.id))
+      const initiallySelected = new Set(editing?.accountIds
+        ?? (activeIds.size > 0
+          ? [...activeIds]
+          : this.configuredAccounts.map((account) => account.id)))
+      const gameGroups = [...new Map(this.configuredAccounts.map((account) => [
+        account.gameSlug,
+        this.gameNameFor(account),
+      ])).entries()]
+      const accountChoices = this.configuredAccounts.map((account) => {
+        const active = activeIds.has(account.id)
+        return `
+          <label class="grid-manager__account">
+            <input name="accountIds" type="checkbox" value="${escapeHtml(account.id)}" ${initiallySelected.has(account.id) ? 'checked' : ''} />
+            <span class="grid-manager__account-state ${active ? 'is-active' : ''}" aria-hidden="true"></span>
+            <span><strong>${escapeHtml(account.displayName)}</strong><small>${escapeHtml(this.gameNameFor(account))} · ${active ? 'aberta' : 'fechada'}</small></span>
+          </label>
+        `
+      }).join('')
+
+      return `
+        <dialog class="modal modal--grid-manager" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="modal__header">
+            <p class="eyebrow">ORGANIZAÇÃO DE MUITAS CONTAS</p>
+            <h2 id="dialog-title">${editing ? `Editar ${escapeHtml(editing.name)}` : 'Criar uma grade'}</h2>
+            <p>Cada grade mostra somente as contas escolhidas. As outras continuam abertas e rodando normalmente.</p>
+          </div>
+          ${this.renderDialogError()}
+          <form id="grid-workspace-form">
+            <label class="field"><span>Nome da grade</span><input name="name" maxlength="40" value="${escapeHtml(editing?.name ?? `Grade ${this.savedGridWorkspaces.length + 1}`)}" placeholder="Ex.: Grade 1 ou Huntera" required /></label>
+            <div class="grid-manager__tools" aria-label="Seleção rápida">
+              <button class="text-button" data-grid-select="open" type="button">Contas abertas</button>
+              <button class="text-button" data-grid-select="all" type="button">Todas</button>
+              <button class="text-button" data-grid-select="none" type="button">Limpar</button>
+              ${gameGroups.map(([slug, name]) => `<button class="text-button" data-grid-select-game="${escapeHtml(slug)}" type="button">${escapeHtml(name)}</button>`).join('')}
+            </div>
+            <div class="grid-account-picker" data-grid-account-picker>
+              ${accountChoices || '<p class="empty-copy">Adicione configurações de conta antes de criar uma grade.</p>'}
+            </div>
+            <div class="modal__actions modal__actions--grid-manager">
+              <button class="button button--primary" type="submit" ${this.configuredAccounts.length === 0 ? 'disabled' : ''}>${editing ? 'Salvar alterações' : 'Criar grade'}</button>
+              ${editing
+                ? '<button class="text-button text-button--danger" data-delete-grid-workspace type="button">Excluir grade</button>'
+                : '<button class="button button--secondary" data-create-game-grids type="button">Criar grades por jogo</button>'}
+              <button class="button button--secondary" data-close-dialog type="button">Cancelar</button>
+            </div>
+          </form>
+        </dialog>
+      `
+    }
+
     if (this.activeDialog === 'add-account') {
       const availableGames = this.games.filter(
         (game) => game.slug !== CUSTOM_GAME_SLUG,
       )
       const gameChoices = availableGames.map((game, index) => {
-        const iconUrl = normalizeSafeGameUrl(game.icon_url)
+        const iconUrl = getBundledGameIconUrl(game.slug)
+          ?? normalizeSafeGameUrl(game.icon_url)
 
         return `
           <label class="game-choice">
@@ -4077,7 +4927,6 @@ export class AuthApp {
     }
 
     const currentPlan = this.permissionService.getCurrentPlan()
-    const currentLimit = this.permissionService.getAccountLimit()
     const founderUpgradeEligible = currentPlan === 'PRO'
       && this.me?.founder_upgrade_eligible === true
     const productByCode = (code: string): PublicProduct | null =>
@@ -4100,41 +4949,22 @@ export class AuthApp {
     return `
       <dialog class="modal modal--plans" id="app-dialog" aria-labelledby="dialog-title">
         <div class="modal__header">
-          <p class="eyebrow">Escolha seu plano</p>
+          <p class="eyebrow">Escolha uma vez. Use sem mensalidade.</p>
           <h2 id="dialog-title">Planos AltGrid</h2>
-          <p>Mais sessões, a mesma privacidade local.</p>
+          <p>Compare limites e recursos para encontrar o plano certo para a quantidade de contas que você gerencia.</p>
+        </div>
+        <div class="plan-lifetime-banner">
+          <span aria-hidden="true">✓</span>
+          <div><strong>Todos os planos pagos são vitalícios</strong><small>Você paga uma única vez, sem mensalidade. A licença fica vinculada à sua conta AltGrid.</small></div>
         </div>
         <div class="plan-list">
-          ${this.renderPlanOption('FREE', '3 Huntera · 2 nos demais jogos', 'Entrada', currentPlan, null, ['Recursos essenciais', 'Presets de jogos', 'Privacidade local'])}
-          ${this.renderPlanOption(
-            'PRO',
-            currentPlan === 'PRO' ? `Seu plano atual · até ${currentLimit} contas` : 'Até 6 contas simultâneas',
-            'Plano avançado',
-            currentPlan,
-            productFor('PRO'),
-            ['Grades avançadas', 'Eco mode', 'Restauração de sessões'],
-          )}
-          ${this.renderPlanOption(
-            'PLUS',
-            currentPlan === 'PRO_PLUS' ? `Seu plano atual · até ${currentLimit} contas` : 'Até 10 contas simultâneas',
-            'Melhor custo-benefício',
-            currentPlan,
-            productFor('PRO_PLUS'),
-            ['Tudo do PRO', 'Até 10 sessões', 'Prioridade nas novidades'],
-            true,
-          )}
-          ${this.renderPlanOption(
-            'FOUNDER',
-            currentPlan === 'FOUNDER'
-              ? `Seu plano atual · ${this.renderAccountLimit(currentLimit)} contas`
-              : founderUpgradeEligible ? 'Upgrade com crédito do PRO' : 'Contas simultâneas ilimitadas',
-            founderUpgradeEligible ? 'Upgrade especial' : 'Plano máximo',
-            currentPlan,
-            productFor('FOUNDER'),
-            ['Benefícios Founder', 'Recursos beta', 'Badge especial no chat'],
-          )}
+          ${this.renderPlanOption('FREE', currentPlan, null)}
+          ${this.renderPlanOption('PRO', currentPlan, productFor('PRO'))}
+          ${this.renderPlanOption('PRO_PLUS', currentPlan, productFor('PRO_PLUS'), true)}
+          ${this.renderPlanOption('FOUNDER', currentPlan, productFor('FOUNDER'), false, founderUpgradeEligible)}
         </div>
         ${this.products.length === 0 ? '<p class="modal__note">Os preços estarão disponíveis quando os serviços AltGrid reconectarem.</p>' : ''}
+        <p class="plan-purchase-note">O pagamento libera o plano para a conta AltGrid usada na compra. Recursos de extensão e proxy são exclusivos do aplicativo Windows.</p>
         <div class="modal__actions modal__actions--end">
           <button class="button button--secondary" data-close-dialog type="button">Fechar</button>
         </div>
@@ -4162,13 +4992,13 @@ export class AuthApp {
         content = '<p class="update-state"><i class="spinner spinner--green"></i> Verificando atualizações…</p>'
         actions = ''
       } else if (state.status === 'available') {
-        content = `<div class="update-summary"><strong>Nova versão disponível</strong><span>${version}</span>${notes ? `<ul>${notes}</ul>` : ''}<small>O AltGrid baixará o instalador completo e verificará sua integridade automaticamente.</small></div>`
+        content = `<div class="update-summary"><strong>Nova versão disponível</strong><span>${version}</span>${notes ? `<ul>${notes}</ul>` : ''}<small>No Windows, o launcher baixará somente o pacote de atualização necessário e verificará sua integridade.</small></div>`
         actions = '<button class="button button--primary" data-download-update type="button">Baixar atualização</button>'
       } else if (state.status === 'downloading') {
         content = `<div class="update-summary"><strong>Baixando atualização</strong><span>Você pode continuar usando o AltGrid.</span><progress max="100" value="${progress}">${progress}%</progress><small>${Math.round(progress)}%</small></div>`
         actions = ''
       } else if (state.status === 'downloaded') {
-        content = `<div class="update-summary"><strong>Atualização verificada e pronta</strong><span>${version}</span>${notes ? `<ul>${notes}</ul>` : ''}<small>No Windows, o AltGrid fechará as sessões, instalará a versão completa e abrirá novamente. No Android, o sistema pedirá sua confirmação.</small></div>`
+        content = `<div class="update-summary"><strong>Atualização verificada e pronta</strong><span>${version}</span>${notes ? `<ul>${notes}</ul>` : ''}<small>No Windows, o launcher fechará as sessões, trocará a versão ativa com segurança e abrirá o AltGrid novamente. O Android continua em um canal de APK separado.</small></div>`
         actions = '<button class="button button--primary" data-install-update type="button">Instalar atualização</button>'
       } else if (state.status === 'not_available') {
         if (!state.supported && state.message) {
@@ -4216,76 +5046,84 @@ export class AuthApp {
           }).format(new Date(program.campaign.ends_at))
         : null
       const ranking = program?.leaderboard ?? []
-      const recent = program?.recent_referrals ?? []
-      const statusLabel: Record<string, string> = {
-        pending: 'Em validação',
-        qualified: 'Qualificado',
-        rewarded: 'Recompensado',
-        rejected: 'Não elegível',
-      }
-
+      const leaderScore = ranking[0]?.valid_referrals ?? 0
+      const currentScore = program?.stats.valid ?? 0
+      const scoreToLead = Math.max(0, leaderScore - currentScore + (program?.stats.position === 1 ? 0 : 1))
+      const rankingProgress = leaderScore > 0
+        ? Math.min(100, Math.round((currentScore / Math.max(leaderScore, 1)) * 100))
+        : currentScore > 0 ? 100 : 0
       return `
-        <dialog class="modal modal--referrals" id="app-dialog" aria-labelledby="dialog-title">
+        <dialog class="modal modal--referrals referral-variant--compact" id="app-dialog" aria-labelledby="dialog-title">
           <div class="referral-hero">
             <div>
-              <p class="eyebrow">PROGRAMA DE INDICAÇÕES</p>
-              <h2 id="dialog-title">Convide. Suba no ranking. Faça história.</h2>
-              <p>Cada amigo válido rende <strong>1 dia de PRO</strong>. No fim da campanha, os três líderes recebem planos vitalícios.</p>
+              <p class="eyebrow">INDIQUE E GANHE</p>
+              <h2 id="dialog-title">Convide amigos. Ganhe PRO.</h2>
+              <p>Você recebe <strong>1 dia de PRO</strong> por indicação válida e ainda disputa planos vitalícios.</p>
             </div>
-            <div class="referral-hero__mark" aria-hidden="true">✦</div>
+            <div class="referral-hero__mark" aria-hidden="true">${uiIcon('gift')}</div>
           </div>
 
           ${this.referralError ? `<div class="form-alert is-visible" role="alert">${escapeHtml(this.referralError)}</div>` : ''}
           ${this.referralLoading && !program ? '<div class="referral-loading"><span class="spinner spinner--green"></span><span>Validando indicações e carregando o ranking…</span></div>' : ''}
           ${program ? `
-            <section class="referral-share" aria-label="Seu link de indicação">
-              <div>
-                <small>SEU CÓDIGO INDIVIDUAL</small>
-                <strong>${escapeHtml(program.code)}</strong>
-                <span>Envie seu link. O código entra automaticamente no cadastro.</span>
-              </div>
-              <div class="referral-share__actions">
-                <button class="button button--primary" data-share-referral type="button">Compartilhar link</button>
-                <button class="button button--secondary" data-copy-referral type="button">Copiar</button>
-              </div>
-              <input data-referral-url type="text" readonly value="${escapeHtml(program.share_url)}" aria-label="Link de indicação" />
-            </section>
+            <div class="referral-command-center">
+              <section class="referral-invite" aria-label="Seu convite AltGrid">
+                <div class="referral-invite__heading">
+                  <span class="referral-invite__icon">${uiIcon('sparkles')}</span>
+                  <span><small>SEU CONVITE EXCLUSIVO</small><strong>${escapeHtml(program.code)}</strong></span>
+                  <span class="referral-live-pill"><i></i> Campanha ativa</span>
+                </div>
+                <p>Compartilhe este link. O código já chega preenchido no cadastro do seu amigo.</p>
+                <div class="referral-link-box">
+                  <input data-referral-url type="text" readonly value="${escapeHtml(program.share_url)}" aria-label="Link de indicação" />
+                  <button class="button button--secondary" data-copy-referral type="button">${uiIcon('copy')} Copiar link</button>
+                  <button class="button button--primary" data-share-referral type="button">${uiIcon('share')} Compartilhar</button>
+                </div>
+              </section>
 
-            <div class="referral-stats" aria-label="Seus resultados">
-              <article><small>Indicações válidas</small><strong>${program.stats.valid}</strong><span>+${program.stats.pro_days} ${program.stats.pro_days === 1 ? 'dia' : 'dias'} de PRO</span></article>
-              <article><small>Sua posição</small><strong>${program.stats.position ? `#${program.stats.position}` : '—'}</strong><span>${program.stats.position ? 'no ranking atual' : 'convide para entrar'}</span></article>
-              <article><small>Em validação</small><strong>${program.stats.pending}</strong><span>confirmação automática</span></article>
+              <aside class="referral-position" aria-label="Sua posição na campanha">
+                <div class="referral-position__top"><span><small>SUA POSIÇÃO</small><strong>${program.stats.position ? `#${program.stats.position}` : '—'}</strong></span><i>${uiIcon('trophy')}</i></div>
+                <div class="referral-position__progress"><i style="width:${rankingProgress}%"></i></div>
+                <p>${program.stats.position === 1 ? 'Você está liderando a corrida.' : scoreToLead > 0 ? `${scoreToLead} ${scoreToLead === 1 ? 'indicação' : 'indicações'} para assumir a liderança.` : 'Faça sua primeira indicação para entrar no ranking.'}</p>
+                <small>Campanha termina em ${escapeHtml(campaignEnd ?? '—')}</small>
+              </aside>
             </div>
 
-            <section class="referral-prizes" aria-labelledby="referral-prizes-title">
-              <div class="referral-section-heading"><div><p class="eyebrow">PÓDIO VITALÍCIO</p><h3 id="referral-prizes-title">Os três maiores indicadores vencem</h3></div><small>Encerra em ${escapeHtml(campaignEnd ?? '—')}</small></div>
-              <div class="referral-prize-grid">
-                <article class="referral-prize referral-prize--founder"><span>1º LUGAR</span><img src="${planFounderBadgeUrl}" alt="" /><div><strong>FOUNDER</strong><small>Plano máximo vitalício</small></div></article>
-                <article class="referral-prize referral-prize--plus"><span>2º LUGAR</span><img src="${planProPlusBadgeUrl}" alt="" /><div><strong>PLUS</strong><small>Plano Plus vitalício</small></div></article>
-                <article class="referral-prize referral-prize--pro"><span>3º LUGAR</span><img src="${planProBadgeUrl}" alt="" /><div><strong>PRO</strong><small>Plano PRO vitalício</small></div></article>
-              </div>
+            <section class="referral-metrics" aria-label="Seus resultados">
+              <article><i>${uiIcon('users')}</i><span><small>Convites enviados</small><strong>${program.stats.total}</strong></span></article>
+              <article class="is-success"><i>${uiIcon('check')}</i><span><small>Indicações válidas</small><strong>${program.stats.valid}</strong></span></article>
+              <article class="is-pending"><i>${uiIcon('clock')}</i><span><small>Em validação</small><strong>${program.stats.pending}</strong></span></article>
+              <article class="is-reward"><i>${uiIcon('star')}</i><span><small>Recompensa acumulada</small><strong>${program.stats.pro_days}d PRO</strong></span></article>
             </section>
 
-            <section class="referral-board" aria-labelledby="referral-ranking-title">
-              <div class="referral-section-heading"><div><p class="eyebrow">RANKING AO VIVO</p><h3 id="referral-ranking-title">Corrida de indicações</h3></div><button class="text-button" data-refresh-referrals type="button">Atualizar</button></div>
-              <div class="referral-board__list">
-                ${ranking.length > 0 ? ranking.slice(0, 10).map((entry) => `
-                  <div class="referral-rank-row ${entry.is_current_user ? 'is-current-user' : ''} ${entry.position <= 3 ? `is-top-${entry.position}` : ''}">
-                    <span class="referral-rank-row__position">${entry.position <= 3 ? ['🥇', '🥈', '🥉'][entry.position - 1] : `#${entry.position}`}</span>
-                    <span class="referral-rank-row__avatar">${escapeHtml(entry.display_name.slice(0, 1).toUpperCase())}</span>
-                    <span><strong>${escapeHtml(entry.display_name)}${entry.is_current_user ? ' (você)' : ''}</strong><small>${entry.prize_plan ? `Prêmio atual: ${entry.prize_plan === 'PRO_PLUS' ? 'PLUS' : entry.prize_plan}` : 'Na disputa'}</small></span>
-                    <b>${entry.valid_referrals} ${entry.valid_referrals === 1 ? 'indicação' : 'indicações'}</b>
+            <div class="referral-content-grid">
+              <section class="referral-board referral-panel" aria-labelledby="referral-ranking-title">
+                <div class="referral-section-heading"><div><p class="eyebrow">RANKING AO VIVO</p><h3 id="referral-ranking-title">Quem está no topo</h3></div><button class="referral-refresh" data-refresh-referrals type="button">${uiIcon('refresh')} Atualizar</button></div>
+                <div class="referral-board__list">
+                  ${ranking.length > 0 ? ranking.slice(0, 10).map((entry) => `
+                    <div class="referral-rank-row ${entry.is_current_user ? 'is-current-user' : ''} ${entry.position <= 3 ? `is-top-${entry.position}` : ''}">
+                      <span class="referral-rank-row__position">${entry.position <= 3 ? ['1', '2', '3'][entry.position - 1] : entry.position}</span>
+                      <span class="referral-rank-row__avatar">${escapeHtml(entry.display_name.slice(0, 1).toUpperCase())}</span>
+                      <span><strong>${escapeHtml(entry.display_name)}${entry.is_current_user ? ' <em>VOCÊ</em>' : ''}</strong><small>${entry.prize_plan ? `Premiação atual: ${entry.prize_plan === 'PRO_PLUS' ? 'PLUS' : entry.prize_plan}` : 'Subindo no ranking'}</small></span>
+                      <b>${entry.valid_referrals}<small>${entry.valid_referrals === 1 ? ' indicação' : ' indicações'}</small></b>
+                    </div>
+                  `).join('') : '<div class="referral-empty"><span>✦</span><strong>O pódio está livre</strong><small>Compartilhe seu convite e seja o primeiro colocado.</small></div>'}
+                </div>
+              </section>
+
+              <aside class="referral-side-stack">
+                <section class="referral-podium referral-panel" aria-labelledby="referral-prizes-title">
+                  <div class="referral-section-heading"><div><p class="eyebrow">PRÊMIOS VITALÍCIOS</p><h3 id="referral-prizes-title">Pódio da campanha</h3></div></div>
+                  <div class="referral-podium__list">
+                    <article class="is-founder"><span>1</span><img src="${planFounderBadgeUrl}" alt="" /><div><strong>FOUNDER</strong><small>Plano máximo vitalício</small></div></article>
+                    <article class="is-plus"><span>2</span><img src="${planProPlusBadgeUrl}" alt="" /><div><strong>PLUS</strong><small>Plano Plus vitalício</small></div></article>
+                    <article class="is-pro"><span>3</span><img src="${planProBadgeUrl}" alt="" /><div><strong>PRO</strong><small>Plano PRO vitalício</small></div></article>
                   </div>
-                `).join('') : '<div class="referral-empty"><strong>O pódio ainda está aberto.</strong><span>Seja o primeiro a registrar uma indicação válida.</span></div>'}
-              </div>
-            </section>
+                </section>
 
-            <div class="referral-lower-grid">
-              <section class="referral-rules"><p class="eyebrow">COMO FUNCIONA</p><ol><li><b>1</b><span>Compartilhe seu link individual.</span></li><li><b>2</b><span>Seu amigo cria e confirma a conta pelo código.</span></li><li><b>3</b><span>Após 24h e uso em dispositivo válido, você recebe 1 dia de PRO.</span></li></ol></section>
-              <section class="referral-integrity"><p class="eyebrow">RANKING PROTEGIDO</p><h3>Validação contra abuso</h3><p>E-mail confirmado, espera mínima, conta única e dispositivo exclusivo. Autoindicação, repetição de dispositivo e crédito duplicado não contam.</p></section>
+              </aside>
             </div>
-
-            ${recent.length > 0 ? `<section class="referral-recent"><div class="referral-section-heading"><h3>Suas indicações recentes</h3></div>${recent.slice(0, 6).map((entry) => `<div><span class="referral-rank-row__avatar">${escapeHtml(entry.display_name.slice(0, 1).toUpperCase())}</span><span><strong>${escapeHtml(entry.display_name)}</strong><small>${new Intl.DateTimeFormat('pt-BR').format(new Date(entry.created_at))}</small></span><b class="referral-status referral-status--${entry.status}">${escapeHtml(statusLabel[entry.status] ?? entry.status)}</b></div>`).join('')}</section>` : ''}
+            <p class="referral-validation-note">Indicações são validadas após 24h de uso. Conta, e-mail e dispositivo precisam ser únicos.</p>
           ` : ''}
           <div class="modal__actions modal__actions--end"><button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
         </dialog>
@@ -4308,9 +5146,13 @@ export class AuthApp {
         (total, usage) => total + usage.privateKb,
         0,
       )
+      const totalCpu = this.resourceUsage.reduce(
+        (total, usage) => total + usage.cpuPercent,
+        0,
+      )
       const usageRows = this.resourceUsage.map((usage) => {
         const account = this.configuredAccounts.find((item) => item.id === usage.accountId)
-        return `<div class="resource-row"><span><strong>${escapeHtml(account?.displayName ?? 'Conta')}</strong><small>${escapeHtml(account ? this.gameNameFor(account) : usage.accountId)}</small></span><b>${escapeHtml(formatMemoryKb(usage.privateKb))}</b></div>`
+        return `<div class="resource-row"><span><strong>${escapeHtml(account?.displayName ?? 'Conta')}</strong><small>${escapeHtml(account ? this.gameNameFor(account) : usage.accountId)}</small></span><b>${escapeHtml(formatMemoryKb(usage.privateKb))}<small>${usage.cpuPercent.toFixed(1)}% CPU</small></b></div>`
       }).join('')
       return `
         <dialog class="modal modal--settings" id="app-dialog" aria-labelledby="dialog-title">
@@ -4320,8 +5162,8 @@ export class AuthApp {
               <button class="is-active" data-settings-tab="general" type="button">Geral</button><button data-settings-tab="accounts" type="button">Contas</button><button data-settings-tab="visual" type="button">Visual</button><button data-settings-tab="updates" type="button">Atualizações</button><button data-settings-tab="notifications" type="button">Notificações</button><button data-settings-tab="about" type="button">Sobre</button>
             </nav>
             <div class="settings-content">
-              <section data-settings-panel="general"><h3>Geral</h3><label class="setting-toggle"><span><strong>Eco Mode</strong><small>${ecoModeNote}</small></span><input data-preference="eco-mode" type="checkbox" ${this.ecoModeRequested ? 'checked' : ''} ${ecoModeAvailable ? '' : 'disabled'} /></label><label class="setting-select"><span><strong>FPS em segundo plano</strong><small>A conta em uso permanece suave; as demais economizam recursos.</small></span><select data-eco-background-fps ${ecoModeAvailable ? '' : 'disabled'}><option value="10" ${this.ecoBackgroundFps === 10 ? 'selected' : ''}>10 FPS</option><option value="20" ${this.ecoBackgroundFps === 20 ? 'selected' : ''}>20 FPS</option><option value="30" ${this.ecoBackgroundFps === 30 ? 'selected' : ''}>30 FPS</option></select></label><label class="setting-toggle"><span><strong>Restaurar última sessão</strong><small>Reabre as contas usadas na inicialização anterior.</small></span><input data-preference="restore-session" type="checkbox" ${restore ? 'checked' : ''} /></label><label class="setting-toggle"><span><strong>Confirmar antes de fechar</strong><small>Evita encerrar sessões por acidente.</small></span><input data-preference="confirm-close" type="checkbox" ${confirmClose ? 'checked' : ''} /></label></section>
-              <section data-settings-panel="accounts" hidden><h3>Contas e memória</h3><p>Cookies, sessões e proxies ficam somente neste dispositivo, isolados por conta.</p><div class="resource-summary"><span><small>Memória privada das sessões</small><strong>${escapeHtml(formatMemoryKb(totalPrivateKb))}</strong></span><button class="button button--secondary" data-refresh-resource-usage type="button" ${this.resourceUsageLoading ? 'disabled' : ''}>${this.resourceUsageLoading ? 'Medindo…' : 'Medir agora'}</button></div>${usageRows ? `<div class="resource-list">${usageRows}</div>` : '<p class="modal__note">Abra suas contas e clique em “Medir agora” para ver o consumo por sessão.</p>'}<p class="modal__note">O perfil de 10 FPS reduz trabalho de CPU/GPU das contas em segundo plano. Como cada jogo mantém um navegador isolado e ativo, a RAM só é totalmente liberada ao fechar a conta.</p></section>
+              <section data-settings-panel="general"><h3>Geral</h3><label class="setting-toggle"><span><strong>Eco Mode adaptativo</strong><small>${ecoModeNote}</small></span><input data-preference="eco-mode" type="checkbox" ${this.ecoModeRequested ? 'checked' : ''} ${ecoModeAvailable ? '' : 'disabled'} /></label><label class="setting-select"><span><strong>Máximo em segundo plano</strong><small>A conta em uso permanece suave. Com 4 ou 8 contas, o AltGrid reduz automaticamente as secundárias para 10 ou 5 FPS.</small></span><select data-eco-background-fps ${ecoModeAvailable ? '' : 'disabled'}><option value="10" ${this.ecoBackgroundFps === 10 ? 'selected' : ''}>Até 10 FPS</option><option value="20" ${this.ecoBackgroundFps === 20 ? 'selected' : ''}>Até 20 FPS</option><option value="30" ${this.ecoBackgroundFps === 30 ? 'selected' : ''}>Até 30 FPS</option></select></label><label class="setting-toggle"><span><strong>Restaurar última sessão</strong><small>Reabre as contas usadas na inicialização anterior.</small></span><input data-preference="restore-session" type="checkbox" ${restore ? 'checked' : ''} /></label><label class="setting-toggle"><span><strong>Confirmar antes de fechar</strong><small>Evita encerrar sessões por acidente.</small></span><input data-preference="confirm-close" type="checkbox" ${confirmClose ? 'checked' : ''} /></label></section>
+              <section data-settings-panel="accounts" hidden><h3>Contas e desempenho</h3><p>Cookies, sessões e proxies ficam somente neste dispositivo, isolados por conta.</p><div class="resource-summary"><span><small>Uso das sessões</small><strong>${escapeHtml(formatMemoryKb(totalPrivateKb))} · ${totalCpu.toFixed(1)}% CPU</strong></span><button class="button button--secondary" data-refresh-resource-usage type="button" ${this.resourceUsageLoading ? 'disabled' : ''}>${this.resourceUsageLoading ? 'Medindo…' : 'Medir agora'}</button></div>${usageRows ? `<div class="resource-list">${usageRows}</div>` : '<p class="modal__note">Abra suas contas e clique em “Medir agora” para ver o consumo por sessão.</p>'}<p class="modal__note">O perfil de 10 FPS reduz trabalho de CPU/GPU das contas em segundo plano. Como cada jogo mantém um navegador isolado e ativo, a RAM só é totalmente liberada ao fechar a conta.</p></section>
               <section data-settings-panel="visual" hidden><h3>Visual</h3><p>O tema escuro premium acompanha automaticamente o AltGrid.</p></section>
               <section data-settings-panel="updates" hidden><h3>Atualizações</h3><p>Canal atual: <strong>${updateChannel}</strong> · instalada ${APP_VERSION}${this.configText('latest_version') ? ` · disponível ${escapeHtml(this.configText('latest_version')!)}` : ''}</p><button class="button button--secondary" data-check-update type="button">Verificar atualização</button></section>
               <section data-settings-panel="notifications" hidden><h3>Notificações</h3><label class="setting-toggle"><span><strong>Avisos do AltGrid</strong><small>Atualizações, anúncios e alertas do sistema.</small></span><input data-preference="notifications" type="checkbox" ${notifications ? 'checked' : ''} /></label></section>
@@ -4356,20 +5198,32 @@ export class AuthApp {
 
     if (this.activeDialog === 'my-plan') {
       const currentPlan = this.permissionService.getCurrentPlan()
-      const currentLimit = this.permissionService.getAccountLimit()
-      const planSummary = currentPlan === 'FREE'
-        ? 'Começo essencial para organizar suas primeiras sessões.'
-        : currentPlan === 'PRO'
-          ? 'Seu plano atual libera grades avançadas, eco mode e restauração de sessões.'
-          : 'Acesso máximo, recursos beta e presença Founder no chat.'
-      const validity = this.me?.lifetime
-        ? 'Vitalício'
+      const presentation = PLAN_PRESENTATION[currentPlan]
+      const validity = currentPlan === 'FREE'
+        ? 'Grátis para sempre'
+        : this.me?.lifetime ? 'Vitalício'
         : this.me?.expires_at ? `Ativo até ${formatDate(this.me.expires_at)}` : 'Sem vencimento'
       return `
         <dialog class="modal modal--plan-summary" id="app-dialog" aria-labelledby="dialog-title">
-          <div class="modal__header"><p class="eyebrow">Assinatura</p><h2 id="dialog-title">Meu plano</h2><p>Benefícios vinculados à sua conta AltGrid.</p></div>
-          <div class="current-plan-card"><div class="current-plan-card__heading"><span>${escapeHtml(this.renderPlanName())}</span><small>${escapeHtml(validity)}</small></div><strong>${currentPlan === 'FREE' ? 'Huntera: 3 · demais jogos: 2' : `${this.renderAccountLimit(currentLimit)} contas simultâneas`}</strong><p>${escapeHtml(planSummary)}</p><div class="current-plan-card__meter"><span style="width:${currentPlan === 'FREE' ? '18' : currentPlan === 'PRO' ? '55' : '100'}%"></span></div><small class="current-plan-card__hint">${currentPlan === 'FOUNDER' ? 'Nível máximo do AltGrid' : 'Veja o próximo nível e seus benefícios'}</small></div>
-          <div class="modal__actions">${currentPlan !== 'FOUNDER' ? '<button class="button button--primary" data-show-plans type="button">Ver opções de upgrade</button>' : ''}<button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
+          <header class="plan-summary-hero">
+            <span class="plan-summary-hero__mark" aria-hidden="true">${uiIcon('gauge')}</span>
+            <div><p class="eyebrow">Central da licença</p><h2 id="dialog-title">Meu plano AltGrid</h2><p>Seu acesso, seus benefícios e todos os níveis em uma visão simples.</p></div>
+            <span class="plan-summary-hero__lifetime">${uiIcon('leaf')}<span><small>Licença</small><strong>${escapeHtml(validity)}</strong></span></span>
+          </header>
+          <div class="plan-summary__content">
+            <section class="current-plan-card" aria-label="Resumo do plano atual">
+              <div class="current-plan-card__heading"><span><i></i> Plano atual</span><small>Ativo e pronto para usar</small></div>
+              <div class="current-plan-card__overview"><div><strong>${escapeHtml(this.renderPlanName())}</strong><p>${escapeHtml(presentation.capacity)}</p></div><span>${escapeHtml(validity)}</span></div>
+              <p class="current-plan-card__summary">${escapeHtml(presentation.summary)}</p>
+              <ul class="current-plan-card__features">${presentation.benefits.map((benefit) => `<li>${escapeHtml(benefit)}</li>`).join('')}</ul>
+              <footer class="current-plan-card__progress"><div class="current-plan-card__meter"><span style="width:${currentPlan === 'FREE' ? '18' : currentPlan === 'PRO' ? '52' : currentPlan === 'PRO_PLUS' ? '76' : '100'}%"></span></div><small class="current-plan-card__hint">${currentPlan === 'FOUNDER' ? 'Você está no nível máximo do AltGrid' : 'Veja abaixo o que os próximos níveis acrescentam'}</small></footer>
+            </section>
+            <section class="plan-comparison" aria-labelledby="plan-comparison-title">
+              <div class="plan-comparison__header"><div><p class="eyebrow">Comparativo completo</p><h3 id="plan-comparison-title">O que cada plano oferece</h3></div><p>${uiIcon('leaf')}<span><strong>Uma única compra.</strong> PRO, PLUS e FOUNDER são vitalícios e não têm mensalidade.</span></p></div>
+              <div class="plan-summary-grid">${PLAN_ORDER.map((plan) => this.renderPlanSummaryCard(plan, currentPlan)).join('')}</div>
+            </section>
+          </div>
+          <div class="modal__actions">${currentPlan !== 'FOUNDER' ? '<button class="button button--primary" data-show-plans type="button">Ver preços e opções de upgrade</button>' : ''}<button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
         </dialog>
       `
     }
@@ -4396,30 +5250,65 @@ export class AuthApp {
   }
 
   private renderPlanOption(
-    plan: string,
-    description: string,
-    label: string,
-    currentPlan: string,
+    plan: PlanCode,
+    currentPlan: PlanCode,
     product: PublicProduct | null,
-    benefits: string[],
     recommended = false,
+    specialUpgrade = false,
   ): string {
+    const presentation = PLAN_PRESENTATION[plan]
     const current = plan === currentPlan
+    const included = PLAN_RANK[plan] < PLAN_RANK[currentPlan]
+    const isFree = plan === 'FREE'
+    const purchaseTerms = isFree
+      ? 'Sem cobrança e sem prazo para acabar'
+      : 'Pagamento único · licença vitalícia'
+    const action = current
+      ? '<span class="plan-option__badge">Plano atual</span>'
+      : included
+        ? '<span class="plan-option__badge plan-option__badge--included">Incluído no seu plano</span>'
+        : isFree
+          ? '<span class="plan-option__badge plan-option__badge--free">Grátis para sempre</span>'
+          : product
+            ? `<button class="button button--primary button--compact" data-buy-product="${escapeHtml(product.code)}" type="button">${product.code.endsWith('_UPGRADE') ? 'Fazer upgrade' : 'Ativar com PIX'}</button>`
+            : '<span class="plan-option__badge">Preço indisponível</span>'
 
     return `
-      <div class="plan-option ${current ? 'plan-option--current' : ''} ${recommended ? 'plan-option--recommended' : ''}">
-        <div>
-          <strong>${plan}</strong>
-          <span>${escapeHtml(label)} · ${escapeHtml(description)}</span>
-          <ul>${benefits.map((benefit) => `<li>${escapeHtml(benefit)}</li>`).join('')}</ul>
-          ${product ? `<b>${escapeHtml(formatCurrency(product.price_amount, product.currency))}${product.code.endsWith('_UPGRADE') ? '<small> com desconto</small>' : ''}</b>` : ''}
+      <article class="plan-option ${current ? 'plan-option--current' : ''} ${recommended ? 'plan-option--recommended' : ''}" data-plan-code="${plan}">
+        <header class="plan-option__header">
+          <div class="plan-option__identity"><span>${escapeHtml(specialUpgrade ? 'Upgrade especial' : presentation.tierLabel)}</span><strong>${escapeHtml(presentation.displayName)}</strong></div>
+          ${recommended && !current ? '<span class="plan-option__badge plan-option__badge--recommended">Mais escolhido</span>' : current ? '<span class="plan-option__badge">Atual</span>' : ''}
+        </header>
+        <div class="plan-option__body">
+          <p class="plan-option__capacity">${escapeHtml(presentation.capacity)}</p>
+          <p class="plan-option__summary">${escapeHtml(presentation.summary)}</p>
+          <ul class="plan-option__features">${presentation.benefits.map((benefit) => `<li>${escapeHtml(benefit)}</li>`).join('')}</ul>
         </div>
-        ${current
-          ? '<span class="plan-option__badge">Plano atual</span>'
-          : `<div class="plan-option__actions">${recommended ? '<span class="plan-option__badge">Mais escolhido</span>' : ''}${product
-            ? `<button class="button button--primary button--compact" data-buy-product="${escapeHtml(product.code)}" type="button">${product.code.endsWith('_UPGRADE') ? 'Fazer upgrade' : 'Ativar com PIX'}</button>`
-            : '<span class="plan-option__badge">Indisponível</span>'}</div>`}
-      </div>
+        <footer class="plan-option__footer">
+          <div class="plan-option__price">${product
+            ? `<b>${escapeHtml(formatCurrency(product.price_amount, product.currency))}</b>${product.code.endsWith('_UPGRADE') ? '<span>valor do upgrade</span>' : ''}`
+            : isFree ? '<b>R$ 0</b>' : '<b>—</b>'}<small>${purchaseTerms}</small></div>
+          <div class="plan-option__actions">${action}</div>
+        </footer>
+      </article>
+    `
+  }
+
+  private renderPlanSummaryCard(plan: PlanCode, currentPlan: PlanCode): string {
+    const presentation = PLAN_PRESENTATION[plan]
+    const current = plan === currentPlan
+    const included = PLAN_RANK[plan] < PLAN_RANK[currentPlan]
+    const status = current ? 'Seu plano' : included ? 'Já incluído' : 'Disponível'
+    const order = String(PLAN_ORDER.indexOf(plan) + 1).padStart(2, '0')
+
+    return `
+      <article class="plan-summary-card ${current ? 'is-current' : ''}" data-plan-code="${plan}">
+        <header><span class="plan-summary-card__index">${order}</span><div><span>${escapeHtml(presentation.tierLabel)}</span><strong>${escapeHtml(presentation.displayName)}</strong></div><small>${status}</small></header>
+        <p>${escapeHtml(presentation.capacity)}</p>
+        <small class="plan-summary-card__summary">${escapeHtml(presentation.summary)}</small>
+        <ul>${presentation.benefits.map((benefit) => `<li>${escapeHtml(benefit)}</li>`).join('')}</ul>
+        <footer>${plan === 'FREE' ? 'Grátis para sempre' : 'Pagamento único · vitalício · sem mensalidade'}</footer>
+      </article>
     `
   }
 
@@ -4452,16 +5341,19 @@ export class AuthApp {
     return `
       <div class="field">
         <label for="${id}">E-mail</label>
-        <input
-          id="${id}"
-          name="email"
-          type="email"
-          inputmode="email"
-          autocomplete="email"
-          placeholder="voce@exemplo.com"
-          required
-          aria-describedby="${id}-error"
-        />
+        <div class="field__control">
+          <span class="field__leading-icon" aria-hidden="true">@</span>
+          <input
+            id="${id}"
+            name="email"
+            type="email"
+            inputmode="email"
+            autocomplete="email"
+            placeholder="voce@exemplo.com"
+            required
+            aria-describedby="${id}-error"
+          />
+        </div>
         <span class="field__error" id="${id}-error"></span>
       </div>
     `
@@ -4475,14 +5367,21 @@ export class AuthApp {
     return `
       <div class="field">
         <label for="${id}">${label}</label>
-        <input
-          id="${id}"
-          name="${id.includes('confirmation') ? 'passwordConfirmation' : 'password'}"
-          type="password"
-          autocomplete="${autocomplete}"
-          required
-          aria-describedby="${id}-error"
-        />
+        <div class="field__control">
+          <span class="field__leading-icon field__leading-icon--lock" aria-hidden="true">●</span>
+          <input
+            id="${id}"
+            name="${id.includes('confirmation') ? 'passwordConfirmation' : 'password'}"
+            type="password"
+            autocomplete="${autocomplete}"
+            placeholder="${autocomplete === 'new-password' ? 'Mínimo de 6 caracteres' : 'Digite sua senha'}"
+            required
+            aria-describedby="${id}-error"
+          />
+          <button class="field__password-toggle" data-toggle-password="${id}" type="button" aria-label="Mostrar senha" aria-pressed="false">
+            <span aria-hidden="true">◉</span>
+          </button>
+        </div>
         <span class="field__error" id="${id}-error"></span>
       </div>
     `
@@ -4503,6 +5402,20 @@ export class AuthApp {
   }
 
   private bindViewActions(): void {
+    this.root.querySelectorAll<HTMLButtonElement>('[data-toggle-password]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const input = this.root.querySelector<HTMLInputElement>(
+          `#${button.dataset.togglePassword ?? ''}`,
+        )
+        if (!input) return
+        const visible = input.type === 'text'
+        input.type = visible ? 'password' : 'text'
+        button.setAttribute('aria-pressed', String(!visible))
+        button.setAttribute('aria-label', visible ? 'Mostrar senha' : 'Ocultar senha')
+        button.classList.toggle('is-visible', !visible)
+      })
+    })
+
     this.root.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => {
       button.addEventListener('click', () => {
         const destination = button.dataset.view as AuthView | undefined
@@ -4521,6 +5434,7 @@ export class AuthApp {
 
     this.bindLoginForm()
     this.bindSignupForm()
+    this.bindGoogleAuthButtons()
     this.bindForgotPasswordForm()
     this.bindResetPasswordForm()
     this.bindAuthenticatedActions()
@@ -4550,6 +5464,17 @@ export class AuthApp {
       })
 
     this.root
+      .querySelectorAll<HTMLButtonElement>('[data-extension-account]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const account = this.accountFromAction(button)
+          if (!account) return
+          button.closest('details')?.removeAttribute('open')
+          void this.openExtensionDialog(account)
+        })
+      })
+
+    this.root
       .querySelectorAll<HTMLButtonElement>('[data-proxy-account]')
       .forEach((button) => {
         this.bindButtonOnce(button, () => {
@@ -4565,16 +5490,12 @@ export class AuthApp {
       })
 
     this.root
-      .querySelectorAll<HTMLButtonElement>('[data-stonegy-bot-account]')
+      .querySelectorAll<HTMLButtonElement>('[data-toggle-account-proxy]')
       .forEach((button) => {
         this.bindButtonOnce(button, () => {
           const account = this.accountFromAction(button)
-          if (!account) {
-            return
-          }
-
-          button.closest('details')?.removeAttribute('open')
-          void this.toggleStonegyBot(account, button)
+          if (!account) return
+          void this.toggleAccountProxy(account, button)
         })
       })
 
@@ -4595,6 +5516,7 @@ export class AuthApp {
           this.maximizedAccountId = null
 
           if (this.permissionService.isSessionActive(account.id)) {
+            this.backgroundAccountIds.delete(account.id)
             this.focusedAccountId = account.id
             this.render()
             void Promise.resolve(this.sessionLauncher.focus(account)).catch(() => undefined)
@@ -4668,18 +5590,7 @@ export class AuthApp {
       const next = this.root.querySelector<HTMLButtonElement>(
         '[data-scroll-accounts="next"]',
       )
-      const updateNavigation = (): void => {
-        const overflow = accountScroller.scrollWidth > accountScroller.clientWidth + 2
-        if (previous) {
-          previous.hidden = !overflow
-          previous.disabled = accountScroller.scrollLeft <= 1
-        }
-        if (next) {
-          next.hidden = !overflow
-          next.disabled = accountScroller.scrollLeft + accountScroller.clientWidth
-            >= accountScroller.scrollWidth - 1
-        }
-      }
+      const updateNavigation = (): void => this.updateAccountTabNavigation()
       const scrollAccounts = (direction: -1 | 1): void => {
         accountScroller.scrollBy({
           behavior: 'smooth',
@@ -4873,6 +5784,7 @@ export class AuthApp {
         if (this.chatService?.getState().open) {
           this.chatService.close()
         } else if (!this.me?.profile.display_name?.trim()) {
+          this.nicknameOnboarding = false
           this.activeDialog = 'chat-nickname'
           this.render()
         } else {
@@ -5051,9 +5963,54 @@ export class AuthApp {
           }
 
           this.gridMode = mode
+          this.storeGridModePreference(mode)
           this.gridPageIndex = 0
           this.maximizedAccountId = null
           this.applyWorkspacePresentation()
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-direct-chat-user]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const recipientId = button.dataset.directChatUser
+          if (!recipientId) return
+          void this.chatService?.startDirectConversation(recipientId)
+            .catch((error) => this.showSessionAlert(
+              error instanceof Error
+                ? error.message
+                : 'Não foi possível abrir a conversa direta.',
+            ))
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-select-grid-workspace]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          this.workspaceMode = 'grid'
+          this.selectGridWorkspace(button.dataset.selectGridWorkspace || null)
+          this.lastLayoutSignature = ''
+          this.render()
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-create-grid-workspace]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          void this.openGridManagerDialog(null)
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-edit-grid-workspace]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const gridId = button.dataset.editGridWorkspace
+          if (!gridId) return
+          void this.openGridManagerDialog(gridId)
         })
       })
 
@@ -5105,6 +6062,92 @@ export class AuthApp {
           this.screensOnly = false
           this.lastLayoutSignature = ''
           this.applyWorkspacePresentation()
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-toggle-utility-bar]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          this.utilityBarCollapsed = !this.utilityBarCollapsed
+          try {
+            localStorage.setItem(
+              UTILITY_BAR_COLLAPSED_STORAGE_KEY,
+              String(this.utilityBarCollapsed),
+            )
+          } catch {
+            // The bar remains collapsible for the current session.
+          }
+          this.lastLayoutSignature = ''
+          this.render()
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-background-account]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const account = this.accountFromAction(button)
+          if (!account || this.mobileSessionMode) return
+          button.closest('details')?.removeAttribute('open')
+          this.backgroundAccountIds.add(account.id)
+          if (this.maximizedAccountId === account.id) {
+            this.maximizedAccountId = null
+          }
+          this.lastLayoutSignature = ''
+          this.render()
+          this.showSessionAlert(`${account.displayName} continua rodando em segundo plano.`)
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-toggle-workspace-rest]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const targets = this.utilityRestTargets()
+          if (targets.length === 0 || this.mobileSessionMode) return
+          const wake = targets.every((account) => this.backgroundAccountIds.has(account.id))
+
+          targets.forEach((account) => {
+            if (wake) {
+              this.backgroundAccountIds.delete(account.id)
+            } else {
+              this.backgroundAccountIds.add(account.id)
+            }
+          })
+          if (wake) {
+            this.focusedAccountId = targets[0]?.id ?? this.focusedAccountId
+          }
+          this.lastLayoutSignature = ''
+          this.render()
+          this.showSessionAlert(wake
+            ? `${targets.length === 1 ? targets[0]!.displayName : `${targets.length} contas`} despertada${targets.length === 1 ? '' : 's'}.`
+            : `${targets.length === 1 ? targets[0]!.displayName : `${targets.length} contas`} continua${targets.length === 1 ? '' : 'm'} rodando em descanso.`)
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-restore-account]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const account = this.accountFromAction(button)
+          if (!account) return
+          this.backgroundAccountIds.delete(account.id)
+          this.focusedAccountId = account.id
+          this.lastLayoutSignature = ''
+          this.render()
+          void Promise.resolve(this.sessionLauncher.focus(account)).catch(() => undefined)
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-copy-proxy-account]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const account = this.accountFromAction(button)
+          if (!account) return
+          button.closest('details')?.removeAttribute('open')
+          void this.openCopyProxyDialog(account)
         })
       })
 
@@ -5397,9 +6440,11 @@ export class AuthApp {
         return
       }
 
-      const triggerRect = trigger.getBoundingClientRect()
-      const menuRect = menu.getBoundingClientRect()
       const margin = 8
+      const triggerRect = trigger.getBoundingClientRect()
+      menu.style.maxHeight = `${Math.max(160, window.innerHeight - margin * 2)}px`
+      menu.style.overflowY = 'auto'
+      const menuRect = menu.getBoundingClientRect()
       const left = Math.min(
         window.innerWidth - menuRect.width - margin,
         Math.max(margin, triggerRect.right - menuRect.width),
@@ -5454,15 +6499,21 @@ export class AuthApp {
     if (this.activeDialog === 'payment') {
       this.stopPaymentPolling()
     }
-    if (this.activeDialog === 'proxy') {
+    if (this.activeDialog === 'proxy' || this.activeDialog === 'copy-proxy') {
       this.proxyConfig = null
       this.proxyLoading = false
       this.proxySaving = false
       this.proxyTestResult = null
     }
+    if (this.activeDialog === 'extension') {
+      this.extensionConfig = null
+      this.extensionLoading = false
+      this.extensionSaving = false
+    }
     this.activeDialog = null
     this.dialogError = null
     this.dialogAccountId = null
+    this.dialogGridWorkspaceId = null
     this.render()
 
     queueMicrotask(() => {
@@ -5493,6 +6544,7 @@ export class AuthApp {
     }
 
     this.configuredAccounts = this.accountService.list(this.session.user.id)
+    this.loadSavedGridWorkspaces(this.session.user.id)
 
     // Keep native game views hidden while transitioning directly from the
     // picker to the limit warning. This avoids a transient 1x1 view covering
@@ -5586,17 +6638,6 @@ export class AuthApp {
     }
   }
 
-  private renderStonegyBotMenuItem(account: ConfiguredAccount): string {
-    if (!this.stonegyBotControlSupported() || !this.isStonegyAccount(account)) {
-      return ''
-    }
-
-    const entitled = this.permissionService.canUseFeature(STONEGY_BOT_FEATURE)
-    const label = stonegyBotMenuLabel(entitled, account.stonegyBotEnabled === true)
-
-    return `<button class="menu-item" data-stonegy-bot-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem">${label}</button>`
-  }
-
   private startPaymentPolling(): void {
     this.stopPaymentPolling()
     const poll = async (): Promise<void> => {
@@ -5633,6 +6674,102 @@ export class AuthApp {
     }
   }
 
+  private startAdminPaymentAlerts(): void {
+    if (
+      !this.adminAccess
+      || !this.backendApi?.getAdminPaymentLogs
+      || this.adminPaymentAlertTimer !== null
+      || this.destroyed
+    ) {
+      return
+    }
+
+    void this.refreshAdminPaymentAlerts()
+    this.adminPaymentAlertTimer = setInterval(() => {
+      void this.refreshAdminPaymentAlerts()
+    }, 10_000)
+  }
+
+  private stopAdminPaymentAlerts(): void {
+    if (this.adminPaymentAlertTimer !== null) {
+      clearInterval(this.adminPaymentAlertTimer)
+      this.adminPaymentAlertTimer = null
+    }
+    this.adminPaymentAlertLoading = false
+    this.adminPaymentsInitialized = false
+    this.adminPaymentStates.clear()
+  }
+
+  private async refreshAdminPaymentAlerts(): Promise<void> {
+    const backendApi = this.backendApi
+    if (
+      !this.adminAccess
+      || !backendApi?.getAdminPaymentLogs
+      || this.adminPaymentAlertLoading
+    ) {
+      return
+    }
+
+    this.adminPaymentAlertLoading = true
+    try {
+      const response = await backendApi.getAdminPaymentLogs(1, 25)
+      const nextStates = new Map<string, string>()
+      const confirmedStatuses = new Set(['approved', 'fulfilled', 'paid'])
+
+      for (const payment of [...response.payments].reverse()) {
+        nextStates.set(payment.id, payment.status)
+        if (!this.adminPaymentsInitialized) continue
+
+        const previousStatus = this.adminPaymentStates.get(payment.id)
+        const confirmed = confirmedStatuses.has(payment.status)
+        const becameConfirmed = previousStatus !== undefined
+          && !confirmedStatuses.has(previousStatus)
+          && confirmed
+
+        if (previousStatus === undefined || becameConfirmed) {
+          await this.notifyAdminPayment(payment, confirmed)
+        }
+      }
+
+      this.adminPaymentStates.clear()
+      nextStates.forEach((status, paymentId) => {
+        this.adminPaymentStates.set(paymentId, status)
+      })
+      this.adminPaymentsInitialized = true
+    } catch {
+      // Administrative alerts retry on the next polling cycle.
+    } finally {
+      this.adminPaymentAlertLoading = false
+    }
+  }
+
+  private async notifyAdminPayment(
+    payment: AdminPaymentLog,
+    confirmed: boolean,
+  ): Promise<void> {
+    let user: AdminUserDetail | null = null
+    try {
+      user = this.backendApi?.getAdminUser
+        ? (await this.backendApi.getAdminUser(payment.user_id)).user
+        : null
+    } catch {
+      // The payment alert remains useful with the immutable user id.
+    }
+
+    const nickname = user?.display_name?.trim()
+    const identity = nickname
+      ? `${nickname}${user?.email ? ` · ${user.email}` : ''}`
+      : user?.email ?? payment.user_id
+    this.notificationCenter.upsertSystemNotification({
+      id: `admin-payment:${payment.id}:${confirmed ? 'confirmed' : 'attempt'}`,
+      occurredAt: payment.updated_at || payment.created_at,
+      summary: `${identity} · ${payment.product_code} · ${formatCurrency(payment.amount, payment.currency)}`,
+      title: confirmed ? 'Compra aprovada' : 'Nova tentativa de compra',
+    })
+    playAdminPaymentAlertSound(confirmed)
+    this.render()
+  }
+
   private bindDialogActions(): void {
     this.root
       .querySelectorAll<HTMLButtonElement>('[data-close-dialog]')
@@ -5641,6 +6778,132 @@ export class AuthApp {
           this.closeDialog()
         })
       })
+
+    const chooseExtension = this.root.querySelector<HTMLButtonElement>('[data-choose-extension]')
+    if (chooseExtension) this.bindButtonOnce(chooseExtension, () => { void this.chooseAccountExtension() })
+
+    const extensionEnabled = this.root.querySelector<HTMLInputElement>('[data-extension-enabled]')
+    if (extensionEnabled && extensionEnabled.dataset.actionBound !== 'true') {
+      extensionEnabled.dataset.actionBound = 'true'
+      extensionEnabled.addEventListener('change', () => {
+        void this.setAccountExtensionEnabled(extensionEnabled.checked)
+      })
+    }
+
+    const removeExtension = this.root.querySelector<HTMLButtonElement>('[data-remove-extension]')
+    if (removeExtension) {
+      this.bindButtonOnce(removeExtension, () => {
+        if (window.confirm('Remover a extensão desta conta?')) void this.removeAccountExtension()
+      })
+    }
+
+    const gridWorkspaceForm = this.root.querySelector<HTMLFormElement>(
+      '#grid-workspace-form',
+    )
+    if (gridWorkspaceForm && gridWorkspaceForm.dataset.actionBound !== 'true') {
+      gridWorkspaceForm.dataset.actionBound = 'true'
+      const accountChecks = () => [...gridWorkspaceForm.querySelectorAll<HTMLInputElement>(
+        'input[name="accountIds"]',
+      )]
+
+      gridWorkspaceForm
+        .querySelectorAll<HTMLButtonElement>('[data-grid-select]')
+        .forEach((button) => {
+          this.bindButtonOnce(button, () => {
+            const action = button.dataset.gridSelect
+            const openIds = new Set(this.getActiveAccounts().map((account) => account.id))
+            accountChecks().forEach((input) => {
+              input.checked = action === 'all'
+                || (action === 'open' && openIds.has(input.value))
+            })
+          })
+        })
+
+      gridWorkspaceForm
+        .querySelectorAll<HTMLButtonElement>('[data-grid-select-game]')
+        .forEach((button) => {
+          this.bindButtonOnce(button, () => {
+            const gameSlug = button.dataset.gridSelectGame
+            const accountIds = new Set(this.configuredAccounts
+              .filter((account) => account.gameSlug === gameSlug)
+              .map((account) => account.id))
+            accountChecks().forEach((input) => { input.checked = accountIds.has(input.value) })
+          })
+        })
+
+      gridWorkspaceForm.addEventListener('submit', (event) => {
+        event.preventDefault()
+        const userId = this.session?.user.id
+        if (!userId) return
+        const name = this.valueOf(gridWorkspaceForm, 'name').trim()
+        const accountIds = accountChecks().filter((input) => input.checked).map((input) => input.value)
+        if (!name) {
+          this.showSessionAlert('Digite um nome para a grade.')
+          return
+        }
+        if (accountIds.length === 0) {
+          this.showSessionAlert('Selecione pelo menos uma conta para esta grade.')
+          return
+        }
+        const saved = this.gridWorkspaceService.save(userId, {
+          accountIds,
+          id: this.dialogGridWorkspaceId,
+          name,
+        })
+        if (!saved) {
+          this.showSessionAlert('Não foi possível salvar esta grade.')
+          return
+        }
+        this.savedGridWorkspaces = this.gridWorkspaceService.list(
+          userId,
+          this.configuredAccounts.map((account) => account.id),
+        )
+        this.workspaceMode = 'grid'
+        this.selectGridWorkspace(saved.id)
+        this.closeDialog()
+      })
+    }
+
+    const createGameGrids = this.root.querySelector<HTMLButtonElement>(
+      '[data-create-game-grids]',
+    )
+    if (createGameGrids) {
+      this.bindButtonOnce(createGameGrids, () => {
+        const userId = this.session?.user.id
+        if (!userId || this.configuredAccounts.length === 0) return
+        const grids = this.gridWorkspaceService.createForGames(
+          userId,
+          this.configuredAccounts,
+          (account) => this.gameNameFor(account),
+        )
+        this.savedGridWorkspaces = this.gridWorkspaceService.list(
+          userId,
+          this.configuredAccounts.map((account) => account.id),
+        )
+        this.workspaceMode = 'grid'
+        this.selectGridWorkspace(grids[0]?.id ?? null)
+        this.closeDialog()
+        this.showSessionAlert(`${grids.length} ${grids.length === 1 ? 'grade criada' : 'grades criadas'} por jogo.`)
+      })
+    }
+
+    const deleteGridWorkspace = this.root.querySelector<HTMLButtonElement>(
+      '[data-delete-grid-workspace]',
+    )
+    if (deleteGridWorkspace) {
+      this.bindButtonOnce(deleteGridWorkspace, () => {
+        const userId = this.session?.user.id
+        const gridId = this.dialogGridWorkspaceId
+        if (!userId || !gridId || !window.confirm('Excluir esta grade? As contas continuarão salvas e abertas.')) return
+        this.gridWorkspaceService.remove(userId, gridId)
+        if (this.selectedGridWorkspaceId === gridId) this.selectGridWorkspace(null)
+        this.savedGridWorkspaces = this.gridWorkspaceService.list(
+          userId,
+          this.configuredAccounts.map((account) => account.id),
+        )
+        this.closeDialog()
+      })
+    }
 
     const showPlansButton =
       this.root.querySelector<HTMLButtonElement>('[data-show-plans]')
@@ -6020,6 +7283,15 @@ export class AuthApp {
       })
     }
 
+    const copyProxyForm = this.root.querySelector<HTMLFormElement>('#copy-proxy-form')
+    if (copyProxyForm && copyProxyForm.dataset.actionBound !== 'true') {
+      copyProxyForm.dataset.actionBound = 'true'
+      copyProxyForm.addEventListener('submit', (event) => {
+        event.preventDefault()
+        void this.copyProxyToAccount(copyProxyForm)
+      })
+    }
+
     const testProxyButton = this.root.querySelector<HTMLButtonElement>('[data-test-proxy]')
     if (testProxyButton) {
       this.bindButtonOnce(testProxyButton, () => {
@@ -6055,6 +7327,10 @@ export class AuthApp {
 
     if (dialog && typeof dialog.showModal === 'function' && !dialog.open) {
       dialog.showModal()
+      if (dialog.matches('.modal--plans, .modal--plan-summary')) {
+        dialog.focus({ preventScroll: true })
+        dialog.scrollTop = 0
+      }
     }
   }
 
@@ -6094,13 +7370,20 @@ export class AuthApp {
 
       this.accountService.remove(userId, accountId)
       await Promise.resolve(this.sessionLauncher.removeProxy?.(account)).catch(() => undefined)
+      await Promise.resolve(this.sessionLauncher.removeExtension?.(account)).catch(() => undefined)
       this.configuredAccounts = this.accountService.list(userId)
+      this.loadSavedGridWorkspaces(userId)
       this.sessionFrameRates.delete(accountId)
       this.storeSessionFrameRatePreferences()
       this.sessionInterfaceScales.delete(accountId)
       this.storeSessionInterfaceScalePreferences()
       this.mutedAccountIds.delete(accountId)
       this.sessionIssues.delete(accountId)
+      this.backgroundAccountIds.delete(accountId)
+      this.accountProxyStates.delete(accountId)
+      this.proxyStateLoadingAccountIds.delete(accountId)
+      this.accountExtensionStates.delete(accountId)
+      this.extensionStateLoadingAccountIds.delete(accountId)
       this.maximizedAccountId = this.maximizedAccountId === accountId
         ? null
         : this.maximizedAccountId
@@ -6115,6 +7398,256 @@ export class AuthApp {
     }
   }
 
+  private async openCopyProxyDialog(source: ConfiguredAccount): Promise<void> {
+    if (!this.proxyControlAvailable() || !this.sessionLauncher.getProxy || !this.sessionLauncher.copyProxy) {
+      this.showSessionAlert('A cópia de proxy por conta está disponível no plano Founder para Windows.')
+      return
+    }
+    if (!this.configuredAccounts.some((account) => account.id !== source.id)) {
+      this.showSessionAlert('Adicione outra conta para receber este proxy.')
+      return
+    }
+
+    this.dialogAccountId = source.id
+    this.dialogReturnFocus = { accountId: source.id, type: 'account' }
+    this.activeDialog = 'copy-proxy'
+    this.dialogError = null
+    this.proxyConfig = null
+    this.proxyLoading = true
+    this.render()
+
+    try {
+      this.proxyConfig = await this.sessionLauncher.getProxy(source)
+      this.accountProxyStates.set(source.id, this.proxyConfig)
+      if (!this.proxyConfig) {
+        this.dialogError = `Configure um proxy em ${source.displayName} antes de copiá-lo.`
+      }
+    } catch (error) {
+      this.dialogError = error instanceof Error
+        ? error.message
+        : 'Não foi possível ler o proxy da conta de origem.'
+    } finally {
+      this.proxyLoading = false
+      if (this.activeDialog === 'copy-proxy' && this.dialogAccountId === source.id) {
+        this.render()
+      }
+    }
+  }
+
+  private async copyProxyToAccount(form: HTMLFormElement): Promise<void> {
+    const source = this.configuredAccounts.find(
+      (account) => account.id === this.dialogAccountId,
+    )
+    const targetId = this.valueOf(form, 'targetAccountId')
+    const target = this.configuredAccounts.find(
+      (account) => account.id === targetId && account.id !== source?.id,
+    )
+    if (!source || !target || !this.sessionLauncher.copyProxy || this.proxySaving) {
+      this.dialogError = 'Escolha uma conta de destino válida.'
+      this.render()
+      return
+    }
+
+    this.proxySaving = true
+    this.dialogError = null
+    this.render()
+    try {
+      const copied = await this.sessionLauncher.copyProxy(source, target)
+      if (!copied) {
+        throw new Error(`Configure um proxy em ${source.displayName} antes de copiá-lo.`)
+      }
+      this.accountProxyStates.set(target.id, copied)
+      this.closeDialog()
+      this.showSessionAlert(`Proxy de ${source.displayName} copiado e aplicado em ${target.displayName}.`)
+    } catch (error) {
+      this.dialogError = error instanceof Error
+        ? error.message
+        : 'Não foi possível copiar o proxy para esta conta.'
+      this.proxySaving = false
+      this.render()
+    }
+  }
+
+  private extensionControlAvailable(): boolean {
+    return !this.mobileSessionMode
+      && this.permissionService.getCurrentPlan() !== 'FREE'
+      && typeof this.sessionLauncher.getExtension === 'function'
+      && typeof this.sessionLauncher.chooseExtension === 'function'
+  }
+
+  private extensionAccountLimit(): number {
+    return extensionAccountLimitForPlan(this.permissionService.getCurrentPlan())
+  }
+
+  private configuredExtensionAccountIds(): string[] {
+    return this.configuredAccounts
+      .filter((account) => this.accountExtensionStates.get(account.id) != null)
+      .map((account) => account.id)
+  }
+
+  private configuredExtensionCount(): number {
+    return this.configuredExtensionAccountIds().length
+  }
+
+  private canAssignAccountExtension(accountId: string): boolean {
+    if (this.accountExtensionStates.get(accountId) != null) {
+      return this.isAccountExtensionWithinLimit(accountId)
+    }
+    return this.configuredExtensionCount() < this.extensionAccountLimit()
+  }
+
+  private isAccountExtensionWithinLimit(accountId: string): boolean {
+    if (this.accountExtensionStates.get(accountId) == null) return false
+    const limit = this.extensionAccountLimit()
+    if (limit === UNLIMITED_ACCOUNT_LIMIT) return true
+    const index = this.configuredExtensionAccountIds().indexOf(accountId)
+    return index >= 0 && index < limit
+  }
+
+  private extensionLimitMessage(): string {
+    const plan = this.permissionService.getCurrentPlan()
+    const limit = this.extensionAccountLimit()
+    return `O plano ${PLAN_PRESENTATION[plan].displayName} permite extensão em até ${limit} contas. Remova a extensão de outra conta ou escolha um plano com mais vagas.`
+  }
+
+  private async ensureAccountExtensionStates(): Promise<void> {
+    if (this.extensionStatesReady) return
+    await this.refreshAccountExtensionStates()
+  }
+
+  private async refreshAccountExtensionStates(): Promise<void> {
+    if (!this.extensionControlAvailable() || !this.sessionLauncher.getExtension) {
+      this.accountExtensionStates.clear()
+      this.extensionStatesReady = true
+      return
+    }
+    if (this.extensionStateRefreshInFlight) {
+      await this.extensionStateRefreshInFlight
+      return
+    }
+    const userId = this.session?.user.id
+    if (!userId) return
+    const accounts = [...this.configuredAccounts]
+    accounts.forEach((account) => this.extensionStateLoadingAccountIds.add(account.id))
+    const request = (async (): Promise<void> => {
+      const states = await Promise.all(accounts.map(async (account) => {
+        try {
+          return [account.id, await this.sessionLauncher.getExtension!(account)] as const
+        } catch {
+          return [account.id, null] as const
+        }
+      }))
+      if (this.destroyed || this.session?.user.id !== userId) return
+      for (const [accountId, state] of states) {
+        this.extensionStateLoadingAccountIds.delete(accountId)
+        this.accountExtensionStates.set(accountId, state)
+      }
+      this.extensionStatesReady = true
+      if (this.currentView === 'authenticated') this.render()
+    })()
+    this.extensionStateRefreshInFlight = request
+    try {
+      await request
+    } finally {
+      if (this.extensionStateRefreshInFlight === request) {
+        this.extensionStateRefreshInFlight = null
+      }
+    }
+  }
+
+  private async openExtensionDialog(account: ConfiguredAccount): Promise<void> {
+    if (!this.extensionControlAvailable() || !this.sessionLauncher.getExtension) {
+      this.showSessionAlert('Extensões por conta estão disponíveis nos planos pagos do aplicativo Windows.')
+      return
+    }
+    this.dialogAccountId = account.id
+    this.dialogReturnFocus = { accountId: account.id, type: 'account' }
+    this.activeDialog = 'extension'
+    this.dialogError = null
+    this.extensionConfig = null
+    this.extensionLoading = true
+    this.render()
+    try {
+      await this.ensureAccountExtensionStates()
+      this.extensionConfig = await this.sessionLauncher.getExtension(account)
+      this.accountExtensionStates.set(account.id, this.extensionConfig)
+    } catch (error) {
+      this.dialogError = error instanceof Error ? error.message : 'Não foi possível verificar a extensão.'
+    } finally {
+      this.extensionLoading = false
+      if (this.activeDialog === 'extension' && this.dialogAccountId === account.id) this.render()
+    }
+  }
+
+  private async chooseAccountExtension(): Promise<void> {
+    const account = this.configuredAccounts.find((candidate) => candidate.id === this.dialogAccountId)
+    if (!account || !this.sessionLauncher.chooseExtension || this.extensionSaving) return
+    await this.ensureAccountExtensionStates()
+    if (!this.canAssignAccountExtension(account.id)) {
+      this.dialogError = this.extensionLimitMessage()
+      this.render()
+      return
+    }
+    this.extensionSaving = true
+    this.dialogError = null
+    this.render()
+    try {
+      const selected = await this.sessionLauncher.chooseExtension(account)
+      if (selected) {
+        this.extensionConfig = selected
+        this.accountExtensionStates.set(account.id, selected)
+        this.showSessionAlert(`${selected.name} foi aplicada somente em ${account.displayName}.`)
+      }
+    } catch (error) {
+      this.dialogError = error instanceof Error
+        ? error.message
+        : 'A extensão não é compatível com o AltGrid.'
+    } finally {
+      this.extensionSaving = false
+      if (this.activeDialog === 'extension') this.render()
+    }
+  }
+
+  private async setAccountExtensionEnabled(enabled: boolean): Promise<void> {
+    const account = this.configuredAccounts.find((candidate) => candidate.id === this.dialogAccountId)
+    if (!account || !this.sessionLauncher.setExtensionEnabled || this.extensionSaving) return
+    await this.ensureAccountExtensionStates()
+    if (enabled && !this.isAccountExtensionWithinLimit(account.id)) {
+      this.dialogError = this.extensionLimitMessage()
+      this.render()
+      return
+    }
+    this.extensionSaving = true
+    try {
+      const updated = await this.sessionLauncher.setExtensionEnabled(account, enabled)
+      this.extensionConfig = updated
+      this.accountExtensionStates.set(account.id, updated)
+      this.showSessionAlert(`${updated.name} ${enabled ? 'ativada' : 'desativada'} em ${account.displayName}.`)
+    } catch (error) {
+      this.dialogError = error instanceof Error ? error.message : 'Não foi possível alterar a extensão.'
+    } finally {
+      this.extensionSaving = false
+      if (this.activeDialog === 'extension') this.render()
+    }
+  }
+
+  private async removeAccountExtension(): Promise<void> {
+    const account = this.configuredAccounts.find((candidate) => candidate.id === this.dialogAccountId)
+    if (!account || !this.sessionLauncher.removeExtension || this.extensionSaving) return
+    this.extensionSaving = true
+    try {
+      await this.sessionLauncher.removeExtension(account)
+      this.extensionConfig = null
+      this.accountExtensionStates.set(account.id, null)
+      this.showSessionAlert(`Extensão removida de ${account.displayName}.`)
+    } catch (error) {
+      this.dialogError = error instanceof Error ? error.message : 'Não foi possível remover a extensão.'
+    } finally {
+      this.extensionSaving = false
+      if (this.activeDialog === 'extension') this.render()
+    }
+  }
+
   private proxyControlAvailable(): boolean {
     return !this.mobileSessionMode
       && typeof this.sessionLauncher.getProxy === 'function'
@@ -6122,78 +7655,83 @@ export class AuthApp {
       && this.permissionService.canUseFeature('account_proxy')
   }
 
-  private stonegyBotControlSupported(): boolean {
-    return !this.mobileSessionMode
-      && typeof this.sessionLauncher.setStonegyBot === 'function'
-  }
-
-  private isStonegyAccount(account: ConfiguredAccount): boolean {
-    const launchUrl = account.gameSlug === CUSTOM_GAME_SLUG
-      ? normalizeSafeGameUrl(account.customLaunchUrl)
-      : normalizeSafeGameUrl(this.games.find(
-          (candidate) => candidate.slug === account.gameSlug,
-        )?.launch_url)
-
-    return isStonegyLaunchUrl(launchUrl)
-  }
-
-  private async toggleStonegyBot(
-    account: ConfiguredAccount,
-    button: HTMLButtonElement,
-  ): Promise<void> {
-    if (!this.stonegyBotControlSupported() || !this.isStonegyAccount(account)) {
-      this.showSessionAlert('O AltGrid Bot está disponível somente para Stonegy no Windows.')
-      return
-    }
-
-    if (!this.permissionService.canUseFeature(STONEGY_BOT_FEATURE)) {
-      this.dialogReturnFocus = { accountId: account.id, type: 'account' }
-      this.dialogAccountId = account.id
-      this.activeDialog = 'plans'
-      this.render()
+  private async refreshAccountProxyStates(): Promise<void> {
+    if (!this.proxyControlAvailable() || !this.sessionLauncher.getProxy) {
+      this.accountProxyStates.clear()
       return
     }
 
     const userId = this.session?.user.id
-    if (!userId) {
+    if (!userId) return
+    const accounts = [...this.configuredAccounts]
+    accounts.forEach((account) => this.proxyStateLoadingAccountIds.add(account.id))
+
+    const states = await Promise.all(accounts.map(async (account) => {
+      try {
+        return [account.id, await this.sessionLauncher.getProxy!(account)] as const
+      } catch {
+        return [account.id, null] as const
+      }
+    }))
+
+    if (this.destroyed || this.session?.user.id !== userId) return
+    for (const [accountId, state] of states) {
+      this.proxyStateLoadingAccountIds.delete(accountId)
+      this.accountProxyStates.set(accountId, state)
+    }
+    if (this.currentView === 'authenticated') {
+      this.render()
+    }
+  }
+
+  private async toggleAccountProxy(
+    account: ConfiguredAccount,
+    button: HTMLButtonElement,
+  ): Promise<void> {
+    if (!this.proxyControlAvailable() || !this.sessionLauncher.setProxy) {
+      this.showSessionAlert('O proxy por conta é exclusivo do Founder no aplicativo Windows.')
       return
     }
 
-    const previous = account.stonegyBotEnabled === true
-    const enabled = !previous
+    let state = this.accountProxyStates.get(account.id)
+    if (state === undefined && this.sessionLauncher.getProxy) {
+      button.disabled = true
+      this.proxyStateLoadingAccountIds.add(account.id)
+      try {
+        state = await this.sessionLauncher.getProxy(account)
+        this.accountProxyStates.set(account.id, state)
+      } finally {
+        this.proxyStateLoadingAccountIds.delete(account.id)
+      }
+    }
+
+    if (!state) {
+      button.disabled = false
+      await this.openProxyDialog(account)
+      return
+    }
+
     button.disabled = true
-    button.textContent = enabled ? 'Desativar AltGrid Bot' : 'Ativar AltGrid Bot'
-
     try {
-      const updated = this.accountService.setStonegyBotEnabled(
-        userId,
-        account.id,
-        enabled,
-      )
-      if (!updated) {
-        throw new Error('Conta não encontrada.')
-      }
-      account.stonegyBotEnabled = enabled
-      this.configuredAccounts = this.accountService.list(userId)
-
-      if (this.permissionService.isSessionActive(account.id)) {
-        await Promise.resolve(this.sessionLauncher.setStonegyBot!(updated, enabled))
-      }
-
+      const updated = await this.sessionLauncher.setProxy(account, {
+        enabled: !state.enabled,
+        host: state.host,
+        port: state.port,
+        preservePassword: state.hasPassword,
+        protocol: state.protocol,
+        username: state.username,
+      })
+      this.accountProxyStates.set(account.id, updated)
       this.render()
-      this.showSessionAlert(enabled
-        ? 'AltGrid Bot ativado. A conta será recarregada para iniciar o bot.'
-        : 'AltGrid Bot desativado. A conta será recarregada sem o bot.')
-    } catch {
-      this.accountService.setStonegyBotEnabled(userId, account.id, previous)
-      account.stonegyBotEnabled = previous
-      this.configuredAccounts = this.accountService.list(userId)
-      this.render()
-      this.showSessionAlert('Não foi possível alterar o AltGrid Bot nesta conta.')
+      this.showSessionAlert(updated.enabled
+        ? `Proxy ativado em ${account.displayName}. A tela está reconectando pela rota salva.`
+        : `Proxy desativado em ${account.displayName}. A tela está voltando à conexão direta.`)
+    } catch (error) {
+      this.showSessionAlert(error instanceof Error
+        ? error.message
+        : 'Não foi possível alterar o proxy desta conta.')
     } finally {
-      if (button.isConnected) {
-        button.disabled = false
-      }
+      if (button.isConnected) button.disabled = false
     }
   }
 
@@ -6214,6 +7752,7 @@ export class AuthApp {
 
     try {
       this.proxyConfig = await this.sessionLauncher.getProxy(account)
+      this.accountProxyStates.set(account.id, this.proxyConfig)
     } catch (error) {
       this.dialogError = error instanceof Error
         ? error.message
@@ -6226,17 +7765,44 @@ export class AuthApp {
     }
   }
 
-  private async saveProxyConfiguration(form: HTMLFormElement): Promise<void> {
+  private async saveProxyConfiguration(
+    form: HTMLFormElement,
+    validateAfterSave = false,
+  ): Promise<void> {
     const account = this.configuredAccounts.find(
       (candidate) => candidate.id === this.dialogAccountId,
     )
     if (!account || !this.sessionLauncher.setProxy || this.proxySaving) return
 
-    const port = Number(this.valueOf(form, 'port'))
-    const password = this.valueOf(form, 'password')
+    const compact = this.valueOf(form, 'compact')
+    let protocol = this.valueOf(form, 'protocol') as SessionProxyInput['protocol']
+    let host = this.valueOf(form, 'host')
+    let port = Number(this.valueOf(form, 'port'))
+    let username = this.valueOf(form, 'username')
+    let password = this.valueOf(form, 'password')
+    if (compact) {
+      try {
+        const parsed = parseProxyLine(compact, protocol)
+        protocol = parsed.protocol
+        host = parsed.host
+        port = parsed.port
+        username = parsed.username
+        password = parsed.password
+      } catch (error) {
+        this.dialogError = error instanceof Error ? error.message : 'Linha de proxy inválida.'
+        this.render()
+        return
+      }
+    }
     const enabled = form.elements.namedItem('enabled') instanceof HTMLInputElement
       && (form.elements.namedItem('enabled') as HTMLInputElement).checked
-    const protocol = this.valueOf(form, 'protocol') as SessionProxyInput['protocol']
+
+    if (validateAfterSave && !enabled) {
+      this.dialogError = 'Ative “Usar proxy nesta conta” antes de validar a rota.'
+      this.proxyTestResult = null
+      this.render()
+      return
+    }
 
     this.proxySaving = true
     this.dialogError = null
@@ -6244,19 +7810,22 @@ export class AuthApp {
     try {
       this.proxyConfig = await this.sessionLauncher.setProxy(account, {
         enabled,
-        host: this.valueOf(form, 'host'),
+        host,
         password: password || undefined,
         port,
         preservePassword: Boolean(this.proxyConfig?.hasPassword && !password),
         protocol,
-        username: this.valueOf(form, 'username'),
+        username,
       })
-      this.proxyTestResult = {
-        latencyMs: 0,
-        message: enabled ? 'Proxy salvo e aplicado.' : 'Proxy salvo, mas desativado.',
-        ok: true,
-        route: enabled ? `${protocol.toUpperCase()} ${this.proxyConfig.host}:${this.proxyConfig.port}` : 'DIRECT',
-      }
+      this.accountProxyStates.set(account.id, this.proxyConfig)
+      this.proxyTestResult = validateAfterSave && enabled && this.sessionLauncher.testProxy
+        ? await this.sessionLauncher.testProxy(account)
+        : {
+            latencyMs: 0,
+            message: enabled ? 'Proxy salvo e aplicado.' : 'Proxy salvo, mas desativado.',
+            ok: true,
+            route: enabled ? `${protocol.toUpperCase()} ${this.proxyConfig.host}:${this.proxyConfig.port}` : 'DIRECT',
+          }
     } catch (error) {
       this.dialogError = error instanceof Error ? error.message : 'Não foi possível salvar o proxy.'
     } finally {
@@ -6266,22 +7835,11 @@ export class AuthApp {
   }
 
   private async testProxyConfiguration(button: HTMLButtonElement): Promise<void> {
-    const account = this.configuredAccounts.find(
-      (candidate) => candidate.id === this.dialogAccountId,
-    )
-    if (!account || !this.sessionLauncher.testProxy) return
+    const form = this.root.querySelector<HTMLFormElement>('#proxy-form')
+    if (!form || !this.sessionLauncher.testProxy) return
     button.disabled = true
-    button.textContent = 'Validando…'
-    this.dialogError = null
-    try {
-      this.proxyTestResult = await this.sessionLauncher.testProxy(account)
-    } catch (error) {
-      this.proxyTestResult = null
-      this.dialogError = error instanceof Error
-        ? error.message
-        : 'Abra esta conta para validar a rota configurada.'
-    }
-    this.render()
+    button.textContent = 'Salvando e validando…'
+    await this.saveProxyConfiguration(form, true)
   }
 
   private async removeProxyConfiguration(button: HTMLButtonElement): Promise<void> {
@@ -6294,6 +7852,7 @@ export class AuthApp {
     try {
       await this.sessionLauncher.removeProxy(account)
       this.proxyConfig = null
+      this.accountProxyStates.set(account.id, null)
       this.proxyTestResult = {
         latencyMs: 0,
         message: 'Proxy removido. A conta voltou para a conexão direta.',
@@ -6309,20 +7868,79 @@ export class AuthApp {
   private async refreshResourceUsage(): Promise<void> {
     if (!this.sessionLauncher.getResourceUsage || this.resourceUsageLoading) return
     this.resourceUsageLoading = true
-    this.render()
-    this.activateSettingsTab('accounts')
+    this.updateUtilityMetrics()
     try {
       this.resourceUsage = await this.sessionLauncher.getResourceUsage()
       this.dialogError = null
     } catch {
-      this.dialogError = 'Não foi possível medir a memória das sessões.'
+      if (this.activeDialog === 'settings') {
+        this.dialogError = 'Não foi possível medir o desempenho das sessões.'
+      }
     } finally {
       this.resourceUsageLoading = false
+      this.updateUtilityMetrics()
       if (this.activeDialog === 'settings') {
         this.render()
         this.activateSettingsTab('accounts')
       }
     }
+  }
+
+  private startResourceMonitoring(): void {
+    if (
+      this.mobileSessionMode
+      || !this.sessionLauncher.getResourceUsage
+      || this.resourceUsageTimer !== null
+      || this.destroyed
+    ) {
+      return
+    }
+
+    void this.refreshResourceUsage()
+    this.resourceUsageTimer = setInterval(() => {
+      if (this.currentView === 'authenticated' && !document.hidden) {
+        void this.refreshResourceUsage()
+      }
+    }, 6_000)
+  }
+
+  private stopResourceMonitoring(): void {
+    if (this.resourceUsageTimer !== null) {
+      clearInterval(this.resourceUsageTimer)
+      this.resourceUsageTimer = null
+    }
+    this.resourceUsageLoading = false
+  }
+
+  private updateUtilityMetrics(): void {
+    const utility = this.root.querySelector<HTMLElement>('[data-workspace-utility]')
+    if (!utility) return
+
+    const totalPrivateKb = this.resourceUsage.reduce(
+      (total, usage) => total + finiteResourceValue(usage.privateKb),
+      0,
+    )
+    const totalCpu = Math.min(999, this.resourceUsage.reduce(
+      (total, usage) => total + finiteResourceValue(usage.cpuPercent),
+      0,
+    ))
+    const cpu = utility.querySelector<HTMLElement>('[data-utility-cpu]')
+    const memory = utility.querySelector<HTMLElement>('[data-utility-memory]')
+    const liveDot = utility.querySelector<HTMLElement>('.utility-live-dot')
+    const refresh = utility.querySelector<HTMLButtonElement>('[data-refresh-resource-usage]')
+
+    if (cpu) {
+      cpu.textContent = this.resourceUsage.length > 0
+        ? `${totalCpu.toFixed(totalCpu >= 100 ? 0 : 1)}%`
+        : '—'
+    }
+    if (memory) {
+      memory.textContent = this.resourceUsage.length > 0
+        ? formatMemoryKb(totalPrivateKb)
+        : '—'
+    }
+    liveDot?.classList.toggle('is-loading', this.resourceUsageLoading)
+    if (refresh) refresh.disabled = this.resourceUsageLoading
   }
 
   private activateSettingsTab(tabName: string): void {
@@ -6342,13 +7960,11 @@ export class AuthApp {
 
       return launchUrl
           ? {
+            allowExtension: this.isAccountExtensionWithinLimit(account.id),
             allowProxy: this.permissionService.canUseFeature('account_proxy'),
             game: null,
             kind: 'custom',
             launchUrl,
-            stonegyBotEnabled: account.stonegyBotEnabled === true
-              && this.permissionService.canUseFeature(STONEGY_BOT_FEATURE)
-              && isStonegyLaunchUrl(launchUrl),
           }
         : null
     }
@@ -6360,13 +7976,11 @@ export class AuthApp {
 
     return game && launchUrl
       ? {
+          allowExtension: this.isAccountExtensionWithinLimit(account.id),
           allowProxy: this.permissionService.canUseFeature('account_proxy'),
           game,
           kind: 'preset',
           launchUrl,
-          stonegyBotEnabled: account.stonegyBotEnabled === true
-            && this.permissionService.canUseFeature(STONEGY_BOT_FEATURE)
-            && isStonegyLaunchUrl(launchUrl),
         }
       : null
   }
@@ -6383,6 +7997,9 @@ export class AuthApp {
       return
     }
 
+    if (this.extensionControlAvailable()) {
+      await this.ensureAccountExtensionStates()
+    }
     const launchTarget = this.resolveSessionLaunchTarget(account)
 
     if (
@@ -6542,6 +8159,7 @@ export class AuthApp {
       )
       this.mutedAccountIds.delete(account.id)
       this.sessionIssues.delete(account.id)
+      this.backgroundAccountIds.delete(account.id)
 
       if (this.focusedAccountId === accountId) {
         this.focusedAccountId = this.getActiveAccounts()[0]?.id ?? null
@@ -6581,6 +8199,7 @@ export class AuthApp {
       button.textContent = 'Encerrar'
     }
   }
+
 
   private async clearConfiguredAccountData(
     account: ConfiguredAccount,
@@ -6670,6 +8289,36 @@ export class AuthApp {
         this.setFormBusy(form, false)
       }
     })
+  }
+
+  private bindGoogleAuthButtons(): void {
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-google-auth]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, async () => {
+          button.disabled = true
+          const originalLabel = button.innerHTML
+          button.innerHTML = '<span class="spinner spinner--google" aria-hidden="true"></span><span>Abrindo Google…</span>'
+
+          try {
+            const authorizationUrl = await this.authService.startGoogleSignIn(
+              googleAuthRedirectUrl(),
+            )
+            await Promise.resolve(this.openExternalUrl(authorizationUrl))
+          } catch (error) {
+            const card = button.closest<HTMLElement>('.auth-card')
+            const form = card?.querySelector<HTMLFormElement>('form')
+            if (form) {
+              this.showFormAlert(form, errorMessage(error))
+            }
+          } finally {
+            if (button.isConnected) {
+              button.disabled = false
+              button.innerHTML = originalLabel
+            }
+          }
+        })
+      })
   }
 
   private bindSignupForm(): void {
@@ -6934,6 +8583,10 @@ export class AuthApp {
   }
 
   private showSessionAlert(message: string): void {
+    if (this.sessionAlertTimer) {
+      clearTimeout(this.sessionAlertTimer)
+      this.sessionAlertTimer = null
+    }
     const alert = this.root.querySelector<HTMLElement>('#session-alert')
 
     if (!alert) {
@@ -6942,6 +8595,15 @@ export class AuthApp {
 
     alert.textContent = message
     alert.classList.toggle('is-visible', Boolean(message))
+    if (message) {
+      this.sessionAlertTimer = setTimeout(() => {
+        this.sessionAlertTimer = null
+        const currentAlert = this.root.querySelector<HTMLElement>('#session-alert')
+        if (!currentAlert || currentAlert.textContent !== message) return
+        currentAlert.classList.remove('is-visible')
+        currentAlert.textContent = ''
+      }, 4_500)
+    }
   }
 
   private focusCurrentView(): void {

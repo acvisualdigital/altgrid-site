@@ -41,6 +41,11 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Setup .NET for Velopack
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
       - name: Resolve Windows version
         shell: pwsh
         run: |
@@ -127,12 +132,10 @@ jobs:
             }
           }
 
-          $artifacts = @(
-            "release/AltGrid-Setup-$($env:WINDOWS_VERSION_NAME).exe",
-            "release/AltGrid-Setup-$($env:WINDOWS_VERSION_NAME).exe.blockmap",
-            "release/AltGrid-Portable-$($env:WINDOWS_VERSION_NAME).exe",
-            "release/latest.yml"
-          )
+          $artifacts = @(Get-ChildItem -LiteralPath "release/velopack" -File | ForEach-Object { $_.FullName })
+          if ($artifacts.Count -eq 0) {
+            throw "Nenhum artefato Velopack foi gerado."
+          }
           foreach ($artifact in $artifacts) {
             if (-not (Test-Path -LiteralPath $artifact)) {
               throw "Artefato ausente: $artifact"

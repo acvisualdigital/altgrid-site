@@ -8,39 +8,40 @@ import android.webkit.WebView;
 import java.util.List;
 
 public class MainActivity extends GameActivity {
-    private static final String RECOVERY_SCHEME = "altgrid";
-    private static final String RECOVERY_HOST = "app";
-    private static final String RECOVERY_QUERY_KEY = "auth";
+    private static final String AUTH_SCHEME = "altgrid";
+    private static final String AUTH_HOST = "app";
+    private static final String AUTH_QUERY_KEY = "auth";
     private static final String RECOVERY_QUERY_VALUE = "recovery";
-    private static final int MAX_RECOVERY_URI_LENGTH = 16_384;
+    private static final String OAUTH_QUERY_VALUE = "oauth";
+    private static final int MAX_AUTH_URI_LENGTH = 16_384;
 
     @Override
     public void onCreate(Bundle state) {
         registerPlugin(AltGridMobilePlugin.class);
         registerPlugin(AltGridMobileUpdaterPlugin.class);
         super.onCreate(state);
-        handleRecoveryIntent(getIntent());
+        handleAuthIntent(getIntent());
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
-        handleRecoveryIntent(intent);
+        handleAuthIntent(intent);
     }
 
-    private void handleRecoveryIntent(Intent intent) {
+    private void handleAuthIntent(Intent intent) {
         if (intent == null) {
             return;
         }
 
-        Uri recoveryUri = intent.getData();
-        if (!isTrustedRecoveryUri(recoveryUri) || bridge == null) {
+        Uri authUri = intent.getData();
+        if (!isTrustedAuthUri(authUri) || bridge == null) {
             setIntent(intent);
             return;
         }
 
-        String encodedQuery = recoveryUri.getEncodedQuery();
-        String encodedFragment = recoveryUri.getEncodedFragment();
+        String encodedQuery = authUri.getEncodedQuery();
+        String encodedFragment = authUri.getEncodedFragment();
         Uri destination = Uri.parse(bridge.getLocalUrl()).buildUpon()
             .path("/")
             .encodedQuery(encodedQuery)
@@ -57,12 +58,12 @@ public class MainActivity extends GameActivity {
         setIntent(sanitizedIntent);
     }
 
-    private static boolean isTrustedRecoveryUri(Uri uri) {
-        if (uri == null || uri.toString().length() > MAX_RECOVERY_URI_LENGTH) {
+    private static boolean isTrustedAuthUri(Uri uri) {
+        if (uri == null || uri.toString().length() > MAX_AUTH_URI_LENGTH) {
             return false;
         }
-        if (!RECOVERY_SCHEME.equalsIgnoreCase(uri.getScheme())
-            || !RECOVERY_HOST.equalsIgnoreCase(uri.getHost())
+        if (!AUTH_SCHEME.equalsIgnoreCase(uri.getScheme())
+            || !AUTH_HOST.equalsIgnoreCase(uri.getHost())
             || uri.getPort() != -1
             || uri.getUserInfo() != null) {
             return false;
@@ -73,8 +74,33 @@ public class MainActivity extends GameActivity {
             return false;
         }
 
-        List<String> recoveryValues = uri.getQueryParameters(RECOVERY_QUERY_KEY);
-        return recoveryValues.size() == 1
-            && RECOVERY_QUERY_VALUE.equals(recoveryValues.get(0));
+        List<String> authValues = uri.getQueryParameters(AUTH_QUERY_KEY);
+        if (authValues.size() != 1) {
+            return false;
+        }
+
+        String authType = authValues.get(0);
+        if (RECOVERY_QUERY_VALUE.equals(authType)) {
+            return true;
+        }
+        if (!OAUTH_QUERY_VALUE.equals(authType)) {
+            return false;
+        }
+
+        boolean hasCode = uri.getQueryParameter("code") != null;
+        for (String queryKey : uri.getQueryParameterNames()) {
+            if (!AUTH_QUERY_KEY.equals(queryKey) && !(hasCode && "code".equals(queryKey))) {
+                return false;
+            }
+        }
+
+        String fragment = uri.getEncodedFragment();
+        Uri fragmentParameters = fragment == null
+            ? null
+            : Uri.parse("https://altgrid.invalid/?" + fragment);
+        boolean hasImplicitSession = fragmentParameters != null
+            && fragmentParameters.getQueryParameter("access_token") != null
+            && fragmentParameters.getQueryParameter("refresh_token") != null;
+        return hasCode || hasImplicitSession;
     }
 }

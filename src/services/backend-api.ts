@@ -7,6 +7,7 @@ import {
 import type {
   AppMetricsResponse,
   ChatChannelsResponse,
+  ChatDirectChannelResponse,
   ChatMessageResponse,
   ChatMessagesResponse,
   ChatReportResponse,
@@ -48,6 +49,9 @@ import type {
   AdminProductResponse,
   AdminProductsResponse,
   AdminProductUpdate,
+  AdminPublisherRequestResponse,
+  AdminPublisherRequestsResponse,
+  AdminPublisherReviewInput,
   AdminPaymentLogsResponse,
   AdminReferralResponse,
   AdminReferralsResponse,
@@ -217,6 +221,13 @@ export class BackendApi {
 
   getChatChannels(): Promise<ChatChannelsResponse> {
     return this.privateRead<ChatChannelsResponse>('/v1/chat/channels')
+  }
+
+  startDirectChat(recipientId: string): Promise<ChatDirectChannelResponse> {
+    return this.privateRequest<ChatDirectChannelResponse>(
+      '/v1/chat/direct/' + encodeURIComponent(recipientId),
+      { method: 'POST' },
+    )
   }
 
   getChatMessages(
@@ -423,6 +434,22 @@ export class BackendApi {
 
   getAdminGames(): Promise<AdminGamesResponse> {
     return this.privateRead<AdminGamesResponse>('/v1/admin/games')
+  }
+
+  getAdminPublisherRequests(status?: string | null): Promise<AdminPublisherRequestsResponse> {
+    const query = status ? `?status=${encodeURIComponent(status)}` : ''
+    return this.privateRead<AdminPublisherRequestsResponse>(`/v1/admin/publisher-requests${query}`)
+  }
+
+  reviewAdminPublisherRequest(
+    requestId: string,
+    input: AdminPublisherReviewInput,
+  ): Promise<AdminPublisherRequestResponse> {
+    return this.adminJsonMutation<AdminPublisherRequestResponse>(
+      `/v1/admin/publisher-requests/${encodeURIComponent(requestId)}/review`,
+      'POST',
+      input,
+    )
   }
 
   createAdminGame(input: AdminGameInput): Promise<AdminGameResponse> {

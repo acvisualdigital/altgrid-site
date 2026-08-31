@@ -189,9 +189,13 @@ export interface PublicProductsResponse {
 
 export interface ChatChannel {
   id: string
-  type: 'game' | 'global'
+  type: 'direct' | 'game' | 'global'
   game_id: string | null
   name: string
+  participant_id?: string | null
+  participant_plan?: PlanCode | null
+  participant_founder_number?: number | null
+  unread?: number
 }
 
 export interface ChatMessage {
@@ -210,6 +214,10 @@ export interface ChatMessage {
 
 export interface ChatChannelsResponse {
   channels: ChatChannel[]
+}
+
+export interface ChatDirectChannelResponse {
+  channel: ChatChannel
 }
 
 export interface ChatMessagesResponse {

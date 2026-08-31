@@ -14,7 +14,10 @@
     "required": [
       "SUPABASE_URL",
       "SUPABASE_SERVICE_ROLE_KEY",
-      "PRIVATE_LICENSE_KEY"
+      "PRIVATE_LICENSE_KEY",
+      "MERCADOPAGO_ACCESS_TOKEN",
+      "MERCADOPAGO_WEBHOOK_SECRET",
+      "MERCADOPAGO_WEBHOOK_URL"
     ]
   },
   "vars": {

@@ -15,6 +15,10 @@ const electronMocks = vi.hoisted(() => {
       clearCache: vi.fn(async () => undefined),
       closeAllConnections: vi.fn(async () => undefined),
       clearStorageData: vi.fn(async () => undefined),
+      fetch: vi.fn(async () => ({
+        body: { cancel: vi.fn(async () => undefined) },
+        status: 200,
+      })),
       handlers,
       on: vi.fn((event: string, handler: EventHandler) => {
         handlers.set(event, handler)
@@ -23,6 +27,7 @@ const electronMocks = vi.hoisted(() => {
       setPermissionCheckHandler: vi.fn(),
       setPermissionRequestHandler: vi.fn(),
       setProxy: vi.fn(async () => undefined),
+      resolveProxy: vi.fn(async () => 'PROXY proxy.example.com:1080'),
     }
   }
 
@@ -59,6 +64,7 @@ const electronMocks = vi.hoisted(() => {
       send: vi.fn(),
       setAudioMuted: vi.fn(),
       setBackgroundThrottling: vi.fn(),
+      setImageAnimationPolicy: vi.fn(),
       setWindowOpenHandler: vi.fn((handler: EventHandler) => {
         this.windowOpenHandler = handler
       }),
@@ -92,15 +98,27 @@ const electronMocks = vi.hoisted(() => {
   }
 
   const views: FakeWebContentsView[] = []
+  const getAppMetrics = vi.fn(() => [{
+    cpu: { percentCPUUsage: 12.5 },
+    memory: { privateBytes: 128_000, workingSetSize: 144_000 },
+    pid: 42,
+  }])
 
   return {
     FakeWebContentsView,
     fromPartition,
+    getAppMetrics,
     partitions,
     reset(): void {
       partitions.clear()
       views.splice(0)
       fromPartition.mockClear()
+      getAppMetrics.mockReset()
+      getAppMetrics.mockReturnValue([{
+        cpu: { percentCPUUsage: 12.5 },
+        memory: { privateBytes: 128_000, workingSetSize: 144_000 },
+        pid: 42,
+      }])
     },
     views,
   }
@@ -108,10 +126,7 @@ const electronMocks = vi.hoisted(() => {
 
 vi.mock('electron', () => ({
   app: {
-    getAppMetrics: vi.fn(() => [{
-      memory: { privateBytes: 128_000, workingSetSize: 144_000 },
-      pid: 42,
-    }]),
+    getAppMetrics: electronMocks.getAppMetrics,
   },
   session: {
     fromPartition: electronMocks.fromPartition,
@@ -252,6 +267,62 @@ describe('createNativeSessionViewFactory', () => {
     expect(view.webContents.loadURL).not.toHaveBeenCalled()
     expect(view.webContents.reload).not.toHaveBeenCalled()
     expect(view.webContents.close).not.toHaveBeenCalled()
+    expect(view.webContents.send).toHaveBeenLastCalledWith(
+      'altgrid:session-preload:set-frame-rate-limit',
+      1,
+    )
+  })
+
+  it('reclaims unreachable V8 memory after a view is parked', async () => {
+    vi.useFakeTimers()
+    try {
+      const { hostWindow } = createHostWindow()
+      const factory = createNativeSessionViewFactory(hostWindow, false)
+      const nativeView = factory({
+        accountId: 'account-parked-gc',
+        onEvent: vi.fn(),
+        partition: 'persist:altgrid-account-account-parked-gc',
+      })
+      const view = electronMocks.views[0]!
+
+      nativeView.setVisible(false)
+      await vi.advanceTimersByTimeAsync(2_000)
+
+      expect(view.webContents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledWith(
+        999,
+        [{ code: 'globalThis.gc?.()' }],
+      )
+      expect(view.webContents.close).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(view.webContents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('suppresses hidden media work without stopping the game renderer', () => {
+    const { hostWindow } = createHostWindow()
+    const factory = createNativeSessionViewFactory(hostWindow, false)
+    const nativeView = factory({
+      accountId: 'account-media-rest',
+      onEvent: vi.fn(),
+      partition: 'persist:altgrid-account-account-media-rest',
+    })
+    const view = electronMocks.views[0]!
+
+    nativeView.setMuted(false)
+    nativeView.setVisible(true)
+    nativeView.setVisible(false)
+
+    expect(view.webContents.setImageAnimationPolicy).toHaveBeenLastCalledWith('noAnimation')
+    expect(view.webContents.setAudioMuted).toHaveBeenLastCalledWith(true)
+    expect(view.webContents.close).not.toHaveBeenCalled()
+    expect(view.webContents.stop).not.toHaveBeenCalled()
+
+    nativeView.setVisible(true)
+    expect(view.webContents.setImageAnimationPolicy).toHaveBeenLastCalledWith('animate')
+    expect(view.webContents.setAudioMuted).toHaveBeenLastCalledWith(false)
   })
 
   it('applies the zoom factor to the live WebContents until destroyed', () => {
@@ -322,6 +393,51 @@ describe('createNativeSessionViewFactory', () => {
     expect(callback).not.toHaveBeenCalled()
   })
 
+  it('validates a proxy with a real request through the isolated partition', async () => {
+    const { hostWindow } = createHostWindow()
+    const factory = createNativeSessionViewFactory(hostWindow, false)
+    const nativeView = factory({
+      accountId: 'account-proxy-test',
+      onEvent: vi.fn(),
+      partition: 'persist:altgrid-account-account-proxy-test',
+    })
+    const partition = electronMocks.partitions.get(
+      'persist:altgrid-account-account-proxy-test',
+    )!
+
+    const result = await nativeView.testProxy('https://api.example.com/health')
+
+    expect(partition.resolveProxy).toHaveBeenCalledWith('https://api.example.com/health')
+    expect(partition.fetch).toHaveBeenCalledWith(
+      'https://api.example.com/health',
+      expect.objectContaining({ cache: 'no-store' }),
+    )
+    expect(result).toMatchObject({
+      message: 'Proxy conectado e resposta recebida pela rota configurada.',
+      ok: true,
+      route: 'PROXY proxy.example.com:1080',
+    })
+  })
+
+  it('does not report a direct connection as a valid proxy', async () => {
+    const { hostWindow } = createHostWindow()
+    const factory = createNativeSessionViewFactory(hostWindow, false)
+    const nativeView = factory({
+      accountId: 'account-direct-test',
+      onEvent: vi.fn(),
+      partition: 'persist:altgrid-account-account-direct-test',
+    })
+    const partition = electronMocks.partitions.get(
+      'persist:altgrid-account-account-direct-test',
+    )!
+    partition.resolveProxy.mockResolvedValueOnce('DIRECT')
+
+    const result = await nativeView.testProxy('https://api.example.com/health')
+
+    expect(partition.fetch).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ ok: false, route: 'DIRECT' })
+  })
+
   it('sends the best-effort FPS budget without using offscreen frame APIs', () => {
     const { hostWindow } = createHostWindow()
     const factory = createNativeSessionViewFactory(hostWindow, false)
@@ -332,6 +448,7 @@ describe('createNativeSessionViewFactory', () => {
     })
     const view = electronMocks.views[0]!
 
+    nativeView.setVisible(true)
     nativeView.setFrameRateLimit(24)
     expect(view.webContents.send).toHaveBeenLastCalledWith(
       'altgrid:session-preload:set-frame-rate-limit',
@@ -343,111 +460,64 @@ describe('createNativeSessionViewFactory', () => {
       'altgrid:session-preload:set-frame-rate-limit',
       24,
     )
-    expect(view.webContents.send).toHaveBeenCalledTimes(2)
+    expect(view.webContents.send).toHaveBeenCalledTimes(3)
     expect('setFrameRate' in view.webContents).toBe(false)
   })
 
-  it('injects the STONER bot only in the isolated world on official Stonegy pages', async () => {
-    const { hostWindow } = createHostWindow()
-    const onEvent = vi.fn()
-    const factory = createNativeSessionViewFactory(hostWindow, false)
-    factory({
-      accountId: 'account-stonegy',
-      onEvent,
-      partition: 'persist:altgrid-account-account-stonegy',
-      stonegyBotEnabled: true,
-    })
-    const view = electronMocks.views[0]!
-    view.webContents.getURL.mockReturnValue('https://stonegy-online.com/play')
-    let botInjected = false
-    view.webContents.executeJavaScriptInIsolatedWorld.mockImplementation(
-      async (_worldId: number, scripts: Array<{ url?: string }>) => {
-        if (scripts.some((script) => script.url === 'altgrid://stoner/stoner-bot.js')) {
-          botInjected = true
-          return undefined
-        }
-        return scripts.some((script) => script.url === 'altgrid://stoner/probe.js')
-          ? botInjected
-          : undefined
-      },
-    )
-
-    view.handlers.get('dom-ready')?.()
-    await vi.waitFor(() => {
-      expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({
-        type: 'stonegy-bot-ready',
-      }))
-    })
-
-    expect(view.webContents.executeJavaScriptInIsolatedWorld)
-      .toHaveBeenCalledWith(10_007, expect.arrayContaining([
-        expect.objectContaining({ url: 'altgrid://stoner/stoner-bot.js' }),
-      ]))
-    expect(view.webContents.executeJavaScriptInIsolatedWorld)
-      .toHaveBeenCalledWith(10_007, [expect.objectContaining({
-        url: 'altgrid://stoner/probe.js',
-      })])
-  })
-
-  it('retries a saved STONER bot until its controls actually appear', async () => {
-    vi.useFakeTimers()
-    try {
-      const { hostWindow } = createHostWindow()
-      const onEvent = vi.fn()
-      const factory = createNativeSessionViewFactory(hostWindow, false)
-      factory({
-        accountId: 'account-stonegy-reopen',
-        onEvent,
-        partition: 'persist:altgrid-account-account-stonegy-reopen',
-        stonegyBotEnabled: true,
-      })
-      const view = electronMocks.views[0]!
-      view.webContents.getURL.mockReturnValue('https://stonegy-online.com/play')
-      let injectionCount = 0
-      view.webContents.executeJavaScriptInIsolatedWorld.mockImplementation(
-        async (_worldId: number, scripts: Array<{ url?: string }>) => {
-          if (scripts.some((script) => script.url === 'altgrid://stoner/stoner-bot.js')) {
-            injectionCount += 1
-            return undefined
-          }
-          return scripts.some((script) => script.url === 'altgrid://stoner/probe.js')
-            ? injectionCount >= 2
-            : undefined
-        },
-      )
-
-      view.handlers.get('dom-ready')?.()
-      await vi.advanceTimersByTimeAsync(1_500)
-
-      expect(injectionCount).toBe(2)
-      expect(onEvent).toHaveBeenCalledTimes(1)
-      expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({
-        type: 'stonegy-bot-ready',
-      }))
-      expect(vi.getTimerCount()).toBe(0)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('never injects the STONER bot on deceptive or unrelated hosts', async () => {
+  it('reports CPU and private memory for the account renderer process', async () => {
     const { hostWindow } = createHostWindow()
     const factory = createNativeSessionViewFactory(hostWindow, false)
-    factory({
-      accountId: 'account-fake-stonegy',
+    const nativeView = factory({
+      accountId: 'account-metrics',
       onEvent: vi.fn(),
-      partition: 'persist:altgrid-account-account-fake-stonegy',
-      stonegyBotEnabled: true,
+      partition: 'persist:altgrid-account-account-metrics',
     })
-    const view = electronMocks.views[0]!
-    view.webContents.getURL.mockReturnValue(
-      'https://stonegy-online.com.evil.example/play',
-    )
 
-    view.handlers.get('dom-ready')?.()
-    await Promise.resolve()
+    await expect(nativeView.getResourceUsage()).resolves.toEqual({
+      cpuPercent: 12.5,
+      privateKb: 128_000,
+      sharedKb: 16_000,
+    })
+  })
 
-    expect(view.webContents.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+  it('shares one Electron process snapshot across a simultaneous account batch', async () => {
+    const { hostWindow } = createHostWindow()
+    const factory = createNativeSessionViewFactory(hostWindow, false)
+    const first = factory({
+      accountId: 'account-metrics-a',
+      onEvent: vi.fn(),
+      partition: 'persist:altgrid-account-account-metrics-a',
+    })
+    const second = factory({
+      accountId: 'account-metrics-b',
+      onEvent: vi.fn(),
+      partition: 'persist:altgrid-account-account-metrics-b',
+    })
+
+    await Promise.all([first.getResourceUsage(), second.getResourceUsage()])
+
+    expect(electronMocks.getAppMetrics).toHaveBeenCalledOnce()
+  })
+
+  it('normalizes temporarily invalid native CPU and memory readings', async () => {
+    electronMocks.getAppMetrics.mockReturnValueOnce([{
+      cpu: { percentCPUUsage: Number.NaN },
+      memory: { privateBytes: Number.NaN, workingSetSize: Number.NaN },
+      pid: 42,
+    }])
+    const { hostWindow } = createHostWindow()
+    const factory = createNativeSessionViewFactory(hostWindow, false)
+    const nativeView = factory({
+      accountId: 'account-invalid-metrics',
+      onEvent: vi.fn(),
+      partition: 'persist:altgrid-account-account-invalid-metrics',
+    })
+
+    await expect(nativeView.getResourceUsage()).resolves.toEqual({
+      cpuPercent: 0,
+      privateKb: 0,
+      sharedKb: 0,
+    })
   })
 
   it('reports focus from the native game surface', () => {

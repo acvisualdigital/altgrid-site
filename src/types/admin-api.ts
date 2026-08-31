@@ -172,6 +172,41 @@ export interface AdminGameInput {
 
 export type AdminGameUpdate = Partial<AdminGameInput>
 
+export type AdminPublisherRequestType = 'register' | 'claim' | 'campaign'
+export type AdminPublisherRequestStatus = 'pending' | 'reviewing' | 'approved' | 'rejected' | 'cancelled'
+
+export interface AdminPublisherRequest {
+  id: string
+  user_id: string
+  user_email: string | null
+  display_name: string | null
+  request_type: AdminPublisherRequestType
+  game_slug: string | null
+  plan_code: 'highlight_7' | 'launch_30' | null
+  status: AdminPublisherRequestStatus
+  payload: Json
+  admin_notes: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+  campaign_starts_at: string | null
+  campaign_ends_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AdminPublisherRequestsResponse {
+  requests: AdminPublisherRequest[]
+}
+
+export interface AdminPublisherRequestResponse {
+  request: AdminPublisherRequest
+}
+
+export interface AdminPublisherReviewInput {
+  status: Extract<AdminPublisherRequestStatus, 'reviewing' | 'approved' | 'rejected'>
+  notes?: string | null
+}
+
 export interface AdminConfigEntry {
   key: string
   value: Json

@@ -6,6 +6,7 @@ export const GRID_MODES = [
   '2x2',
   '3x2',
   '3x3',
+  '4x4',
 ] as const
 
 export type GridMode = (typeof GRID_MODES)[number]
@@ -124,9 +125,16 @@ const PRESETS: Record<ConcreteGridMode, GridPreset> = {
     requiresAdvancedGrids: true,
     rows: 3,
   },
+  '4x4': {
+    columns: 4,
+    mode: '4x4',
+    requiresAdvancedGrids: true,
+    rows: 4,
+  },
 }
 
 const CONCRETE_MODES = Object.keys(PRESETS) as ConcreteGridMode[]
+const AUTOMATIC_MODES = CONCRETE_MODES.filter((mode) => mode !== '4x4')
 
 // Prefer a horizontal split for an exactly square area. Away from that tie,
 // the aspect score selects the orientation that best matches the available area.
@@ -137,6 +145,7 @@ const AUTO_TIE_ORDER: readonly ConcreteGridMode[] = [
   '2x2',
   '3x2',
   '3x3',
+  '4x4',
 ]
 
 function isGridMode(value: string): value is GridMode {
@@ -319,7 +328,7 @@ export class GridLayoutService {
   ): GridPreset | null {
     const sessionCount = input.sessionIds.length
     const areaAspect = input.area.width / input.area.height
-    const ranked = CONCRETE_MODES
+    const ranked = AUTOMATIC_MODES
       .filter((mode) => this.isModeAvailable(mode))
       .map((mode) => PRESETS[mode])
       .filter((preset) => hasUsableCells(input.area, gap, preset))

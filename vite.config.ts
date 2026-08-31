@@ -1,4 +1,5 @@
-import { defineConfig, loadEnv } from 'vite'
+import { loadEnv } from 'vite'
+import { configDefaults, defineConfig } from 'vitest/config'
 import { readFileSync } from 'node:fs'
 
 const packageManifest = JSON.parse(
@@ -37,6 +38,12 @@ export default defineConfig(({ mode }) => {
       host: '127.0.0.1',
       port: 3000,
       strictPort: true,
+      watch: {
+        ignored: ['**/.altgrid-dev-profile/**'],
+      },
+    },
+    test: {
+      exclude: [...configDefaults.exclude, '.tools/**'],
     },
   }
 })

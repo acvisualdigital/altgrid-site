@@ -28,23 +28,6 @@ describe('session frame-budget preload', () => {
     electronMocks.invoke.mockClear()
   })
 
-  it('exposes the STONER webhook bridge only in its isolated world', async () => {
-    expect(electronMocks.exposeInIsolatedWorld).toHaveBeenCalledWith(
-      10_007,
-      'altgridStoner',
-      expect.objectContaining({ sendDiscordWebhook: expect.any(Function) }),
-    )
-    const bridge = electronMocks.exposeInIsolatedWorld.mock.calls[0]?.[2] as {
-      sendDiscordWebhook(webhook: string, payload: unknown): Promise<unknown>
-    }
-    await bridge.sendDiscordWebhook('https://discord.com/api/webhooks/1/token', { ok: true })
-    expect(electronMocks.invoke).toHaveBeenCalledWith(
-      'altgrid:session-preload:stoner-discord-webhook',
-      'https://discord.com/api/webhooks/1/token',
-      { ok: true },
-    )
-  })
-
   it('accepts only a validated FPS budget from its private channel', () => {
     const listener = electronMocks.listeners.get(
       'altgrid:session-preload:set-frame-rate-limit',

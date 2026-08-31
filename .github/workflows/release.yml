@@ -37,6 +37,11 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Setup .NET for Velopack
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -160,7 +165,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.ALTGRID_RELEASES_TOKEN }}
         run: |
-          pnpm exec electron-builder --win nsis portable --publish never
+          node scripts/package-desktop.mjs
 
           $androidArtifact = "release/AltGrid-Android-$($env:RELEASE_TAG.Substring(1)).apk"
           Copy-Item -LiteralPath "android/app/build/outputs/apk/release/app-release.apk" -Destination $androidArtifact
@@ -188,13 +193,10 @@ jobs:
           }
 
           $artifacts = @(
-            "release/AltGrid-Setup-$($env:RELEASE_TAG.Substring(1)).exe",
-            "release/AltGrid-Setup-$($env:RELEASE_TAG.Substring(1)).exe.blockmap",
-            "release/AltGrid-Portable-$($env:RELEASE_TAG.Substring(1)).exe",
             "release/AltGrid-Android-$($env:RELEASE_TAG.Substring(1)).apk",
-            $storeArtifact,
-            "release/latest.yml"
+            $storeArtifact
           )
+          $artifacts += @(Get-ChildItem -LiteralPath "release/velopack" -File | ForEach-Object { $_.FullName })
           foreach ($artifact in $artifacts) {
             if (-not (Test-Path -LiteralPath $artifact)) {
               throw "Artefato ausente: $artifact"

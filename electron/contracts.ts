@@ -44,8 +44,22 @@ export interface SessionProxyTestResult {
 
 export interface SessionResourceUsage {
   accountId: string
+  cpuPercent: number
   privateKb: number
   sharedKb: number
+}
+
+export interface SessionExtensionSummary {
+  enabled: boolean
+  folderName: string
+  manifestVersion: number
+  name: string
+  permissions: string[]
+  version: string
+}
+
+export interface SessionExtensionConfig extends SessionExtensionSummary {
+  path: string
 }
 
 export type SessionStatus = 'loading' | 'ready' | 'crashed' | 'load-failed'
@@ -57,7 +71,6 @@ export interface SessionSnapshot {
   muted: boolean
   partition: string
   status: SessionStatus
-  stonegyBotEnabled: boolean
   url: string
   visible: boolean
 }
@@ -72,8 +85,6 @@ export type SessionEventType =
   | 'crashed'
   | 'load-failed'
   | 'popup-blocked'
-  | 'stonegy-bot-failed'
-  | 'stonegy-bot-ready'
 
 export interface SessionEvent {
   accountId: string
@@ -107,18 +118,22 @@ export interface AltgridDesktopApi {
     openExternal(url: string): Promise<boolean>
   }
   sessions: {
+    chooseExtension(accountId: string): Promise<SessionExtensionSummary | null>
     clearData(accountId: string): Promise<boolean>
     closeSession(accountId: string): Promise<boolean>
+    copyProxy(sourceAccountId: string, targetAccountId: string): Promise<SessionProxySummary | null>
+    copyExtension(sourceAccountId: string, targetAccountId: string): Promise<SessionExtensionSummary | null>
     createSession(
       accountId: string,
       url: string,
       useStoredProxy?: boolean,
-      stonegyBotEnabled?: boolean,
+      useStoredExtension?: boolean,
     ): Promise<SessionSnapshot>
     destroySession(accountId: string): Promise<boolean>
     focusSession(accountId: string): Promise<SessionSnapshot>
     getSessions(): Promise<SessionSnapshot[]>
     getProxy(accountId: string): Promise<SessionProxySummary | null>
+    getExtension(accountId: string): Promise<SessionExtensionSummary | null>
     getResourceUsage(): Promise<SessionResourceUsage[]>
     hideSession(accountId: string): Promise<SessionSnapshot>
     muteSession(accountId: string, muted: boolean): Promise<SessionSnapshot>
@@ -126,6 +141,7 @@ export interface AltgridDesktopApi {
     onEvent(listener: (event: SessionEvent) => void): () => void
     reloadSession(accountId: string): Promise<SessionSnapshot>
     removeProxy(accountId: string): Promise<boolean>
+    removeExtension(accountId: string): Promise<boolean>
     resizeSession(
       accountId: string,
       bounds: SessionBounds,
@@ -133,11 +149,11 @@ export interface AltgridDesktopApi {
     setEcoMode(enabled: boolean, secondaryFps?: number): Promise<boolean>
     setFrameRate(accountId: string, fps: number): Promise<SessionSnapshot>
     setInterfaceZoom(accountId: string, zoom: number | null): Promise<SessionSnapshot>
-    setStonegyBot(accountId: string, enabled: boolean): Promise<SessionSnapshot>
     setProxy(
       accountId: string,
       input: SessionProxyInput,
     ): Promise<SessionProxySummary>
+    setExtensionEnabled(accountId: string, enabled: boolean): Promise<SessionExtensionSummary>
     showSession(accountId: string): Promise<SessionSnapshot>
     testProxy(accountId: string): Promise<SessionProxyTestResult>
   }
@@ -157,26 +173,31 @@ export const IPC_CHANNELS = Object.freeze({
     openExternal: 'altgrid:app:open-external',
   }),
   sessions: Object.freeze({
+    chooseExtension: 'altgrid:sessions:choose-extension',
     clearData: 'altgrid:sessions:clear-data',
     close: 'altgrid:sessions:close',
+    copyProxy: 'altgrid:sessions:copy-proxy',
+    copyExtension: 'altgrid:sessions:copy-extension',
     create: 'altgrid:sessions:create',
     destroy: 'altgrid:sessions:destroy',
     event: 'altgrid:sessions:event',
     focus: 'altgrid:sessions:focus',
     getAll: 'altgrid:sessions:get-all',
     getProxy: 'altgrid:sessions:get-proxy',
+    getExtension: 'altgrid:sessions:get-extension',
     getResourceUsage: 'altgrid:sessions:get-resource-usage',
     hide: 'altgrid:sessions:hide',
     mute: 'altgrid:sessions:mute',
     navigate: 'altgrid:sessions:navigate',
     reload: 'altgrid:sessions:reload',
     removeProxy: 'altgrid:sessions:remove-proxy',
+    removeExtension: 'altgrid:sessions:remove-extension',
     resize: 'altgrid:sessions:resize',
     setEcoMode: 'altgrid:sessions:set-eco-mode',
     setFrameRate: 'altgrid:sessions:set-frame-rate',
     setInterfaceZoom: 'altgrid:sessions:set-interface-zoom',
-    setStonegyBot: 'altgrid:sessions:set-stonegy-bot',
     setProxy: 'altgrid:sessions:set-proxy',
+    setExtensionEnabled: 'altgrid:sessions:set-extension-enabled',
     show: 'altgrid:sessions:show',
     testProxy: 'altgrid:sessions:test-proxy',
   }),
@@ -191,7 +212,4 @@ export const IPC_CHANNELS = Object.freeze({
 
 export const SESSION_PRELOAD_CHANNELS = Object.freeze({
   setFrameRateLimit: 'altgrid:session-preload:set-frame-rate-limit',
-  stonegyDiscordWebhook: 'altgrid:session-preload:stoner-discord-webhook',
 })
-
-export const STONEGY_BOT_WORLD_ID = 10_007

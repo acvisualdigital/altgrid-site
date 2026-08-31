@@ -17,17 +17,12 @@ import type {
   NativeSessionView,
   NativeSessionViewFactory,
 } from './session-manager.js'
-import {
-  isStonegyUrl,
-  loadStonegyBotScripts,
-  STONEGY_BOT_RETRY_DELAYS_MS,
-  STONEGY_BOT_VERSION,
-  stonegyBotProbeScript,
-  stonegyBotWorldId,
-} from './stonegy-bot.js'
 import { isAllowedSessionUrl } from './url-policy.js'
 
 const hardenedSessions = new WeakSet<Session>()
+const PARKED_INITIAL_COLLECTION_DELAY_MS = 2_000
+const PARKED_COLLECTION_INTERVAL_MS = 30_000
+let cachedAppMetrics: Electron.ProcessMetric[] | null = null
 const sessionPreloadPath = join(
   dirname(fileURLToPath(import.meta.url)),
   'session-preload.cjs',
@@ -80,6 +75,22 @@ function parkedBounds(bounds: { height: number; width: number; x: number; y: num
   }
 }
 
+function finiteNonNegative(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, value)
+    : 0
+}
+
+function currentAppMetrics(): Electron.ProcessMetric[] {
+  if (!cachedAppMetrics) {
+    cachedAppMetrics = app.getAppMetrics()
+    queueMicrotask(() => {
+      cachedAppMetrics = null
+    })
+  }
+  return cachedAppMetrics
+}
+
 export async function clearNativeSessionPartition(partition: string): Promise<void> {
   const isolatedSession = session.fromPartition(partition, { cache: true })
   await isolatedSession.clearStorageData()
@@ -90,7 +101,7 @@ export function createNativeSessionViewFactory(
   hostWindow: BrowserWindow,
   allowInsecureLoopback: boolean,
 ): NativeSessionViewFactory {
-  return ({ accountId, onEvent, partition, stonegyBotEnabled: initialStonegyBotEnabled = false }): NativeSessionView => {
+  return ({ accountId, onEvent, partition }): NativeSessionView => {
     const isolatedSession = session.fromPartition(partition, { cache: true })
 
     if (!hardenedSessions.has(isolatedSession)) {
@@ -106,126 +117,14 @@ export function createNativeSessionViewFactory(
     let destroyed = false
     let ecoModeEnabled = false
     let frameRateLimit = 0
+    let requestedMuted = false
     let parked = true
+    let parkedCollectionTimer: NodeJS.Timeout | null = null
     let currentBounds = { height: 720, width: 1_280, x: 0, y: 0 }
     let proxyCredentials: Pick<SessionProxyConfig, 'password' | 'username'> | null = null
-    let stonegyBotEnabled = initialStonegyBotEnabled
-    let stonegyBotGeneration = 0
-    let stonegyBotQueue = Promise.resolve()
-    let stonegyBotReadyGeneration = -1
-    const stonegyBotTimers = new Set<ReturnType<typeof setTimeout>>()
+    let loadedExtensionId: string | null = null
+    let loadedExtensionPath: string | null = null
     const popupWindows = new Set<BrowserWindow>()
-
-    const clearStonegyBotTimers = (): void => {
-      for (const timer of stonegyBotTimers) {
-        clearTimeout(timer)
-      }
-      stonegyBotTimers.clear()
-    }
-
-    const stonegyBotCanRun = (generation: number): boolean => (
-      generation === stonegyBotGeneration
-      && !destroyed
-      && stonegyBotEnabled
-      && !view.webContents.isDestroyed()
-      && isStonegyUrl(view.webContents.getURL())
-    )
-
-    const probeStonegyBot = async (generation: number): Promise<boolean> => {
-      if (!stonegyBotCanRun(generation)) {
-        return false
-      }
-      const result = await view.webContents.executeJavaScriptInIsolatedWorld(
-        stonegyBotWorldId(),
-        stonegyBotProbeScript(),
-      )
-      return result === true
-    }
-
-    const reportStonegyBotReady = (generation: number): void => {
-      if (!stonegyBotCanRun(generation) || stonegyBotReadyGeneration === generation) {
-        return
-      }
-      stonegyBotReadyGeneration = generation
-      clearStonegyBotTimers()
-      onEvent({
-        detail: `AltGrid Bot ${STONEGY_BOT_VERSION} ativo.`,
-        type: 'stonegy-bot-ready',
-      })
-    }
-
-    const injectStonegyBot = async (
-      generation: number,
-      attempt: number,
-    ): Promise<void> => {
-      if (
-        !stonegyBotCanRun(generation)
-        || stonegyBotReadyGeneration === generation
-      ) {
-        return
-      }
-
-      try {
-        if (await probeStonegyBot(generation)) {
-          reportStonegyBotReady(generation)
-          return
-        }
-
-        // Reexecute on selected attempts when a slow SPA transition discarded
-        // the first bootstrap before its controls reached the document.
-        if ([0, 2, 4, 6].includes(attempt)) {
-          await view.webContents.executeJavaScriptInIsolatedWorld(
-            stonegyBotWorldId(),
-            loadStonegyBotScripts(),
-          )
-        }
-
-        if (await probeStonegyBot(generation)) {
-          reportStonegyBotReady(generation)
-          return
-        }
-
-        if (attempt === STONEGY_BOT_RETRY_DELAYS_MS.length - 1) {
-          onEvent({
-            detail: 'AltGrid Bot não mostrou os controles após várias tentativas. Recarregue a conta.',
-            type: 'stonegy-bot-failed',
-          })
-        }
-      } catch (error) {
-        if (
-          stonegyBotCanRun(generation)
-          && attempt === STONEGY_BOT_RETRY_DELAYS_MS.length - 1
-        ) {
-          onEvent({
-            detail: error instanceof Error
-              ? `AltGrid Bot não iniciou: ${error.message}`
-              : 'AltGrid Bot não iniciou.',
-            type: 'stonegy-bot-failed',
-          })
-        }
-      }
-    }
-
-    const scheduleStonegyBotInjection = (): void => {
-      stonegyBotGeneration += 1
-      stonegyBotReadyGeneration = -1
-      clearStonegyBotTimers()
-      const generation = stonegyBotGeneration
-
-      if (!stonegyBotCanRun(generation)) {
-        return
-      }
-
-      STONEGY_BOT_RETRY_DELAYS_MS.forEach((delay, attempt) => {
-        const timer = setTimeout(() => {
-          stonegyBotTimers.delete(timer)
-          stonegyBotQueue = stonegyBotQueue
-            .then(() => injectStonegyBot(generation, attempt))
-            .catch(() => undefined)
-        }, delay)
-        stonegyBotTimers.add(timer)
-      })
-    }
 
     const handleProxyLogin = (
       event: Electron.Event,
@@ -301,9 +200,56 @@ export function createNativeSessionViewFactory(
         // this on-screen WebContentsView and its authenticated state stay alive.
         view.webContents.send(
           SESSION_PRELOAD_CHANNELS.setFrameRateLimit,
-          frameRateLimit,
+          // A manually hidden/overflow session keeps its network and game
+          // state alive, but one animation frame per second avoids spending
+          // renderer/GPU work on pixels the user cannot see.
+          parked ? 1 : frameRateLimit,
         )
       }
+    }
+
+    const applyParkedMediaPolicy = (): void => {
+      if (view.webContents.isDestroyed()) {
+        return
+      }
+      // Animated image decoding and audio output do not contribute to game
+      // timers/network state while a view is parked. Restore both immediately
+      // when it returns to the screen.
+      view.webContents.setAudioMuted(requestedMuted || parked)
+      view.webContents.setImageAnimationPolicy(parked ? 'noAnimation' : 'animate')
+    }
+
+    const cancelParkedCollection = (): void => {
+      if (parkedCollectionTimer) {
+        clearTimeout(parkedCollectionTimer)
+        parkedCollectionTimer = null
+      }
+    }
+
+    const scheduleParkedCollection = (): void => {
+      cancelParkedCollection()
+      if (!parked || destroyed || view.webContents.isDestroyed()) {
+        return
+      }
+      // Give pending page work a chance to settle, then ask V8 to release
+      // unreachable objects from the hidden renderer. The game, timers,
+      // sockets and persistent session stay alive.
+      const collectAndReschedule = (): void => {
+        parkedCollectionTimer = null
+        if (parked && !destroyed && !view.webContents.isDestroyed()) {
+          void view.webContents.executeJavaScriptInIsolatedWorld(999, [{
+            code: 'globalThis.gc?.()',
+          }]).catch(() => undefined)
+          parkedCollectionTimer = setTimeout(
+            collectAndReschedule,
+            PARKED_COLLECTION_INTERVAL_MS,
+          )
+        }
+      }
+      parkedCollectionTimer = setTimeout(
+        collectAndReschedule,
+        PARKED_INITIAL_COLLECTION_DELAY_MS,
+      )
     }
 
     view.setBackgroundColor('#080c11')
@@ -347,7 +293,6 @@ export function createNativeSessionViewFactory(
       }
     })
     view.webContents.on('did-start-loading', () => onEvent({ type: 'loading' }))
-    view.webContents.on('dom-ready', scheduleStonegyBotInjection)
     view.webContents.on('focus', () => onEvent({ type: 'focused' }))
     view.webContents.on('did-finish-load', () => {
       applyFrameRateLimit()
@@ -358,7 +303,6 @@ export function createNativeSessionViewFactory(
     })
     view.webContents.on('did-navigate-in-page', (_event, url) => {
       onEvent({ type: 'navigated', url })
-      scheduleStonegyBotInjection()
     })
     view.webContents.on(
       'did-fail-load',
@@ -393,8 +337,7 @@ export function createNativeSessionViewFactory(
         }
 
         destroyed = true
-        stonegyBotGeneration += 1
-        clearStonegyBotTimers()
+        cancelParkedCollection()
         view.setVisible(false)
 
         for (const popupWindow of popupWindows) {
@@ -403,6 +346,12 @@ export function createNativeSessionViewFactory(
           }
         }
         popupWindows.clear()
+
+        if (loadedExtensionId) {
+          isolatedSession.extensions.removeExtension(loadedExtensionId)
+          loadedExtensionId = null
+          loadedExtensionPath = null
+        }
 
         if (attached && !hostWindow.isDestroyed()) {
           hostWindow.contentView.removeChildView(view)
@@ -429,18 +378,24 @@ export function createNativeSessionViewFactory(
         }
       },
 
-      async getResourceUsage(): Promise<{ privateKb: number; sharedKb: number }> {
+      async getResourceUsage(): Promise<{ cpuPercent: number; privateKb: number; sharedKb: number }> {
         if (view.webContents.isDestroyed()) {
-          return { privateKb: 0, sharedKb: 0 }
+          return { cpuPercent: 0, privateKb: 0, sharedKb: 0 }
         }
         const processId = view.webContents.getOSProcessId()
-        const usage = app.getAppMetrics().find((metric) => metric.pid === processId)?.memory
+        // getResourceUsage is requested for every account at once. Reuse one
+        // process snapshot for the batch instead of traversing Electron's full
+        // process tree N times for N accounts.
+        const metric = currentAppMetrics().find((candidate) => candidate.pid === processId)
+        const usage = metric?.memory
+        const privateKb = finiteNonNegative(
+          usage?.privateBytes ?? usage?.workingSetSize,
+        )
+        const workingSetKb = finiteNonNegative(usage?.workingSetSize)
         return {
-          privateKb: Math.max(0, usage?.privateBytes ?? usage?.workingSetSize ?? 0),
-          sharedKb: Math.max(
-            0,
-            (usage?.workingSetSize ?? 0) - (usage?.privateBytes ?? usage?.workingSetSize ?? 0),
-          ),
+          cpuPercent: finiteNonNegative(metric?.cpu?.percentCPUUsage),
+          privateKb,
+          sharedKb: Math.max(0, workingSetKb - privateKb),
         }
       },
 
@@ -474,6 +429,19 @@ export function createNativeSessionViewFactory(
         }
       },
 
+      async setExtension(extensionPath): Promise<void> {
+        if (loadedExtensionPath === extensionPath) return
+        if (loadedExtensionId) {
+          isolatedSession.extensions.removeExtension(loadedExtensionId)
+          loadedExtensionId = null
+          loadedExtensionPath = null
+        }
+        if (!extensionPath) return
+        const loaded = await isolatedSession.extensions.loadExtension(extensionPath)
+        loadedExtensionId = loaded.id
+        loadedExtensionPath = extensionPath
+      },
+
       setFrameRateLimit(fps): void {
         if (!view.webContents.isDestroyed()) {
           frameRateLimit = fps
@@ -483,7 +451,8 @@ export function createNativeSessionViewFactory(
 
       setMuted(muted): void {
         if (!view.webContents.isDestroyed()) {
-          view.webContents.setAudioMuted(muted)
+          requestedMuted = muted
+          applyParkedMediaPolicy()
         }
       },
 
@@ -501,27 +470,43 @@ export function createNativeSessionViewFactory(
         await isolatedSession.closeAllConnections()
       },
 
-      setStonegyBotEnabled(enabled): void {
-        if (destroyed || view.webContents.isDestroyed()) {
-          return
-        }
-        stonegyBotEnabled = enabled
-        stonegyBotGeneration += 1
-        clearStonegyBotTimers()
-        view.webContents.reload()
-      },
-
       async testProxy(targetUrl): Promise<import('./contracts.js').SessionProxyTestResult> {
         const startedAt = Date.now()
         const route = await isolatedSession.resolveProxy(targetUrl)
         const routed = route.trim().toUpperCase() !== 'DIRECT'
-        return {
-          latencyMs: Math.max(0, Date.now() - startedAt),
-          message: routed
-            ? 'Rota do proxy aplicada a esta conta.'
-            : 'Esta conta está usando conexão direta.',
-          ok: routed,
-          route,
+
+        if (!routed) {
+          return {
+            latencyMs: Math.max(0, Date.now() - startedAt),
+            message: 'Esta conta está usando conexão direta.',
+            ok: false,
+            route,
+          }
+        }
+
+        try {
+          const response = await isolatedSession.fetch(targetUrl, {
+            cache: 'no-store',
+            signal: AbortSignal.timeout(12_000),
+          })
+          await response.body?.cancel().catch(() => undefined)
+          const reachable = response.status >= 200 && response.status < 500
+
+          return {
+            latencyMs: Math.max(0, Date.now() - startedAt),
+            message: reachable
+              ? 'Proxy conectado e resposta recebida pela rota configurada.'
+              : `O proxy respondeu, mas o destino retornou HTTP ${response.status}.`,
+            ok: reachable,
+            route,
+          }
+        } catch {
+          return {
+            latencyMs: Math.max(0, Date.now() - startedAt),
+            message: 'Não foi possível acessar a internet por este proxy. Confira endereço, porta e credenciais.',
+            ok: false,
+            route,
+          }
         }
       },
 
@@ -533,6 +518,13 @@ export function createNativeSessionViewFactory(
           applyBounds()
           view.setVisible(visible)
           applyBackgroundThrottling()
+          applyFrameRateLimit()
+          applyParkedMediaPolicy()
+          if (parked) {
+            scheduleParkedCollection()
+          } else {
+            cancelParkedCollection()
+          }
         }
       },
 

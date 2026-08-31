@@ -4,7 +4,6 @@ export interface ConfiguredAccount {
   gameSlug: string
   customLaunchUrl?: string
   createdAt: string
-  stonegyBotEnabled?: boolean
 }
 
 export interface AddConfiguredAccountInput {
@@ -58,10 +57,6 @@ function isConfiguredAccount(value: unknown): value is ConfiguredAccount {
       account.customLaunchUrl === undefined
       || typeof account.customLaunchUrl === 'string'
     )
-    && (
-      account.stonegyBotEnabled === undefined
-      || typeof account.stonegyBotEnabled === 'boolean'
-    )
     && typeof account.createdAt === 'string'
   )
 }
@@ -90,7 +85,13 @@ export class ConfiguredAccountService {
     try {
       const parsed = JSON.parse(serialized) as unknown
       return Array.isArray(parsed)
-        ? parsed.filter(isConfiguredAccount).map((account) => ({ ...account }))
+        ? parsed.filter(isConfiguredAccount).map((account) => ({
+            createdAt: account.createdAt,
+            customLaunchUrl: account.customLaunchUrl,
+            displayName: account.displayName,
+            gameSlug: account.gameSlug,
+            id: account.id,
+          }))
         : []
     } catch {
       return []
@@ -118,6 +119,21 @@ export class ConfiguredAccountService {
     return { ...account }
   }
 
+  duplicate(userId: string, accountId: string): ConfiguredAccount | null {
+    const source = this.list(userId).find((account) => account.id === accountId)
+    if (!source) {
+      return null
+    }
+
+    const copy = this.add(userId, {
+      customLaunchUrl: source.customLaunchUrl,
+      displayName: `${source.displayName} - cópia`.slice(0, 80),
+      gameSlug: source.gameSlug,
+    })
+
+    return copy
+  }
+
   rename(userId: string, accountId: string, displayName: string): ConfiguredAccount | null {
     const nextName = displayName.trim().slice(0, 80)
 
@@ -133,24 +149,6 @@ export class ConfiguredAccountService {
     }
 
     const updated = { ...accounts[index]!, displayName: nextName }
-    accounts[index] = updated
-    this.write(this.keyFor(userId), JSON.stringify(accounts))
-    return { ...updated }
-  }
-
-  setStonegyBotEnabled(
-    userId: string,
-    accountId: string,
-    enabled: boolean,
-  ): ConfiguredAccount | null {
-    const accounts = this.list(userId)
-    const index = accounts.findIndex((account) => account.id === accountId)
-
-    if (index < 0) {
-      return null
-    }
-
-    const updated = { ...accounts[index]!, stonegyBotEnabled: enabled }
     accounts[index] = updated
     this.write(this.keyFor(userId), JSON.stringify(accounts))
     return { ...updated }

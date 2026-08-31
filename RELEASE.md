@@ -20,7 +20,9 @@ Cadastre estes **Secrets**:
 
 O workflow falha antes do build se a tag não combinar com a versão ou se alguma das quatro configurações obrigatórias do cliente estiver vazia. Ele informa somente os nomes ausentes e não imprime valores.
 
-O instalador recebe `app-update.yml` com o provedor fixo do GitHub. A release deve conter `AltGrid-Setup-<versão>.exe`, seu `.blockmap` e `latest.yml`; o build local também copia esses metadados para `release/` e falha se estiverem ausentes ou inconsistentes. O executável Portable continua sendo publicado como alternativa manual, mas o fluxo de atualização interna é destinado à instalação NSIS.
+O Windows usa o launcher Velopack. O build gera em `release/velopack/` o Setup, o portátil compactado, `releases.win-x64.json` e os pacotes `.nupkg` completos ou incrementais. O aplicativo consulta a pasta de downloads da release mais recente em `acvisualdigital/altgrid-releases` e aceita `ALTGRID_UPDATE_URL` apenas para testes locais. O Android permanece em seu canal de APK independente e nunca lê esse feed do Windows.
+
+O primeiro Setup Velopack cria a nova base de atualização para quem ainda possui a instalação NSIS antiga. Depois dessa instalação única, o launcher aplica atualizações sem desinstalar manualmente cada versão. A entrada antiga pode ser removida pelo usuário após confirmar que o novo atalho abre corretamente. O feed precisa servir todos os arquivos de `release/velopack/` sem alterar nomes nem conteúdo.
 
 ## Smoke test de staging
 
@@ -50,3 +52,10 @@ pnpm smoke:staging
 ```
 
 Esses comandos não fazem deploy nem alteram dados externos.
+
+Para montar duas versões isoladas e um feed local sem publicar nada:
+
+```powershell
+pnpm update:lab:build
+pnpm update:lab:serve
+```

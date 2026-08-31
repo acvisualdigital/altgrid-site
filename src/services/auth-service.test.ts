@@ -2,7 +2,10 @@ import type { Session, SupabaseClient, User } from '@supabase/supabase-js'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { Database } from '../types/database'
-import { AuthService } from './auth-service'
+import {
+  AuthService,
+  parsePasswordRecoveryCallback,
+} from './auth-service'
 
 const user = {
   aud: 'authenticated',
@@ -23,12 +26,15 @@ const session = {
 
 function createHarness(isOnline: () => boolean = () => true) {
   const auth = {
+    exchangeCodeForSession: vi.fn(),
     getSession: vi.fn(),
     getUser: vi.fn(),
     onAuthStateChange: vi.fn(),
     refreshSession: vi.fn(),
     resetPasswordForEmail: vi.fn(),
+    setSession: vi.fn(),
     signInWithPassword: vi.fn(),
+    signInWithOAuth: vi.fn(),
     signOut: vi.fn(),
     signUp: vi.fn(),
     updateUser: vi.fn(),
@@ -43,6 +49,54 @@ function createHarness(isOnline: () => boolean = () => true) {
 }
 
 describe('AuthService', () => {
+  it('accepts PKCE and implicit recovery callbacks only with recovery credentials', () => {
+    expect(parsePasswordRecoveryCallback(
+      'altgrid://app/?auth=recovery&code=opaque-code',
+    )).toEqual({ code: 'opaque-code', kind: 'pkce' })
+    expect(parsePasswordRecoveryCallback(
+      'altgrid://app/?auth=recovery#access_token=access&refresh_token=refresh&type=recovery',
+    )).toEqual({
+      accessToken: 'access',
+      kind: 'implicit',
+      refreshToken: 'refresh',
+    })
+    expect(parsePasswordRecoveryCallback(
+      'altgrid://app/?auth=recovery',
+    )).toBeNull()
+    expect(parsePasswordRecoveryCallback(
+      'altgrid://app/?code=opaque-code',
+    )).toBeNull()
+  })
+
+  it('explicitly exchanges a PKCE recovery callback for a session', async () => {
+    const { auth, service } = createHarness()
+    auth.exchangeCodeForSession.mockResolvedValue({
+      data: { session, user },
+      error: null,
+    })
+
+    await expect(service.completePasswordRecovery(
+      'altgrid://app/?auth=recovery&code=opaque-code',
+    )).resolves.toBe(session)
+    expect(auth.exchangeCodeForSession).toHaveBeenCalledWith('opaque-code')
+  })
+
+  it('explicitly restores an implicit recovery callback session', async () => {
+    const { auth, service } = createHarness()
+    auth.setSession.mockResolvedValue({
+      data: { session, user },
+      error: null,
+    })
+
+    await expect(service.completePasswordRecovery(
+      'altgrid://app/?auth=recovery#access_token=access&refresh_token=refresh&type=recovery',
+    )).resolves.toBe(session)
+    expect(auth.setSession).toHaveBeenCalledWith({
+      access_token: 'access',
+      refresh_token: 'refresh',
+    })
+  })
+
   it('creates an account with a trimmed email and no referral metadata', async () => {
     const { auth, service } = createHarness()
     auth.signUp.mockResolvedValue({
@@ -92,6 +146,25 @@ describe('AuthService', () => {
     expect(auth.signInWithPassword).toHaveBeenCalledWith({
       email: 'hunter@example.com',
       password: 'secret123',
+    })
+  })
+
+  it('starts Google login without navigating the embedded app shell', async () => {
+    const { auth, service } = createHarness()
+    auth.signInWithOAuth.mockResolvedValue({
+      data: { provider: 'google', url: 'https://accounts.google.com/oauth' },
+      error: null,
+    })
+
+    await expect(service.startGoogleSignIn(
+      'altgrid://app/?auth=oauth',
+    )).resolves.toBe('https://accounts.google.com/oauth')
+    expect(auth.signInWithOAuth).toHaveBeenCalledWith({
+      provider: 'google',
+      options: {
+        redirectTo: 'altgrid://app/?auth=oauth',
+        skipBrowserRedirect: true,
+      },
     })
   })
 
