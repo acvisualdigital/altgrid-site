@@ -3153,8 +3153,21 @@ export class AuthApp {
         .filter((ad) => ad.category === 'game' && ad.game_slug)
         .map((ad) => ad.game_slug as string),
     )
+    // Keep sponsored games prominent, then order each group by the live
+    // presence counter returned by the API. The counter is refreshed with the
+    // presence heartbeat, so the sidebar reorders automatically without an
+    // app update when player activity changes.
+    const onlinePlayersFor = (game: typeof this.games[number]): number => {
+      const value = this.appMetrics?.games?.[game.slug]
+        ?? (localAppAdPreviewEnabled() && game.slug === LOCAL_APP_AD_PREVIEW.game_slug ? 128 : 0)
+      return Number.isFinite(value) ? Math.max(0, value) : 0
+    }
     const visibleGames = [...this.games]
-      .sort((left, right) => Number(featuredGameSlugs.has(right.slug)) - Number(featuredGameSlugs.has(left.slug)))
+      .sort((left, right) =>
+        Number(featuredGameSlugs.has(right.slug)) - Number(featuredGameSlugs.has(left.slug))
+        || onlinePlayersFor(right) - onlinePlayersFor(left)
+        || (left.sort_order ?? 0) - (right.sort_order ?? 0)
+        || left.name.localeCompare(right.name, 'pt-BR'))
       .slice(0, 6)
     const activeSessions = this.permissionService.getActiveSessionCount()
     const currentPlan = this.permissionService.getCurrentPlan()
@@ -3177,8 +3190,9 @@ export class AuthApp {
             ${visibleGames.length > 0
               ? visibleGames.map((game) => {
                 const featured = featuredGameSlugs.has(game.slug)
-                const onlinePlayers = this.appMetrics?.games?.[game.slug]
-                  ?? (localAppAdPreviewEnabled() && game.slug === LOCAL_APP_AD_PREVIEW.game_slug ? 128 : undefined)
+                const hasOnlineMetric = Object.prototype.hasOwnProperty.call(this.appMetrics?.games ?? {}, game.slug)
+                  || (localAppAdPreviewEnabled() && game.slug === LOCAL_APP_AD_PREVIEW.game_slug)
+                const onlinePlayers = hasOnlineMetric ? onlinePlayersFor(game) : undefined
                 return `
                 <button class="game-list__item ${game.slug === selectedSlug ? 'is-selected' : ''} ${featured ? 'is-sponsored' : ''}" data-select-game="${escapeHtml(game.slug)}" type="button">
                   <span class="game-list__icon">${this.renderGameIcon(game)}</span>
