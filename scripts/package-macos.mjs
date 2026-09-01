@@ -37,6 +37,19 @@ const notarized = Boolean(
   && process.env.APPLE_TEAM_ID?.trim(),
 )
 
+// GitHub exposes missing secrets as empty environment variables. electron-builder
+// treats an empty CSC_LINK as a certificate path and resolves it to the project
+// directory, so remove the optional variables entirely for ad-hoc builds.
+if (!developerSigned) {
+  delete process.env.CSC_LINK
+  delete process.env.CSC_KEY_PASSWORD
+}
+if (!notarized) {
+  delete process.env.APPLE_ID
+  delete process.env.APPLE_APP_SPECIFIC_PASSWORD
+  delete process.env.APPLE_TEAM_ID
+}
+
 try {
   await build({
     config: {
