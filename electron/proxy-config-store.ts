@@ -153,7 +153,7 @@ export class ProxyConfigStore {
   set(accountId: unknown, input: unknown): SessionProxySummary {
     const normalizedId = normalizedAccountId(accountId)
     if (!this.encryption.isEncryptionAvailable()) {
-      throw new Error('A proteção de credenciais do Windows não está disponível.')
+      throw new Error('A proteção de credenciais do sistema não está disponível.')
     }
 
     const config = normalizeProxyConfig(input, this.get(normalizedId))

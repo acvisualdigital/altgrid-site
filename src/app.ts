@@ -164,7 +164,7 @@ const PLAN_PRESENTATION: Record<PlanCode, PlanPresentation> = {
       'Até 6 sessões abertas ao mesmo tempo',
       'Grades avançadas e personalizadas',
       'Eco Mode para limitar FPS e reduzir consumo',
-      'Extensão isolada em até 3 contas no Windows',
+      'Extensão isolada em até 3 contas no computador',
     ],
     capacity: 'Até 6 contas simultâneas',
     displayName: 'PRO',
@@ -177,7 +177,7 @@ const PLAN_PRESENTATION: Record<PlanCode, PlanPresentation> = {
       'Até 10 sessões abertas ao mesmo tempo',
       'Grades avançadas para operações maiores',
       'Eco Mode para limitar FPS e reduzir consumo',
-      'Extensão isolada em até 9 contas no Windows',
+      'Extensão isolada em até 9 contas no computador',
       'Mais capacidade sem perder a organização',
     ],
     capacity: 'Até 10 contas simultâneas',
@@ -189,8 +189,8 @@ const PLAN_PRESENTATION: Record<PlanCode, PlanPresentation> = {
     benefits: [
       'Tudo o que está disponível no PLUS',
       'Contas simultâneas ilimitadas',
-      'Proxy exclusivo, salvo e ativado por conta no Windows',
-      'Extensões ilimitadas, isoladas por conta no Windows',
+      'Proxy exclusivo, salvo e ativado por conta no computador',
+      'Extensões ilimitadas, isoladas por conta no computador',
       'Acesso aos recursos beta do AltGrid',
       'Badge e número Founder no chat',
     ],
@@ -4616,7 +4616,7 @@ export class AuthApp {
           <div class="modal__header">
             <p class="eyebrow">FOUNDER · ROTA POR CONTA</p>
             <h2 id="dialog-title">Proxy de ${escapeHtml(account.displayName)}</h2>
-            <p>Esta conta usa uma rota própria. A senha fica criptografada pelo Windows e nunca aparece na interface.</p>
+            <p>Esta conta usa uma rota própria. A senha fica protegida pelo sistema e nunca aparece na interface.</p>
           </div>
           ${this.renderDialogError()}
           ${this.proxyLoading ? '<div class="proxy-loading"><i class="spinner spinner--green"></i> Abrindo cofre seguro…</div>' : `
@@ -4630,7 +4630,7 @@ export class AuthApp {
                 <label class="field"><span>Usuário <small>(opcional)</small></span><input name="username" value="${escapeHtml(config?.username ?? '')}" autocomplete="off" /></label>
                 <label class="field"><span>Senha <small>(opcional)</small></span><input name="password" type="password" placeholder="${config?.hasPassword ? 'Senha protegida — deixe vazio para manter' : 'Senha do proxy'}" autocomplete="new-password" /></label>
               </div>
-              <div class="proxy-security"><span aria-hidden="true">◆</span><p><strong>Credencial local protegida</strong><small>O AltGrid usa a proteção de dados do Windows. O servidor AltGrid não recebe esta senha.</small></p></div>
+              <div class="proxy-security"><span aria-hidden="true">◆</span><p><strong>Credencial local protegida</strong><small>O AltGrid usa a proteção de dados do sistema. O servidor AltGrid não recebe esta senha.</small></p></div>
               ${this.proxyTestResult ? `<div class="proxy-result ${resultClass}" role="status"><strong>${escapeHtml(this.proxyTestResult.message)}</strong><span>${escapeHtml(this.proxyTestResult.route)} · ${this.proxyTestResult.latencyMs} ms</span></div>` : ''}
               <div class="modal__actions">
                 <button class="button button--primary" type="submit" ${this.proxySaving ? 'disabled' : ''}>${this.proxySaving ? 'Salvando…' : 'Salvar e aplicar'}</button>
@@ -4680,7 +4680,7 @@ export class AuthApp {
                 </select>
                 <small>Se a conta já tiver um proxy, ele será substituído. Se estiver aberta, a nova rota será aplicada imediatamente.</small>
               </label>
-              <div class="proxy-security"><span aria-hidden="true">◆</span><p><strong>Somente o proxy será copiado</strong><small>A senha continua protegida localmente pelo Windows e não será exibida.</small></p></div>
+              <div class="proxy-security"><span aria-hidden="true">◆</span><p><strong>Somente o proxy será copiado</strong><small>A senha continua protegida localmente pelo sistema e não será exibida.</small></p></div>
               <div class="modal__actions">
                 <button class="button button--secondary" data-close-dialog type="button">Cancelar</button>
                 <button class="button button--primary" type="submit" ${!this.proxyConfig || destinations.length === 0 || this.proxySaving ? 'disabled' : ''}>${this.proxySaving ? 'Copiando…' : 'Copiar e aplicar'}</button>
@@ -4964,7 +4964,7 @@ export class AuthApp {
           ${this.renderPlanOption('FOUNDER', currentPlan, productFor('FOUNDER'), false, founderUpgradeEligible)}
         </div>
         ${this.products.length === 0 ? '<p class="modal__note">Os preços estarão disponíveis quando os serviços AltGrid reconectarem.</p>' : ''}
-        <p class="plan-purchase-note">O pagamento libera o plano para a conta AltGrid usada na compra. Recursos de extensão e proxy são exclusivos do aplicativo Windows.</p>
+        <p class="plan-purchase-note">O pagamento libera o plano para a conta AltGrid usada na compra. Recursos de extensão e proxy estão disponíveis no aplicativo para computador.</p>
         <div class="modal__actions modal__actions--end">
           <button class="button button--secondary" data-close-dialog type="button">Fechar</button>
         </div>
@@ -7400,7 +7400,7 @@ export class AuthApp {
 
   private async openCopyProxyDialog(source: ConfiguredAccount): Promise<void> {
     if (!this.proxyControlAvailable() || !this.sessionLauncher.getProxy || !this.sessionLauncher.copyProxy) {
-      this.showSessionAlert('A cópia de proxy por conta está disponível no plano Founder para Windows.')
+      this.showSessionAlert('A cópia de proxy por conta está disponível no plano Founder para computador.')
       return
     }
     if (!this.configuredAccounts.some((account) => account.id !== source.id)) {
@@ -7557,7 +7557,7 @@ export class AuthApp {
 
   private async openExtensionDialog(account: ConfiguredAccount): Promise<void> {
     if (!this.extensionControlAvailable() || !this.sessionLauncher.getExtension) {
-      this.showSessionAlert('Extensões por conta estão disponíveis nos planos pagos do aplicativo Windows.')
+      this.showSessionAlert('Extensões por conta estão disponíveis nos planos pagos do aplicativo para computador.')
       return
     }
     this.dialogAccountId = account.id
@@ -7689,7 +7689,7 @@ export class AuthApp {
     button: HTMLButtonElement,
   ): Promise<void> {
     if (!this.proxyControlAvailable() || !this.sessionLauncher.setProxy) {
-      this.showSessionAlert('O proxy por conta é exclusivo do Founder no aplicativo Windows.')
+      this.showSessionAlert('O proxy por conta é exclusivo do Founder no aplicativo para computador.')
       return
     }
 
@@ -7737,7 +7737,7 @@ export class AuthApp {
 
   private async openProxyDialog(account: ConfiguredAccount): Promise<void> {
     if (!this.proxyControlAvailable() || !this.sessionLauncher.getProxy) {
-      this.showSessionAlert('O proxy por conta é exclusivo do Founder no aplicativo Windows.')
+      this.showSessionAlert('O proxy por conta é exclusivo do Founder no aplicativo para computador.')
       return
     }
 

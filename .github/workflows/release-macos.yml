@@ -1,0 +1,75 @@
+name: Release macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versão SemVer já publicada (ex.: 1.5.1)"
+        required: true
+        default: "1.5.1"
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      CSC_LINK: ${{ secrets.MAC_CERTIFICATE_BASE64 }}
+      CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ALTGRID_API_BASE_URL: ${{ vars.ALTGRID_API_BASE_URL }}
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      LICENSE_PUBLIC_KEY: ${{ secrets.LICENSE_PUBLIC_KEY }}
+      LICENSE_KEY_ID: ${{ vars.LICENSE_KEY_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate requested version
+        env:
+          GH_TOKEN: ${{ secrets.ALTGRID_RELEASES_TOKEN }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          node -e "const p=require('./package.json');if(p.version!==process.env.REQUESTED_VERSION)throw new Error('package.json não corresponde à versão solicitada')"
+          gh release view "v${REQUESTED_VERSION}" --repo acvisualdigital/altgrid-releases
+
+      - name: Validate project
+        run: |
+          pnpm typecheck
+          pnpm test:run
+
+      - name: Build Apple Silicon package
+        run: pnpm mac:build
+        env:
+          ALTGRID_MAC_ARCH: arm64
+
+      - name: Build Intel package
+        run: pnpm mac:build
+        env:
+          ALTGRID_MAC_ARCH: x64
+
+      - name: Publish macOS packages
+        env:
+          GH_TOKEN: ${{ secrets.ALTGRID_RELEASES_TOKEN }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: gh release upload "v${REQUESTED_VERSION}" release/mac/* --repo acvisualdigital/altgrid-releases --clobber

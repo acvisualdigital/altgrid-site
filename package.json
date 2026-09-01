@@ -14,6 +14,7 @@
     "desktop:dev": "pnpm desktop:compile && concurrently --kill-others --success first \"vite --mode desktop\" \"wait-on http://127.0.0.1:3000 && cross-env ALTGRID_DEV_SERVER_URL=http://127.0.0.1:3000 electron .\"",
     "catalog:lab:serve": "node scripts/local-catalog-proxy.mjs",
     "desktop:build": "pnpm typecheck && vite build --mode desktop && pnpm desktop:compile && node scripts/package-desktop.mjs",
+    "mac:build": "pnpm typecheck && vite build --mode desktop && pnpm desktop:compile && node scripts/package-macos.mjs",
     "desktop:launcher:restore": "node scripts/velopack-cli.mjs restore",
     "update:lab:build": "node scripts/local-update-lab.mjs build",
     "update:lab:serve": "node scripts/local-update-lab.mjs serve",
@@ -73,7 +74,8 @@
     ],
     "asar": true,
     "asarUnpack": [
-      "node_modules/velopack/lib/native/velopack_nodeffi_win_x64_msvc.node"
+      "node_modules/velopack/lib/native/velopack_nodeffi_win_x64_msvc.node",
+      "node_modules/velopack/lib/native/velopack_nodeffi_osx.node"
     ],
     "directories": {
       "output": "release"
@@ -84,7 +86,6 @@
       "electron/assets/**/*",
       "!node_modules/velopack/lib/native/velopack_nodeffi_linux_arm64_gnu.node",
       "!node_modules/velopack/lib/native/velopack_nodeffi_linux_x64_gnu.node",
-      "!node_modules/velopack/lib/native/velopack_nodeffi_osx.node",
       "!node_modules/velopack/lib/native/velopack_nodeffi_win_arm64_msvc.node",
       "!node_modules/velopack/lib/native/velopack_nodeffi_win_x86_msvc.node",
       "package.json"
@@ -93,6 +94,17 @@
       "icon": "electron/assets/icon.ico",
       "target": [
         "dir"
+      ]
+    },
+    "mac": {
+      "category": "public.app-category.utilities",
+      "entitlements": "electron/entitlements.mac.plist",
+      "entitlementsInherit": "electron/entitlements.mac.plist",
+      "hardenedRuntime": true,
+      "icon": "electron/assets/icon.png",
+      "target": [
+        "dmg",
+        "zip"
       ]
     }
   }
