@@ -367,7 +367,7 @@ export class SupabaseRepository implements
   }
 
   async getChatChannels(userId: string): Promise<ChatChannelRecord[]> {
-    const [{ data, error }, directResult] = await Promise.all([
+    const [{ data, error }, directResult, hiddenResult] = await Promise.all([
       this.client
       .from('chat_channels')
       .select('id,type,game_id,name')
@@ -376,13 +376,23 @@ export class SupabaseRepository implements
       .order('type', { ascending: true })
       .order('name', { ascending: true }),
       this.client.rpc('chat_list_direct_channels', { p_user_id: userId }),
+      this.client
+        .from('chat_direct_user_state')
+        .select('channel_id')
+        .eq('user_id', userId)
+        .not('hidden_at', 'is', null),
     ])
 
     if (error) throwDataError(error)
     if (directResult.error) throwDataError(directResult.error)
+    if (hiddenResult.error) throwDataError(hiddenResult.error)
+    const hiddenChannelIds = new Set(
+      (hiddenResult.data ?? []).map((row: { channel_id: string }) => row.channel_id),
+    )
     return [
       ...((data ?? []) as ChatChannelRecord[]),
-      ...((directResult.data ?? []) as unknown as ChatChannelRecord[]),
+      ...((directResult.data ?? []) as unknown as ChatChannelRecord[])
+        .filter((channel) => !hiddenChannelIds.has(channel.id)),
     ]
   }
 
@@ -395,7 +405,37 @@ export class SupabaseRepository implements
       p_recipient_id: recipientId,
     })
     if (error) throwDataError(error)
-    return data as unknown as ChatChannelRecord
+    const channel = data as unknown as ChatChannelRecord
+    const { error: stateError } = await this.client
+      .from('chat_direct_user_state')
+      .delete()
+      .eq('channel_id', channel.id)
+      .eq('user_id', userId)
+    if (stateError) throwDataError(stateError)
+    return channel
+  }
+
+  async deleteDirectChat(userId: string, channelId: string): Promise<void> {
+    const { data: pair, error: pairError } = await this.client
+      .from('chat_direct_pairs')
+      .select('channel_id')
+      .eq('channel_id', channelId)
+      .or(`user_low.eq.${userId},user_high.eq.${userId}`)
+      .maybeSingle()
+    if (pairError) throwDataError(pairError)
+    if (!pair) throw new ApiError(404, 'direct_chat_not_found', 'Conversa privada não encontrada.')
+
+    const now = new Date().toISOString()
+    const { error } = await this.client
+      .from('chat_direct_user_state')
+      .upsert({
+        channel_id: channelId,
+        user_id: userId,
+        hidden_at: now,
+        cleared_at: now,
+        updated_at: now,
+      }, { onConflict: 'channel_id,user_id' })
+    if (error) throwDataError(error)
   }
 
   async getChatStatus(userId: string): Promise<ChatStatusRecord> {
@@ -412,14 +452,26 @@ export class SupabaseRepository implements
     before: string | null,
     pageSize: number,
   ): Promise<ChatMessageRecord[]> {
-    const { data, error } = await this.client.rpc('chat_list_messages', {
-      p_user_id: userId,
-      p_channel_id: channelId,
-      p_before: before,
-      p_page_size: pageSize,
-    })
+    const [{ data, error }, stateResult] = await Promise.all([
+      this.client.rpc('chat_list_messages', {
+        p_user_id: userId,
+        p_channel_id: channelId,
+        p_before: before,
+        p_page_size: pageSize,
+      }),
+      this.client
+        .from('chat_direct_user_state')
+        .select('cleared_at')
+        .eq('channel_id', channelId)
+        .eq('user_id', userId)
+        .maybeSingle(),
+    ])
     if (error) throwDataError(error)
-    return (data ?? []) as ChatMessageRecord[]
+    if (stateResult.error) throwDataError(stateResult.error)
+    const clearedAt = (stateResult.data as { cleared_at?: string | null } | null)?.cleared_at
+    return ((data ?? []) as ChatMessageRecord[]).filter((message) => (
+      !clearedAt || Date.parse(message.created_at) > Date.parse(clearedAt)
+    ))
   }
 
   async sendChatMessage(
@@ -433,7 +485,13 @@ export class SupabaseRepository implements
       p_message: message,
     })
     if (error) throwDataError(error)
-    return data as ChatMessageRecord
+    const sentMessage = data as ChatMessageRecord
+    const { error: stateError } = await this.client
+      .from('chat_direct_user_state')
+      .update({ hidden_at: null, updated_at: new Date().toISOString() })
+      .eq('channel_id', channelId)
+    if (stateError) throwDataError(stateError)
+    return sentMessage
   }
 
   async reportChatMessage(

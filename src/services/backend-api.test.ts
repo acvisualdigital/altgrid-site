@@ -559,6 +559,13 @@ describe('BackendApi', () => {
       'https://api.example.com/v1/chat/direct/user%2Fid',
       expect.objectContaining({ method: 'POST' }),
     )
+
+    fetcher.mockResolvedValueOnce(json({ deleted: true }))
+    await expect(api.deleteDirectChat('direct/channel')).resolves.toEqual({ deleted: true })
+    expect(fetcher).toHaveBeenLastCalledWith(
+      'https://api.example.com/v1/chat/direct/direct%2Fchannel',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
   })
 
   it('routes chat report review and moderation actions with encoded targets', async () => {

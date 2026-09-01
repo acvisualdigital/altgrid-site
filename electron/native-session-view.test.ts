@@ -343,6 +343,35 @@ describe('createNativeSessionViewFactory', () => {
     expect(view.webContents.setZoomFactor).toHaveBeenCalledOnce()
   })
 
+  it('blocks Chromium zoom shortcuts and restores the AltGrid scale', () => {
+    const { hostWindow } = createHostWindow()
+    const factory = createNativeSessionViewFactory(hostWindow, false)
+    const nativeView = factory({
+      accountId: 'account-protected-zoom',
+      onEvent: vi.fn(),
+      partition: 'persist:altgrid-account-account-protected-zoom',
+    })
+    const view = electronMocks.views[0]!
+    const inputEvent = { preventDefault: vi.fn() }
+    const zoomEvent = { preventDefault: vi.fn() }
+
+    nativeView.setZoomFactor(0.75)
+    view.handlers.get('before-input-event')?.(inputEvent, {
+      alt: false,
+      control: true,
+      isAutoRepeat: false,
+      key: '+',
+      meta: false,
+      shift: false,
+      type: 'keyDown',
+    })
+    view.handlers.get('zoom-changed')?.(zoomEvent, 'in')
+
+    expect(inputEvent.preventDefault).toHaveBeenCalledOnce()
+    expect(zoomEvent.preventDefault).toHaveBeenCalledOnce()
+    expect(view.webContents.setZoomFactor).toHaveBeenLastCalledWith(0.75)
+  })
+
   it('applies one proxy per partition and answers only proxy authentication', async () => {
     const { hostWindow } = createHostWindow()
     const factory = createNativeSessionViewFactory(hostWindow, false)

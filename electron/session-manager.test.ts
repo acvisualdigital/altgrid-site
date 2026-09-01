@@ -262,6 +262,9 @@ describe('SessionManager', () => {
 
     harness.manager.setInterfaceZoom('account-1', null)
     expect(view.setZoomFactor).toHaveBeenLastCalledWith(1)
+    view.setZoomFactor.mockClear()
+    harness.manager.setInterfaceZoom('account-1', null)
+    expect(view.setZoomFactor).toHaveBeenCalledWith(1)
     expect(() => harness.manager.setInterfaceZoom('account-1', 0.49)).toThrow(RangeError)
   })
 

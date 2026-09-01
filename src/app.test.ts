@@ -677,6 +677,7 @@ describe('AuthApp session lifecycle', () => {
     const auth = createAuthServiceDouble()
     auth.getSession.mockResolvedValue(session)
     const chat = new ChatService({
+      deleteDirectChat: vi.fn(),
       getChatChannels: vi.fn().mockResolvedValue({ channels: [{
         game_id: null,
         id: 'global-channel',
@@ -754,6 +755,7 @@ describe('AuthApp session lifecycle', () => {
       unread: 0,
     }
     const startDirectChat = vi.fn().mockResolvedValue({ channel: directChannel })
+    const deleteDirectChat = vi.fn().mockResolvedValue({ deleted: true })
     const getChatMessages = vi.fn(async (channelId: string) => ({
       messages: [{
         channel_id: channelId,
@@ -769,6 +771,7 @@ describe('AuthApp session lifecycle', () => {
       pagination: { has_more: false, next_before: null },
     }))
     const chat = new ChatService({
+      deleteDirectChat,
       getChatChannels: vi.fn().mockResolvedValue({ channels }),
       getChatMessages,
       getChatStatus: vi.fn().mockResolvedValue({
@@ -850,8 +853,13 @@ describe('AuthApp session lifecycle', () => {
     await vi.waitFor(() => {
       expect(root.innerHTML).toContain('data-chat-channel-type="direct"')
       expect(root.innerHTML).toContain('data-chat-message-channel="direct-channel"')
+      expect(root.innerHTML).toContain('data-delete-direct-chat="direct-channel"')
+      expect(root.innerHTML).toContain('data-mention-chat-user="Caco"')
       expect(root.innerHTML).toContain('<circle cx="12" cy="8" r="4"')
     })
+    await chat.deleteDirectConversation('direct-channel')
+    expect(deleteDirectChat).toHaveBeenCalledWith('direct-channel')
+    expect(chat.getState().channels.some((channel) => channel.id === 'direct-channel')).toBe(false)
 
     app.destroy()
   })
@@ -910,6 +918,7 @@ describe('AuthApp session lifecycle', () => {
       accounts.add(user.id, { displayName, gameSlug: 'huntera' }))
     const permissions = new PermissionService()
     const chat = new ChatService({
+      deleteDirectChat: vi.fn(),
       getChatChannels: vi.fn().mockResolvedValue({ channels: [] }),
       getChatMessages: vi.fn().mockResolvedValue({
         messages: [],

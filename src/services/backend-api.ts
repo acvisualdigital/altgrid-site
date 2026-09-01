@@ -8,6 +8,7 @@ import type {
   AppMetricsResponse,
   ChatChannelsResponse,
   ChatDirectChannelResponse,
+  ChatDirectDeleteResponse,
   ChatMessageResponse,
   ChatMessagesResponse,
   ChatReportResponse,
@@ -227,6 +228,13 @@ export class BackendApi {
     return this.privateRequest<ChatDirectChannelResponse>(
       '/v1/chat/direct/' + encodeURIComponent(recipientId),
       { method: 'POST' },
+    )
+  }
+
+  deleteDirectChat(channelId: string): Promise<ChatDirectDeleteResponse> {
+    return this.privateRequest<ChatDirectDeleteResponse>(
+      '/v1/chat/direct/' + encodeURIComponent(channelId),
+      { method: 'DELETE' },
     )
   }
 

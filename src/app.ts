@@ -3446,7 +3446,7 @@ export class AuthApp {
     account: ConfiguredAccount,
     scale: number | null,
     select: HTMLSelectElement,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const previous = this.sessionInterfaceScaleFor(account.id)
     select.disabled = true
 
@@ -3460,9 +3460,11 @@ export class AuthApp {
       this.storeSessionInterfaceScalePreferences()
       select.value = scale === null ? '' : String(Math.round(scale * 100))
       this.showSessionAlert('')
+      return true
     } catch {
       select.value = previous === null ? '' : String(Math.round(previous * 100))
       this.showSessionAlert('Não foi possível alterar a escala desta conta.')
+      return false
     } finally {
       if (select.isConnected) {
         select.disabled = false
@@ -3601,6 +3603,7 @@ export class AuthApp {
               <summary aria-label="Opções da mensagem">•••</summary>
               <div>
                 ${channel?.type === 'direct' ? '' : `<button data-direct-chat-user="${escapeHtml(message.user_id)}" type="button">Mensagem direta</button>`}
+                <button data-mention-chat-user="${escapeHtml(message.display_name || 'Jogador')}" type="button">Mencionar @nick</button>
                 <button data-report-chat-message="${escapeHtml(message.id)}" type="button">Denunciar</button>
                 <button data-block-chat-user="${escapeHtml(message.user_id)}" type="button">Bloquear localmente</button>
               </div>
@@ -3639,7 +3642,10 @@ export class AuthApp {
             <span class="chat-panel__game-icon">${this.renderChatChannelIcon(currentChannel)}</span>
             <div><strong>${currentChannel?.type === 'direct' ? 'Mensagem direta' : 'Chat'}</strong><small>${escapeHtml(currentChannel?.name ?? 'AltGrid')}</small>${communityStats}</div>
           </div>
-          <button data-close-chat type="button" aria-label="Fechar chat">×</button>
+          <div class="chat-panel__actions">
+            ${currentChannel?.type === 'direct' ? `<button class="chat-panel__delete" data-delete-direct-chat="${escapeHtml(currentChannel.id)}" data-direct-chat-name="${escapeHtml(currentChannel.name)}" type="button" aria-label="Apagar conversa com ${escapeHtml(currentChannel.name)}" title="Apagar esta conversa">${uiIcon('trash')}</button>` : ''}
+            <button data-close-chat type="button" aria-label="Fechar chat">×</button>
+          </div>
         </header>
         <nav class="chat-channels" aria-label="Canais do chat">
           ${visibleChannels.map((channel) => {
@@ -3887,6 +3893,7 @@ export class AuthApp {
                       ${[50, 55, 60, 67, 75, 80, 90, 100].map((percent) => `<option value="${percent}" ${interfaceScale === percent / 100 ? 'selected' : ''}>${percent}%</option>`).join('')}
                     </select>
                   </label>` : ''}
+                  ${this.interfaceScaleControlSupported ? `<button class="session-menu__scale-reset" data-reset-session-scale data-account-id="${escapeHtml(account.id)}" type="button"><i>${uiIcon('refresh')}</i><span><b>Restaurar escala do jogo</b><small>Corrige zoom acidental sem apagar seus dados</small></span></button>` : ''}
                 </div>
               </section>` : ''}
 
@@ -6012,6 +6019,42 @@ export class AuthApp {
       })
 
     this.root
+      .querySelectorAll<HTMLButtonElement>('[data-mention-chat-user]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const nickname = button.dataset.mentionChatUser?.trim()
+          const field = this.root.querySelector<HTMLTextAreaElement>(
+            '#chat-form textarea[name="message"]',
+          )
+          if (!nickname || !field) return
+          const mention = `@${nickname} `
+          const start = field.selectionStart ?? field.value.length
+          const end = field.selectionEnd ?? start
+          field.value = `${field.value.slice(0, start)}${mention}${field.value.slice(end)}`
+          field.focus()
+          field.setSelectionRange(start + mention.length, start + mention.length)
+          button.closest('details')?.removeAttribute('open')
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-delete-direct-chat]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const channelId = button.dataset.deleteDirectChat
+          const name = button.dataset.directChatName || 'esta pessoa'
+          if (!channelId || !window.confirm(
+            `Apagar sua conversa com ${name}? Ela será removida somente para você. Uma nova mensagem poderá reabri-la.`,
+          )) return
+          void this.chatService?.deleteDirectConversation(channelId)
+            .then(() => this.showSessionAlert('Conversa privada apagada.'))
+            .catch((error) => this.showSessionAlert(
+              error instanceof Error ? error.message : 'Não foi possível apagar a conversa.',
+            ))
+        })
+      })
+
+    this.root
       .querySelectorAll<HTMLButtonElement>('[data-select-grid-workspace]')
       .forEach((button) => {
         this.bindButtonOnce(button, () => {
@@ -6320,6 +6363,23 @@ export class AuthApp {
           }
 
           void this.updateSessionInterfaceScale(account, scale, select)
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-reset-session-scale]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const account = this.accountFromAction(button)
+          const select = button.closest<HTMLElement>('[data-session-menu]')
+            ?.querySelector<HTMLSelectElement>('[data-session-interface-scale]')
+          if (!account || !select) return
+
+          void this.updateSessionInterfaceScale(account, null, select).then((restored) => {
+            if (!restored) return
+            button.closest('details')?.removeAttribute('open')
+            this.showSessionAlert(`Escala de ${account.displayName} restaurada sem apagar seus dados.`)
+          })
         })
       })
 

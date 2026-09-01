@@ -7,6 +7,14 @@ const USER_ID = '00000000-0000-4000-8000-000000000001'
 const CHANNEL_ID = '10000000-0000-4000-8000-000000000001'
 const RECIPIENT_ID = '00000000-0000-4000-8000-000000000099'
 
+function chatRpcClient(rpc: ReturnType<typeof vi.fn>): SupabaseClient {
+  const chain: Record<string, unknown> = { error: null }
+  chain.delete = vi.fn(() => chain)
+  chain.update = vi.fn(() => chain)
+  chain.eq = vi.fn(() => chain)
+  return { from: vi.fn(() => chain), rpc } as unknown as SupabaseClient
+}
+
 describe('SupabaseRepository presence and metrics RPC boundary', () => {
   it('reads only the aggregate metrics returned by the database function', async () => {
     const metrics = {
@@ -55,7 +63,7 @@ describe('SupabaseRepository presence and metrics RPC boundary', () => {
       founder_number: 7,
     }
     const rpc = vi.fn(async () => ({ data: serverMessage, error: null }))
-    const repository = new SupabaseRepository({ rpc } as unknown as SupabaseClient)
+    const repository = new SupabaseRepository(chatRpcClient(rpc))
 
     await expect(repository.sendChatMessage(USER_ID, CHANNEL_ID, 'Olá'))
       .resolves.toEqual(serverMessage)
@@ -76,7 +84,7 @@ describe('SupabaseRepository presence and metrics RPC boundary', () => {
       unread: 0,
     }
     const rpc = vi.fn(async () => ({ data: directChannel, error: null }))
-    const repository = new SupabaseRepository({ rpc } as unknown as SupabaseClient)
+    const repository = new SupabaseRepository(chatRpcClient(rpc))
 
     await expect(repository.startDirectChat(USER_ID, RECIPIENT_ID))
       .resolves.toEqual(directChannel)

@@ -118,6 +118,7 @@ export function createNativeSessionViewFactory(
     let ecoModeEnabled = false
     let frameRateLimit = 0
     let requestedMuted = false
+    let requestedZoomFactor = 1
     let parked = true
     let parkedCollectionTimer: NodeJS.Timeout | null = null
     let currentBounds = { height: 720, width: 1_280, x: 0, y: 0 }
@@ -208,6 +209,12 @@ export function createNativeSessionViewFactory(
       }
     }
 
+    const applyZoomFactor = (): void => {
+      if (!view.webContents.isDestroyed()) {
+        view.webContents.setZoomFactor(requestedZoomFactor)
+      }
+    }
+
     const applyParkedMediaPolicy = (): void => {
       if (view.webContents.isDestroyed()) {
         return
@@ -277,7 +284,21 @@ export function createNativeSessionViewFactory(
         reportBlockedDestination(url)
       }
     })
-    view.webContents.on('before-input-event', (_event, input) => {
+    view.webContents.on('before-input-event', (event, input) => {
+      const browserZoomShortcut = input.type === 'keyDown'
+        && (input.control || input.meta)
+        && !input.alt
+        && ['+', '-', '0', '=', '_'].includes(input.key)
+
+      if (browserZoomShortcut) {
+        // Chromium persists host zoom inside the account partition. Blocking
+        // browser zoom here prevents Ctrl/Cmd + wheel/keys from permanently
+        // enlarging the game independently from AltGrid's scale control.
+        event.preventDefault()
+        applyZoomFactor()
+        return
+      }
+
       if (
         input.type === 'keyDown'
         && input.key === 'Escape'
@@ -292,9 +313,14 @@ export function createNativeSessionViewFactory(
         onEvent({ type: 'escape' })
       }
     })
+    view.webContents.on('zoom-changed', (event) => {
+      event.preventDefault()
+      applyZoomFactor()
+    })
     view.webContents.on('did-start-loading', () => onEvent({ type: 'loading' }))
     view.webContents.on('focus', () => onEvent({ type: 'focused' }))
     view.webContents.on('did-finish-load', () => {
+      applyZoomFactor()
       applyFrameRateLimit()
       onEvent({ type: 'ready' })
     })
@@ -529,9 +555,8 @@ export function createNativeSessionViewFactory(
       },
 
       setZoomFactor(factor): void {
-        if (!view.webContents.isDestroyed()) {
-          view.webContents.setZoomFactor(factor)
-        }
+        requestedZoomFactor = factor
+        applyZoomFactor()
       },
     }
   }

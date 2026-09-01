@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Versão SemVer já publicada (ex.: 1.5.1)"
+        description: "Versão SemVer já publicada (ex.: 1.5.2)"
         required: true
-        default: "1.5.1"
+        default: "1.5.2"
 
 permissions:
   contents: write

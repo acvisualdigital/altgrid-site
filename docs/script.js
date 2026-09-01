@@ -82,7 +82,7 @@ const RELEASE_API = 'https://api.github.com/repos/acvisualdigital/altgrid-releas
 const ANDROID_DOWNLOAD_URL = 'https://altgrid-api.altgrid.workers.dev/v1/downloads/android'
 const METRICS_API = 'https://altgrid-api.altgrid.workers.dev/v1/app/metrics'
 const METRICS_REFRESH_INTERVAL_MS = 60_000
-const PAGE_RELEASE_VERSION = '1.5.1'
+const PAGE_RELEASE_VERSION = '1.5.2'
 
 const findAsset = (assets, pattern) => assets.find((asset) => pattern.test(asset.name))
 const versionParts = (version) => version.split('.').map((part) => Number.parseInt(part, 10) || 0)

@@ -109,9 +109,12 @@ function allowedMethods(pathname: string): string[] | null {
     || pathname === '/v1/payments/pix'
     || pathname === '/v1/webhooks/mercadopago'
     || /^\/v1\/chat\/messages\/[^/]+\/report$/.test(pathname)
-    || /^\/v1\/chat\/direct\/[^/]+$/.test(pathname)
   ) {
     return ['POST']
+  }
+
+  if (/^\/v1\/chat\/direct\/[^/]+$/.test(pathname)) {
+    return ['POST', 'DELETE']
   }
 
   if (/^\/v1\/updates\/[^/]+$/.test(pathname)) {
@@ -393,16 +396,20 @@ export function createApi(
       if (!dependencies.chatRepository) {
         throw new ApiError(503, 'chat_unavailable', 'Chat indisponível.')
       }
-      const recipientId = requireUuid(
+      const directId = requireUuid(
         decodePathSegment(directChatMatch[1]),
-        'recipient id',
+        request.method === 'DELETE' ? 'channel id' : 'recipient id',
       )
+      if (request.method === 'DELETE') {
+        await dependencies.chatRepository.deleteDirectChat(user.id, directId)
+        return jsonResponse({ deleted: true })
+      }
       const rateLimiter = dependencies.chatRateLimiter ?? dependencies.deviceRateLimiter
       const { success } = await rateLimiter.limit({ key: `${user.id}:chat-direct-start` })
       if (!success) {
         throw new ApiError(429, 'rate_limited', 'Aguarde antes de abrir outra conversa.')
       }
-      const channel = await dependencies.chatRepository.startDirectChat(user.id, recipientId)
+      const channel = await dependencies.chatRepository.startDirectChat(user.id, directId)
       return jsonResponse({ channel }, 201)
     }
 

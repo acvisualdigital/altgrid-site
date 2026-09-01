@@ -220,6 +220,10 @@ export interface ChatDirectChannelResponse {
   channel: ChatChannel
 }
 
+export interface ChatDirectDeleteResponse {
+  deleted: boolean
+}
+
 export interface ChatMessagesResponse {
   messages: ChatMessage[]
   pagination: {

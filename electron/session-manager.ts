@@ -478,11 +478,10 @@ export class SessionManager {
     const record = this.requireRecord(accountId)
     const zoom = normalizeInterfaceZoom(inputZoom)
 
-    if (record.interfaceZoom === zoom) {
-      return snapshot(record)
-    }
-
     record.interfaceZoom = zoom
+    // Reapply even when the stored preference already matches. This is the
+    // recovery path for legacy Chromium host-zoom values persisted by an
+    // accidental Ctrl/Cmd + wheel gesture.
     record.view.setZoomFactor(this.effectiveInterfaceZoom(record))
     return snapshot(record)
   }

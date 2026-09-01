@@ -12,6 +12,7 @@ const BLOCKED_USERS_KEY = 'altgrid.chat.blocked-users.v1'
 type ChatApi = Pick<
   BackendApi,
   | 'getChatChannels'
+  | 'deleteDirectChat'
   | 'getChatMessages'
   | 'getChatStatus'
   | 'reportChatMessage'
@@ -364,6 +365,37 @@ export class ChatService {
         error: 'Não foi possível abrir a conversa direta.',
         loading: false,
       })
+      throw error
+    }
+  }
+
+  async deleteDirectConversation(channelId: string): Promise<void> {
+    const channel = this.state.channels.find((item) => item.id === channelId)
+    if (!channel || channel.type !== 'direct') {
+      throw new Error('Selecione uma conversa privada válida.')
+    }
+
+    this.patch({ error: null, loading: true })
+    try {
+      await this.api.deleteDirectChat(channelId)
+      this.stopRealtime()
+      const channels = this.state.channels.filter((item) => item.id !== channelId)
+      const unread = { ...this.state.unread }
+      delete unread[channelId]
+      const fallback = channels.find((item) => item.type === 'global') ?? channels[0] ?? null
+      this.patch({
+        channels,
+        hasMore: false,
+        loading: false,
+        messages: [],
+        selectedChannelId: null,
+        unread,
+      })
+      if (this.state.open && fallback) {
+        await this.selectChannel(fallback.id)
+      }
+    } catch (error) {
+      this.patch({ error: 'Não foi possível apagar a conversa privada.', loading: false })
       throw error
     }
   }

@@ -93,6 +93,7 @@ describe('platform Worker endpoints', () => {
       }]),
     }
     chatRepository = {
+      deleteDirectChat: vi.fn(async () => undefined),
       getChatChannels: vi.fn(async () => [{
         id: CHANNEL_ID,
         type: 'global' as const,
@@ -321,6 +322,11 @@ describe('platform Worker endpoints', () => {
 
     const invalid = await api.fetch(request('/v1/chat/direct/not-a-uuid', 'POST'))
     expect(invalid.status).toBe(400)
+
+    const deleted = await api.fetch(request(`/v1/chat/direct/${CHANNEL_ID}`, 'DELETE'))
+    expect(deleted.status).toBe(200)
+    expect(chatRepository.deleteDirectChat).toHaveBeenCalledWith(USER_ID, CHANNEL_ID)
+    await expect(deleted.json()).resolves.toEqual({ deleted: true })
   })
 
   it('creates PIX from product_code only and forwards a stable idempotency key', async () => {

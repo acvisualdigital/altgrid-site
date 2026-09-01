@@ -203,6 +203,7 @@ export interface PlatformRepository {
 export interface ChatRepository {
   getChatChannels(userId: string): Promise<ChatChannelRecord[]>
   startDirectChat(userId: string, recipientId: string): Promise<ChatChannelRecord>
+  deleteDirectChat(userId: string, channelId: string): Promise<void>
   getChatStatus(userId: string): Promise<ChatStatusRecord>
   getChatMessages(
     userId: string,
