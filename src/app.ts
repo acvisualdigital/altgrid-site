@@ -3164,8 +3164,8 @@ export class AuthApp {
     }
     const visibleGames = [...this.games]
       .sort((left, right) =>
-        Number(featuredGameSlugs.has(right.slug)) - Number(featuredGameSlugs.has(left.slug))
-        || onlinePlayersFor(right) - onlinePlayersFor(left)
+        onlinePlayersFor(right) - onlinePlayersFor(left)
+        || Number(featuredGameSlugs.has(right.slug)) - Number(featuredGameSlugs.has(left.slug))
         || (left.sort_order ?? 0) - (right.sort_order ?? 0)
         || left.name.localeCompare(right.name, 'pt-BR'))
       .slice(0, 6)
