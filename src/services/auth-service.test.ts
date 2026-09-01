@@ -31,6 +31,7 @@ function createHarness(isOnline: () => boolean = () => true) {
     getUser: vi.fn(),
     onAuthStateChange: vi.fn(),
     refreshSession: vi.fn(),
+    resend: vi.fn(),
     resetPasswordForEmail: vi.fn(),
     setSession: vi.fn(),
     signInWithPassword: vi.fn(),
@@ -146,6 +147,19 @@ describe('AuthService', () => {
     expect(auth.signInWithPassword).toHaveBeenCalledWith({
       email: 'hunter@example.com',
       password: 'secret123',
+    })
+  })
+
+  it('resends a signup confirmation to the normalized address', async () => {
+    const { auth, service } = createHarness()
+    auth.resend.mockResolvedValue({ data: {}, error: null })
+
+    await expect(
+      service.resendSignupConfirmation('  hunter@example.com  '),
+    ).resolves.toBeUndefined()
+    expect(auth.resend).toHaveBeenCalledWith({
+      email: 'hunter@example.com',
+      type: 'signup',
     })
   })
 

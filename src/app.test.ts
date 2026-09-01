@@ -579,6 +579,7 @@ function createAuthServiceDouble() {
       listener = nextListener
       return unsubscribe
     }),
+    resendSignupConfirmation: vi.fn(),
     signOut: vi.fn(),
     updatePassword: vi.fn(),
   }
@@ -589,6 +590,7 @@ function createAuthServiceDouble() {
     },
     completePasswordRecovery: methods.completePasswordRecovery,
     getSession: methods.getSession,
+    resendSignupConfirmation: methods.resendSignupConfirmation,
     service: methods as unknown as AuthService,
     signOut: methods.signOut,
     unsubscribe,
@@ -615,6 +617,46 @@ afterEach(() => {
 })
 
 describe('AuthApp session lifecycle', () => {
+  it('lets a user resend the confirmation email from the success screen', async () => {
+    installBrowser('https://app.example.com/')
+    const root = createRoot()
+    const auth = createAuthServiceDouble()
+    auth.getSession.mockResolvedValue(null)
+    auth.resendSignupConfirmation.mockResolvedValue(undefined)
+    const app = new AuthApp(root, auth.service)
+
+    await app.start()
+
+    const confirmation = app as unknown as {
+      confirmationResendMessage: string
+      confirmationResendStatus: string
+      currentView: string
+      pendingConfirmationEmail: string
+      render(): void
+    }
+    confirmation.pendingConfirmationEmail = 'hunter@example.com'
+    confirmation.confirmationResendStatus = 'idle'
+    confirmation.confirmationResendMessage = ''
+    confirmation.currentView = 'confirm-email'
+    const resendButton = new AcceptanceElement()
+    vi.mocked(root.querySelector).mockImplementation((selector) => (
+      selector === '[data-resend-confirmation]'
+        ? asHtmlElement(resendButton)
+        : null
+    ))
+    confirmation.render()
+
+    expect(root.innerHTML).toContain('hunter@example.com')
+    expect(root.innerHTML).toContain('data-resend-confirmation')
+    resendButton.click()
+
+    await vi.waitFor(() => {
+      expect(auth.resendSignupConfirmation).toHaveBeenCalledWith('hunter@example.com')
+      expect(root.innerHTML).toContain('Novo e-mail enviado')
+    })
+    app.destroy()
+  })
+
   it('keeps the in-app updater accessible before login', async () => {
     installBrowser('https://app.example.com/')
     const root = createRoot()

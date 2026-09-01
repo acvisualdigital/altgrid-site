@@ -823,6 +823,9 @@ export class AuthApp {
   private referralLoading = false
   private referralError: string | null = null
   private signupReferralCode = initialReferralCode()
+  private pendingConfirmationEmail = ''
+  private confirmationResendStatus: 'idle' | 'sending' | 'sent' | 'error' = 'idle'
+  private confirmationResendMessage = ''
   private presenceHeartbeatTimer: ReturnType<typeof setInterval> | null = null
   private presenceUserId: string | null = null
   private pixPayment: PixPayment | null = null
@@ -2809,12 +2812,34 @@ export class AuthApp {
   }
 
   private renderConfirmEmail(): string {
-    return this.renderMessageCard(
-      'Verifique seu e-mail',
-      'Sua conta foi criada. Use o link enviado para confirmar o e-mail e entrar.',
-      'Ir para o login',
-      'login',
-    )
+    const email = escapeHtml(this.pendingConfirmationEmail)
+    const statusClass = this.confirmationResendStatus === 'error'
+      ? ' confirmation-status--error'
+      : this.confirmationResendStatus === 'sent'
+        ? ' confirmation-status--success'
+        : ''
+    const buttonLabel = this.confirmationResendStatus === 'sending'
+      ? '<span class="spinner spinner--green" aria-hidden="true"></span> Reenviando…'
+      : 'Reenviar e-mail'
+
+    return `
+      <section class="auth-card auth-card--message auth-card--confirmation" aria-labelledby="message-title">
+        <span class="message-icon" aria-hidden="true">@</span>
+        <p class="eyebrow">Confirmação necessária</p>
+        <h1 id="message-title">Verifique seu e-mail</h1>
+        <p class="auth-card__subtitle">Enviamos o link de confirmação${email ? ` para <strong>${email}</strong>` : ''}. Abra a mensagem para ativar sua conta e depois volte ao AltGrid.</p>
+        <div class="confirmation-checklist" aria-label="Ajuda para encontrar o e-mail">
+          <span>Confira a caixa de entrada</span>
+          <span>Veja também Spam ou Lixo eletrônico</span>
+          <span>O remetente será AltGrid</span>
+        </div>
+        <p class="confirmation-status${statusClass}" role="status" aria-live="polite">${escapeHtml(this.confirmationResendMessage)}</p>
+        <div class="confirmation-actions">
+          <button class="button button--secondary" data-resend-confirmation type="button" ${!email || this.confirmationResendStatus === 'sending' ? 'disabled' : ''}>${buttonLabel}</button>
+          <button class="text-button text-button--strong" data-view="login" type="button">Voltar para o login</button>
+        </div>
+      </section>
+    `
   }
 
   private renderResetPassword(): string {
@@ -5434,6 +5459,7 @@ export class AuthApp {
 
     this.bindLoginForm()
     this.bindSignupForm()
+    this.bindConfirmationActions()
     this.bindGoogleAuthButtons()
     this.bindForgotPasswordForm()
     this.bindResetPasswordForm()
@@ -8321,6 +8347,28 @@ export class AuthApp {
       })
   }
 
+  private bindConfirmationActions(): void {
+    const button = this.root.querySelector<HTMLButtonElement>('[data-resend-confirmation]')
+    if (!button || !this.pendingConfirmationEmail) return
+
+    this.bindButtonOnce(button, async () => {
+      this.confirmationResendStatus = 'sending'
+      this.confirmationResendMessage = 'Solicitando um novo e-mail…'
+      this.render()
+
+      try {
+        await this.authService.resendSignupConfirmation(this.pendingConfirmationEmail)
+        this.confirmationResendStatus = 'sent'
+        this.confirmationResendMessage = 'Novo e-mail enviado. Aguarde alguns instantes e confira também o Spam.'
+      } catch (error) {
+        this.confirmationResendStatus = 'error'
+        this.confirmationResendMessage = errorMessage(error)
+      }
+
+      this.render()
+    })
+  }
+
   private bindSignupForm(): void {
     const form = this.root.querySelector<HTMLFormElement>('#signup-form')
 
@@ -8367,6 +8415,9 @@ export class AuthApp {
           this.prepareAuthenticatedSession(result.session)
         } else {
           this.session = result.session
+          this.pendingConfirmationEmail = email.trim()
+          this.confirmationResendStatus = 'idle'
+          this.confirmationResendMessage = ''
           this.currentView = 'confirm-email'
         }
         this.render()

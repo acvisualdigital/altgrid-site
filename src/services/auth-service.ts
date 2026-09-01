@@ -257,6 +257,19 @@ export class AuthService {
     })
   }
 
+  async resendSignupConfirmation(email: string): Promise<void> {
+    await this.execute(async () => {
+      const { error } = await this.client.auth.resend({
+        email: email.trim(),
+        type: 'signup',
+      })
+
+      if (error) {
+        throw error
+      }
+    })
+  }
+
   async startGoogleSignIn(redirectTo: string): Promise<string> {
     return this.execute(async () => {
       const { data, error } = await this.client.auth.signInWithOAuth({

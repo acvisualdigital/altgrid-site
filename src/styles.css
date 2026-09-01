@@ -245,6 +245,44 @@ button {
   margin-top: 24px;
 }
 
+.auth-card--confirmation .auth-card__subtitle strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.confirmation-checklist {
+  display: grid;
+  gap: 8px;
+  margin-top: 22px;
+  padding: 14px;
+  color: var(--text-secondary);
+  border: 1px solid rgba(76, 91, 108, 0.42);
+  border-radius: 11px;
+  background: rgba(12, 17, 23, 0.38);
+  font-size: 12px;
+  text-align: left;
+}
+
+.confirmation-checklist span::before {
+  margin-right: 8px;
+  color: var(--green-hover);
+  content: "✓";
+}
+
+.confirmation-status {
+  min-height: 18px;
+  margin: 13px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.confirmation-status--success { color: var(--green-hover); }
+.confirmation-status--error { color: var(--danger); }
+.confirmation-actions { display: grid; justify-items: center; }
+.auth-card--confirmation .confirmation-actions .button { margin-top: 12px; }
+.confirmation-actions .text-button { margin-top: 6px; }
+
 .auth-card__heading {
   margin-bottom: 24px;
 }
