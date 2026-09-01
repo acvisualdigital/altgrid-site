@@ -4,6 +4,7 @@
   <url><loc>https://altgrid.com.br/games.html</loc><changefreq>daily</changefreq><priority>0.9</priority></url>
   <url><loc>https://altgrid.com.br/about.html</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://altgrid.com.br/support.html</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://altgrid.com.br/mac.html</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://altgrid.com.br/privacy.html</loc><changefreq>monthly</changefreq><priority>0.4</priority></url>
   <url><loc>https://altgrid.com.br/terms.html</loc><changefreq>monthly</changefreq><priority>0.4</priority></url>
 </urlset>

@@ -389,7 +389,7 @@ h1, h2, h3, p { margin-top: 0; }
 .hero-v15 .hero-lede { max-width: 670px; }
 .hero-v15 .hero-actions .button { min-width: 245px; }
 .hero-v15 .hero-actions .button-secondary { justify-content: flex-start; }
-.hero-platform-pair { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; width: min(100%,510px); }
+.hero-platform-pair { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; width: min(100%,760px); }
 .hero-v15 .hero-platform-pair .button { min-width: 0; min-height: 58px; }
 .hero-platform-pair .button-pending { justify-content: flex-start; }
 .hero-orbit { position: absolute; z-index: -1; border: 1px solid rgba(76,255,143,.08); border-radius: 50%; pointer-events: none; }
@@ -489,7 +489,7 @@ h1, h2, h3, p { margin-top: 0; }
 .download-spotlight-actions .button-primary { justify-content: flex-start; }
 .download-spotlight-actions .button strong,.download-spotlight-actions .button small { display: block; text-align: left; }
 .download-spotlight-actions .button small { margin-top: 3px; }
-.download-platform-pair { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.download-platform-pair { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
 .download-platform-pair .button { justify-content: flex-start; min-width: 0; padding-inline: 14px; }
 .download-notice { color: var(--quiet); font-size: .67rem; line-height: 1.55; text-align: center; }
 
@@ -515,7 +515,7 @@ h1, h2, h3, p { margin-top: 0; }
   .hero-v15 .hero-image-frame { transform: none; }
   .release-card { min-height: 310px; }
   .release-card-head { margin-bottom: 40px; }
-  .hero-platform-pair,.download-platform-pair { gap: 7px; }
+  .hero-platform-pair,.download-platform-pair { grid-template-columns: 1fr; gap: 7px; }
   .hero-platform-pair .button,.download-platform-pair .button { padding-inline: 11px; font-size: .76rem; }
   .hero-platform-pair .button-icon,.download-platform-pair .button-icon { width: 21px; font-size: 1rem; }
   .command-screen { min-height: 340px; padding: 35px 20px; }

@@ -25,10 +25,14 @@ updateHeader()
 
 if (year) year.textContent = String(new Date().getFullYear())
 
-document.querySelectorAll('.download-windows, .download-android').forEach((link) => {
+document.querySelectorAll('.download-windows, .download-android, .download-macos').forEach((link) => {
   link.addEventListener('click', () => {
     if (typeof window.gtag !== 'function') return
-    const platform = link.classList.contains('download-windows') ? 'windows' : 'android'
+    const platform = link.classList.contains('download-windows')
+      ? 'windows'
+      : link.classList.contains('download-macos')
+        ? 'macos'
+        : 'android'
     window.gtag('event', 'conversion', {
       send_to: 'AW-18415695413/HbUGCI6y8ekcELXspM1E',
       value: 1.0,
