@@ -92,7 +92,7 @@ describe('UpdaterService with Velopack launcher', () => {
   })
 
   it('stays unsupported in development without touching the native launcher', async () => {
-    const service = new UpdaterService(createWindow().browserWindow)
+    const service = new UpdaterService(createWindow().browserWindow, 'win32')
 
     expect(service.getState()).toEqual({ status: 'idle', supported: false })
     await expect(service.checkForUpdates()).resolves.toMatchObject({
@@ -104,10 +104,18 @@ describe('UpdaterService with Velopack launcher', () => {
     expect(service.quitAndInstall()).toBe(false)
   })
 
+  it('keeps the Windows launcher disabled on packaged macOS builds', () => {
+    electronMocks.app.isPackaged = true
+    const service = new UpdaterService(createWindow().browserWindow, 'darwin')
+
+    expect(service.getState()).toEqual({ status: 'idle', supported: false })
+    expect(velopackMocks.UpdateManager).not.toHaveBeenCalled()
+  })
+
   it('accepts HTTPS and loopback HTTP feeds but rejects unsafe URLs', () => {
     electronMocks.app.isPackaged = true
     process.env.ALTGRID_UPDATE_URL = 'http://127.0.0.1:4567/windows/'
-    const local = new UpdaterService(createWindow().browserWindow)
+    const local = new UpdaterService(createWindow().browserWindow, 'win32')
     expect(local.getState().supported).toBe(true)
     expect(velopackMocks.UpdateManager).toHaveBeenLastCalledWith(
       'http://127.0.0.1:4567/windows/',
@@ -115,13 +123,13 @@ describe('UpdaterService with Velopack launcher', () => {
     )
 
     process.env.ALTGRID_UPDATE_URL = 'http://updates.example.com/'
-    const unsafe = new UpdaterService(createWindow().browserWindow)
+    const unsafe = new UpdaterService(createWindow().browserWindow, 'win32')
     expect(unsafe.getState().supported).toBe(false)
   })
 
   it('uses the stable AltGrid update endpoint by default', () => {
     electronMocks.app.isPackaged = true
-    new UpdaterService(createWindow().browserWindow)
+    new UpdaterService(createWindow().browserWindow, 'win32')
 
     expect(velopackMocks.UpdateManager).toHaveBeenLastCalledWith(
       'https://altgrid-api.altgrid.workers.dev/v1/updates/',
@@ -132,7 +140,7 @@ describe('UpdaterService with Velopack launcher', () => {
   it('keeps portable and legacy NSIS installations out of the launcher path', async () => {
     electronMocks.app.isPackaged = true
     process.env.PORTABLE_EXECUTABLE_FILE = 'C:\\AltGrid\\AltGrid-Portable.exe'
-    const portable = new UpdaterService(createWindow().browserWindow)
+    const portable = new UpdaterService(createWindow().browserWindow, 'win32')
     await expect(portable.checkForUpdates()).resolves.toMatchObject({
       message: expect.stringContaining('Portátil'),
       supported: false,
@@ -142,7 +150,7 @@ describe('UpdaterService with Velopack launcher', () => {
     velopackMocks.UpdateManager.mockImplementationOnce(() => {
       throw new Error('not installed by Velopack')
     })
-    const legacy = new UpdaterService(createWindow().browserWindow)
+    const legacy = new UpdaterService(createWindow().browserWindow, 'win32')
     await expect(legacy.checkForUpdates()).resolves.toMatchObject({
       message: expect.stringContaining('instalador antigo'),
       supported: false,
@@ -161,7 +169,7 @@ describe('UpdaterService with Velopack launcher', () => {
       progress?.(120)
     })
     const { browserWindow, send } = createWindow()
-    const service = new UpdaterService(browserWindow)
+    const service = new UpdaterService(browserWindow, 'win32')
     const listener = vi.fn()
     service.subscribe(listener)
 
@@ -199,7 +207,7 @@ describe('UpdaterService with Velopack launcher', () => {
       .mockRejectedValueOnce(new Error('temporary'))
       .mockRejectedValueOnce(new Error('temporary'))
       .mockResolvedValueOnce(undefined)
-    const service = new UpdaterService(createWindow().browserWindow)
+    const service = new UpdaterService(createWindow().browserWindow, 'win32')
 
     await service.checkForUpdates()
     const downloading = service.downloadUpdate()
@@ -215,7 +223,7 @@ describe('UpdaterService with Velopack launcher', () => {
     velopackMocks.manager.getUpdatePendingRestart.mockReturnValue(
       asset('1.5.1', 'Pronta para reiniciar'),
     )
-    const service = new UpdaterService(createWindow().browserWindow)
+    const service = new UpdaterService(createWindow().browserWindow, 'win32')
 
     expect(service.getState()).toEqual({
       releaseNotes: 'Pronta para reiniciar',
@@ -234,7 +242,7 @@ describe('UpdaterService with Velopack launcher', () => {
   it('starts one delayed and one periodic check and stops both timers', async () => {
     vi.useFakeTimers()
     electronMocks.app.isPackaged = true
-    const service = new UpdaterService(createWindow().browserWindow)
+    const service = new UpdaterService(createWindow().browserWindow, 'win32')
 
     service.start()
     service.start()

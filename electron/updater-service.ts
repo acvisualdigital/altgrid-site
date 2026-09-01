@@ -56,7 +56,10 @@ export class UpdaterService {
   private operationInProgress = false
   private pendingUpdate: UpdateInfo | VelopackAsset | null = null
 
-  constructor(private readonly browserWindow: BrowserWindow) {
+  constructor(
+    private readonly browserWindow: BrowserWindow,
+    private readonly platform: NodeJS.Platform = process.platform,
+  ) {
     const configured = this.configureManager()
     this.manager = configured.manager
     this.portable = configured.portable
@@ -224,7 +227,7 @@ export class UpdaterService {
   }
 
   private configureManager(): { manager: UpdateManager | null; portable: boolean } {
-    if (!app.isPackaged || process.platform !== 'win32') {
+    if (!app.isPackaged || this.platform !== 'win32') {
       return { manager: null, portable: false }
     }
     if (process.env.PORTABLE_EXECUTABLE_FILE?.trim()) {
