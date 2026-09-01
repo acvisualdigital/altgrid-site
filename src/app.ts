@@ -2339,10 +2339,14 @@ export class AuthApp {
   }
 
   private render(): void {
+    const restoreSidebarProfile = Boolean(
+      !this.activeDialog
+      && this.root.querySelector<HTMLDetailsElement>('.sidebar-profile-menu[open]'),
+    )
     if (
       this.currentView === 'authenticated'
       && this.session
-      && this.updateAuthenticatedShell()
+      && this.updateAuthenticatedShell(restoreSidebarProfile)
     ) {
       return
     }
@@ -2411,6 +2415,7 @@ export class AuthApp {
     `
 
     this.bindViewActions()
+    this.restoreSidebarProfileMenu(restoreSidebarProfile)
     this.updateConnectivityBanner()
     this.renderedDialogSignature = this.getDialogSignature()
     this.focusCurrentView()
@@ -2423,7 +2428,7 @@ export class AuthApp {
     }
   }
 
-  private updateAuthenticatedShell(): boolean {
+  private updateAuthenticatedShell(restoreSidebarProfile = false): boolean {
     const shell = this.root.querySelector<HTMLElement>('[data-authenticated-shell]')
 
     if (!shell || shell.dataset.userId !== this.session?.user.id) {
@@ -2486,6 +2491,7 @@ export class AuthApp {
       if (this.workspaceMarkupChanged('sidebar', markup)) {
         sidebarRegion.outerHTML = markup
       }
+      this.restoreSidebarProfileMenu(restoreSidebarProfile)
     }
     if (sidebarToggle) {
       sidebarToggle.hidden = !this.sidebarCollapsed
@@ -2542,6 +2548,16 @@ export class AuthApp {
       this.focusCurrentView()
     }
     return true
+  }
+
+  private restoreSidebarProfileMenu(shouldRestore: boolean): void {
+    if (!shouldRestore || this.activeDialog) {
+      return
+    }
+
+    this.root
+      .querySelector<HTMLDetailsElement>('.sidebar-profile-menu')
+      ?.setAttribute('open', '')
   }
 
   private workspaceMarkupChanged(region: string, markup: string): boolean {

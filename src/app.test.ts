@@ -632,6 +632,30 @@ afterEach(() => {
 })
 
 describe('AuthApp session lifecycle', () => {
+  it('keeps the sidebar profile open while live metrics refresh the sidebar', () => {
+    installBrowser('https://app.example.com/')
+    const profileMenu = { setAttribute: vi.fn() }
+    const root = createRoot()
+    vi.mocked(root.querySelector).mockImplementation((selector) => (
+      selector === '.sidebar-profile-menu' ? profileMenu : null
+    ) as unknown as Element)
+    const app = new AuthApp(root, createAuthServiceDouble().service)
+    const harness = app as unknown as {
+      activeDialog: string | null
+      restoreSidebarProfileMenu(shouldRestore: boolean): void
+    }
+
+    harness.activeDialog = null
+    harness.restoreSidebarProfileMenu(true)
+    expect(profileMenu.setAttribute).toHaveBeenCalledWith('open', '')
+
+    profileMenu.setAttribute.mockClear()
+    harness.activeDialog = 'settings'
+    harness.restoreSidebarProfileMenu(true)
+    expect(profileMenu.setAttribute).not.toHaveBeenCalled()
+    app.destroy()
+  })
+
   it('shows one house advertising popup per FREE login when no campaign is active', () => {
     installBrowser('https://app.example.com/')
     vi.useFakeTimers()
