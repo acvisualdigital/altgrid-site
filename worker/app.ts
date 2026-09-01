@@ -20,13 +20,17 @@ import {
   readChatMessage,
   readChatPagination,
   readChatReport,
+  readAppAdEvent,
+  readAppAdRequest,
   readIdempotencyKey,
   readPixInput,
+  readPresenceHeartbeat,
 } from './lib/platform-validation'
 import { EntitlementService } from './services/entitlement-service'
 import type {
   AuthenticationService,
   AdminRepository,
+  AdminMobileNotifier,
   BackendRepository,
   ChatRepository,
   LicenseSnapshotService,
@@ -49,6 +53,23 @@ interface ApiDependencies {
   licenseSnapshotService?: LicenseSnapshotService
   chatRateLimiter?: RateLimitBinding
   paymentRateLimiter?: RateLimitBinding
+  adminMobileNotifier?: AdminMobileNotifier
+}
+
+async function safelyNotifyAdmin(
+  notifier: AdminMobileNotifier | undefined,
+  input: Parameters<AdminMobileNotifier['notify']>[0],
+): Promise<void> {
+  if (!notifier || notifier.enabled === false) return
+  try {
+    await notifier.notify(input)
+  } catch (error) {
+    console.error('Admin mobile notification failed', {
+      eventKey: input.eventKey,
+      type: input.type,
+      error: error instanceof Error ? error.message : 'unexpected_error',
+    })
+  }
 }
 
 interface ApiOptions {
@@ -73,6 +94,11 @@ function allowedMethods(pathname: string): string[] | null {
   if (adminMethods) return adminMethods
 
   if (
+    pathname === '/v1/app/ads/requests'
+    || /^\/v1\/app\/ads\/requests\/[^/]+\/pix$/.test(pathname)
+  ) return ['GET', 'POST']
+
+  if (
     pathname === '/health'
     || pathname === '/v1/me'
     || pathname === '/v1/me/entitlements'
@@ -82,6 +108,8 @@ function allowedMethods(pathname: string): string[] | null {
     || pathname === '/v1/app/config'
     || pathname === '/v1/app/metrics'
     || pathname === '/v1/app/announcements'
+    || pathname === '/v1/app/ads'
+    || pathname === '/v1/app/ads/plans'
     || pathname === ANDROID_DOWNLOAD_PATH
     || pathname === '/v1/products'
     || pathname === '/v1/devices'
@@ -109,6 +137,7 @@ function allowedMethods(pathname: string): string[] | null {
     || pathname === '/v1/payments/pix'
     || pathname === '/v1/webhooks/mercadopago'
     || /^\/v1\/chat\/messages\/[^/]+\/report$/.test(pathname)
+    || /^\/v1\/app\/ads\/[^/]+\/events$/.test(pathname)
   ) {
     return ['POST']
   }
@@ -306,6 +335,24 @@ export function createApi(
       })
     }
 
+    if (pathname === '/v1/app/ads/plans') {
+      const plans = dependencies.platformRepository
+        ? await dependencies.platformRepository.getAppAdPlans()
+        : []
+      return jsonResponse({ plans }, 200, {
+        'Cache-Control': 'public, max-age=300, s-maxage=300',
+      })
+    }
+
+    if (pathname === '/v1/app/ads') {
+      const ads = dependencies.platformRepository
+        ? await dependencies.platformRepository.getActiveAppAds()
+        : []
+      return jsonResponse({ ads, popup_cooldown_hours: 6 }, 200, {
+        'Cache-Control': 'public, max-age=60, s-maxage=60',
+      })
+    }
+
     if (pathname === '/v1/products') {
       const products = dependencies.platformRepository
         ? await dependencies.platformRepository.getPublicProducts()
@@ -319,7 +366,21 @@ export function createApi(
       if (!dependencies.paymentService) {
         throw new ApiError(503, 'payments_unavailable', 'Pagamento indisponível.')
       }
-      await dependencies.paymentService.handleWebhook(request)
+      const payment = await dependencies.paymentService.handleWebhook(request)
+      if (payment && ['approved', 'paid', 'fulfilled'].includes(payment.status)) {
+        await safelyNotifyAdmin(dependencies.adminMobileNotifier, {
+          eventKey: `payment:${payment.id}:approved`,
+          type: 'purchase_approved',
+          title: 'Compra aprovada',
+          occurredAt: payment.updated_at,
+          details: [
+            { label: 'Produto', value: payment.product_code },
+            { label: 'Valor', value: `${payment.currency} ${payment.amount.toFixed(2)}` },
+            { label: 'Status', value: payment.status },
+            { label: 'Pagamento', value: payment.id },
+          ],
+        })
+      }
       return jsonResponse({ ok: true })
     }
 
@@ -337,7 +398,7 @@ export function createApi(
     }
 
     if (pathname === '/v1/presence/heartbeat') {
-      await dependencies.repository.heartbeatPresence(user.id)
+      await dependencies.repository.heartbeatPresence(user.id, await readPresenceHeartbeat(request))
       const body: PresenceHeartbeatResponse = { ok: true }
       return jsonResponse(body)
     }
@@ -355,6 +416,97 @@ export function createApi(
 
     if (pathname === '/v1/referrals') {
       return jsonResponse(await dependencies.repository.getReferralProgram(user.id))
+    }
+
+    if (pathname === '/v1/app/ads/requests') {
+      if (!dependencies.platformRepository) {
+        throw new ApiError(503, 'advertising_unavailable', 'Anúncios indisponíveis.')
+      }
+      if (request.method === 'GET') {
+        return jsonResponse({
+          requests: await dependencies.platformRepository.getUserAppAdRequests(user.id),
+        })
+      }
+      const rateLimiter = dependencies.paymentRateLimiter ?? dependencies.deviceRateLimiter
+      const { success } = await rateLimiter.limit({ key: `${user.id}:advertising-request` })
+      if (!success) throw new ApiError(429, 'rate_limited', 'Aguarde antes de enviar outra solicitação.')
+      const adInput = await readAppAdRequest(request)
+      const created = await dependencies.platformRepository.createAppAdRequest(
+        user.id,
+        adInput,
+      )
+      await safelyNotifyAdmin(dependencies.adminMobileNotifier, {
+        eventKey: `app-ad:${created.id}:created`,
+        type: 'ad_request',
+        title: 'Novo pedido de anúncio',
+        occurredAt: created.created_at,
+        details: [
+          { label: 'Plano', value: created.plan_code },
+          { label: 'Anunciante', value: adInput.advertiser_name },
+          { label: 'Título', value: adInput.title },
+          { label: 'Tipo', value: adInput.category },
+          ...(adInput.game_slug
+            ? [{ label: 'Jogo destacado', value: adInput.game_slug }]
+            : adInput.catalog_game_name
+              ? [{ label: 'Novo jogo solicitado', value: adInput.catalog_game_name }]
+              : []),
+          { label: 'Período', value: `${created.requested_days} dias` },
+          { label: 'Orçamento', value: `${created.currency} ${created.quoted_amount.toFixed(2)}` },
+          { label: 'Destino', value: adInput.destination_url },
+          { label: 'Solicitação', value: created.id },
+        ],
+      })
+      return jsonResponse({ request: created }, 201)
+    }
+
+    const appAdPixMatch = /^\/v1\/app\/ads\/requests\/([^/]+)\/pix$/.exec(pathname)
+    if (appAdPixMatch) {
+      if (!dependencies.paymentService) {
+        throw new ApiError(503, 'payments_unavailable', 'Pagamento indisponível.')
+      }
+      const requestId = requireUuid(decodePathSegment(appAdPixMatch[1]), 'advertising request id')
+      if (request.method === 'GET') {
+        const payment = await dependencies.paymentService.getAppAdPayment(user.id, requestId)
+        if (!payment) throw new ApiError(404, 'payment_not_found', 'Pagamento não encontrado.')
+        return jsonResponse(payment)
+      }
+      const rateLimiter = dependencies.paymentRateLimiter ?? dependencies.deviceRateLimiter
+      const { success } = await rateLimiter.limit({ key: `${user.id}:app-ad-payment` })
+      if (!success) throw new ApiError(429, 'rate_limited', 'Aguarde antes de gerar outro PIX.')
+      const checkout = await dependencies.paymentService.createAppAdPixPayment(user, requestId)
+      const payment = checkout.payment && typeof checkout.payment === 'object'
+        ? checkout.payment as Record<string, unknown>
+        : null
+      await safelyNotifyAdmin(dependencies.adminMobileNotifier, {
+        eventKey: `app-ad:${requestId}:pix-created`,
+        type: 'purchase_attempt',
+        title: 'PIX de anúncio gerado',
+        occurredAt: typeof payment?.created_at === 'string' ? payment.created_at : new Date().toISOString(),
+        details: [
+          { label: 'Cliente', value: user.email ?? user.id },
+          { label: 'Solicitação', value: requestId },
+          ...(typeof payment?.amount === 'number'
+            ? [{ label: 'Valor', value: `${String(payment.currency ?? 'BRL')} ${payment.amount.toFixed(2)}` }]
+            : []),
+        ],
+      })
+      return jsonResponse(checkout, 201)
+    }
+
+    const appAdEventMatch = /^\/v1\/app\/ads\/([^/]+)\/events$/.exec(pathname)
+    if (appAdEventMatch) {
+      if (!dependencies.platformRepository) {
+        throw new ApiError(503, 'advertising_unavailable', 'Anúncios indisponíveis.')
+      }
+      const campaignId = requireUuid(decodePathSegment(appAdEventMatch[1]), 'campaign id')
+      const input = await readAppAdEvent(request)
+      await dependencies.platformRepository.recordAppAdEvent(
+        user.id,
+        campaignId,
+        input.eventType,
+        input.placement,
+      )
+      return jsonResponse({ recorded: true })
     }
 
     if (pathname.startsWith('/v1/admin/')) {
@@ -433,6 +585,30 @@ export function createApi(
           channelId,
           await readChatMessage(request),
         )
+        // Notification lookup is post-commit and optional. A provider/query
+        // failure must not report the already inserted message as failed.
+        const adminRecipient = await dependencies.chatRepository
+          .getDirectChatAdminRecipient?.(user.id, channelId)
+          .catch((error) => {
+            console.error('Direct-chat admin lookup failed after message commit', {
+              channelId,
+              error: error instanceof Error ? error.message : 'unexpected_error',
+            })
+            return null
+          })
+        if (adminRecipient) {
+          await safelyNotifyAdmin(dependencies.adminMobileNotifier, {
+            eventKey: `chat:${message.id}:admin-direct`,
+            type: 'chat_direct',
+            title: 'Nova mensagem direta',
+            occurredAt: message.created_at,
+            details: [
+              { label: 'De', value: message.display_name },
+              { label: 'Mensagem', value: message.message.slice(0, 180) },
+              { label: 'Conversa', value: channelId },
+            ],
+          })
+        }
         return jsonResponse({ message }, 201)
       }
 
@@ -460,11 +636,21 @@ export function createApi(
         throw new ApiError(503, 'chat_unavailable', 'Chat indisponível.')
       }
       const messageId = requireUuid(decodePathSegment(reportMatch[1]), 'message id')
+      const reportReason = await readChatReport(request)
       const report = await dependencies.chatRepository.reportChatMessage(
         user.id,
         messageId,
-        await readChatReport(request),
+        reportReason,
       )
+      await safelyNotifyAdmin(dependencies.adminMobileNotifier, {
+        eventKey: `chat-report:${report.id}:created`,
+        type: 'chat_report',
+        title: 'Nova denúncia no chat',
+        details: [
+          { label: 'Motivo', value: reportReason },
+          { label: 'Mensagem denunciada', value: messageId },
+        ],
+      })
       return jsonResponse({ report }, 201)
     }
 
@@ -478,14 +664,33 @@ export function createApi(
         throw new ApiError(429, 'rate_limited', 'Aguarde antes de criar outro pagamento.')
       }
       const { productCode } = await readPixInput(request)
-      return jsonResponse(
-        await dependencies.paymentService.createPixPayment(
+      const checkout = await dependencies.paymentService.createPixPayment(
           user,
           productCode,
           readIdempotencyKey(request),
-        ),
-        201,
-      )
+        )
+      const payment = (checkout as { payment?: import('./types').PaymentRecord }).payment
+      if (payment && dependencies.adminMobileNotifier) {
+        const profile = dependencies.adminMobileNotifier.enabled === false
+          ? null
+          : await dependencies.repository.getProfile(user.id).catch(() => null)
+        const customer = profile?.display_name?.trim()
+          ? `${profile.display_name}${user.email ? ` · ${user.email}` : ''}`
+          : user.email ?? user.id
+        await safelyNotifyAdmin(dependencies.adminMobileNotifier, {
+          eventKey: `payment:${payment.id}:attempt`,
+          type: 'purchase_attempt',
+          title: 'Nova tentativa de compra',
+          occurredAt: payment.created_at,
+          details: [
+            { label: 'Cliente', value: customer },
+            { label: 'Produto', value: payment.product_code },
+            { label: 'Valor', value: `${payment.currency} ${payment.amount.toFixed(2)}` },
+            { label: 'Pagamento', value: payment.id },
+          ],
+        })
+      }
+      return jsonResponse(checkout, 201)
     }
 
     const paymentMatch = /^\/v1\/payments\/([^/]+)$/.exec(pathname)

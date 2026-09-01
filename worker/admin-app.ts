@@ -1,6 +1,9 @@
 import type {
   AdminActionResponse,
   AdminAnnouncementResponse,
+  AdminAppAdRequestResponse,
+  AdminAppAdRequestsResponse,
+  AdminAppAdStatus,
   AdminAnnouncementsResponse,
   AdminAuditResponse,
   AdminConfigEntryResponse,
@@ -24,6 +27,7 @@ import type {
 import {
   readAdminAnnouncementInput,
   readAdminAnnouncementUpdate,
+  readAdminAppAdReview,
   readAdminChatReportPagination,
   readAdminChatReportStatus,
   readAdminChatRestriction,
@@ -50,6 +54,7 @@ export function adminAllowedMethods(pathname: string): string[] | null {
   if (pathname === '/v1/admin/chat/clear') return ['POST']
   if (pathname === '/v1/admin/referrals') return ['GET']
   if (pathname === '/v1/admin/publisher-requests') return ['GET']
+  if (pathname === '/v1/admin/app-ads') return ['GET']
 
   if (
     pathname === '/v1/admin/session'
@@ -72,6 +77,7 @@ export function adminAllowedMethods(pathname: string): string[] | null {
     || /^\/v1\/admin\/payments\/[^/]+\/reconcile$/.test(pathname)
     || /^\/v1\/admin\/referrals\/[^/]+\/(approve|reject)$/.test(pathname)
     || /^\/v1\/admin\/publisher-requests\/[^/]+\/review$/.test(pathname)
+    || /^\/v1\/admin\/app-ads\/[^/]+\/review$/.test(pathname)
   ) return ['POST']
 
   if (
@@ -250,6 +256,32 @@ export async function handleAdminRequest(
       notes,
     )
     return jsonResponse({ request: reviewed } satisfies AdminPublisherRequestResponse)
+  }
+
+  if (pathname === '/v1/admin/app-ads') {
+    const rawStatus = new URL(request.url).searchParams.get('status')
+    const allowed: AdminAppAdStatus[] = ['pending', 'reviewing', 'payment_pending', 'approved', 'rejected', 'cancelled']
+    if (rawStatus && !allowed.includes(rawStatus as AdminAppAdStatus)) {
+      throw new ApiError(400, 'invalid_advertising_status', 'Status de anúncio inválido.')
+    }
+    const requests = await repository.getAdminAppAdRequests(
+      actorUserId,
+      rawStatus as AdminAppAdStatus | null,
+    )
+    return jsonResponse({ requests } satisfies AdminAppAdRequestsResponse)
+  }
+
+  const appAdReviewMatch = /^\/v1\/admin\/app-ads\/([^/]+)\/review$/.exec(pathname)
+  if (appAdReviewMatch) {
+    const requestId = routeId(appAdReviewMatch, 'advertising request id')
+    const input = await readAdminAppAdReview(request)
+    const reviewed = await repository.reviewAdminAppAdRequest(
+      actorUserId,
+      requestId,
+      input.status,
+      input.notes ?? null,
+    )
+    return jsonResponse({ request: reviewed } satisfies AdminAppAdRequestResponse)
   }
 
   const gameMatch = /^\/v1\/admin\/games\/([^/]+)$/.exec(pathname)

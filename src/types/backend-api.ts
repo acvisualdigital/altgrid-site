@@ -142,6 +142,8 @@ export interface AppUserMetrics {
 /** Public, aggregate-only counters safe to reuse on the future website. */
 export interface AppMetricsResponse {
   users: AppUserMetrics
+  /** Distinct active AltGrid users grouped by supported game slug. */
+  games?: Record<string, number>
   active_window_seconds: number
   generated_at: string
 }
@@ -172,6 +174,96 @@ export interface PublicAnnouncement {
 
 export interface PublicAnnouncementsResponse {
   announcements: PublicAnnouncement[]
+}
+
+export type AppAdCategory = 'game' | 'product' | 'site'
+export type AppAdPlacement = 'sidebar' | 'sidebar_popup'
+
+export interface PublicAppAdPlan {
+  code: string
+  name: string
+  description: string
+  placement: AppAdPlacement
+  min_days: number
+  max_days: number
+  price_per_day: number
+  currency: string
+  popup_enabled: boolean
+}
+
+export interface PublicAppAd {
+  id: string
+  category: AppAdCategory
+  game_slug?: string | null
+  advertiser_name: string
+  title: string
+  description: string
+  destination_url: string
+  image_url: string | null
+  cta_label: string
+  placement: AppAdPlacement
+  popup_enabled: boolean
+  starts_at: string
+  ends_at: string
+}
+
+export interface PublicAppAdsResponse {
+  ads: PublicAppAd[]
+  popup_cooldown_hours: number
+}
+
+export interface PublicAppAdPlansResponse {
+  plans: PublicAppAdPlan[]
+}
+
+export interface CreateAppAdRequestInput {
+  plan_code: string
+  category: AppAdCategory
+  game_slug?: string | null
+  catalog_game_name?: string | null
+  catalog_launch_url?: string | null
+  catalog_icon_url?: string | null
+  advertiser_name: string
+  title: string
+  description: string
+  destination_url: string
+  image_url?: string | null
+  cta_label: string
+  requested_days: number
+}
+
+export interface AppAdRequestReceipt {
+  id: string
+  status: AppAdRequestStatus
+  plan_code: string
+  requested_days: number
+  quoted_amount: number
+  currency: string
+  created_at: string
+}
+
+export type AppAdRequestStatus = 'pending' | 'reviewing' | 'payment_pending' | 'approved' | 'rejected' | 'cancelled'
+
+export interface UserAppAdRequest extends AppAdRequestReceipt {
+  advertiser_name: string
+  title: string
+  status: AppAdRequestStatus
+  admin_notes: string | null
+  starts_at: string | null
+  ends_at: string | null
+  payment: PixPayment | null
+}
+
+export interface UserAppAdRequestsResponse {
+  requests: UserAppAdRequest[]
+}
+
+export interface AppAdRequestResponse {
+  request: AppAdRequestReceipt
+}
+
+export interface AppAdEventResponse {
+  recorded: true
 }
 
 export interface PublicProduct {

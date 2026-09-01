@@ -46,4 +46,56 @@ describe('session frame-budget preload', () => {
       func: expect.any(Function),
     })
   })
+
+  it('waits between limited frames instead of polling native rAF continuously', async () => {
+    vi.useFakeTimers()
+    const nativeFrames: Array<(timestamp: number) => void> = []
+    const nativeRequest = vi.fn((callback: (timestamp: number) => void) => {
+      nativeFrames.push(callback)
+      return nativeFrames.length
+    })
+    const nativeCancel = vi.fn()
+    const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(1_000)
+    vi.stubGlobal('requestAnimationFrame', nativeRequest)
+    vi.stubGlobal('cancelAnimationFrame', nativeCancel)
+
+    try {
+      const listener = electronMocks.listeners.get(
+        'altgrid:session-preload:set-frame-rate-limit',
+      )
+      listener?.(null, 1)
+      const installer = electronMocks.executeInMainWorld.mock.calls[0]?.[0]
+        ?.func as ((frameRate: number) => void) | undefined
+      expect(installer).toBeDefined()
+      installer?.(1)
+
+      const page = globalThis as typeof globalThis & {
+        requestAnimationFrame(callback: (timestamp: number) => void): number
+      }
+      let renderedFrames = 0
+      const animationLoop = () => {
+        renderedFrames += 1
+        page.requestAnimationFrame(animationLoop)
+      }
+      page.requestAnimationFrame(animationLoop)
+      expect(nativeRequest).toHaveBeenCalledOnce()
+
+      nativeFrames.shift()?.(1_000)
+      expect(renderedFrames).toBe(1)
+      // The old implementation requested another native frame immediately
+      // and then polled at monitor cadence. A 1 FPS budget now sleeps instead.
+      expect(nativeRequest).toHaveBeenCalledOnce()
+
+      await vi.advanceTimersByTimeAsync(998)
+      expect(nativeRequest).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(nativeRequest).toHaveBeenCalledTimes(2)
+    } finally {
+      performanceNow.mockRestore()
+      delete (globalThis as typeof globalThis & { __altgridFrameBudget?: unknown })
+        .__altgridFrameBudget
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
 })

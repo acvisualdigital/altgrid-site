@@ -20,8 +20,8 @@ import type {
 import { isAllowedSessionUrl } from './url-policy.js'
 
 const hardenedSessions = new WeakSet<Session>()
-const PARKED_INITIAL_COLLECTION_DELAY_MS = 2_000
-const PARKED_COLLECTION_INTERVAL_MS = 30_000
+const PARKED_INITIAL_COLLECTION_DELAY_MS = 8_000
+const PARKED_COLLECTION_INTERVAL_MS = 5 * 60_000
 let cachedAppMetrics: Electron.ProcessMetric[] | null = null
 const sessionPreloadPath = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -81,6 +81,14 @@ function finiteNonNegative(value: unknown): number {
     : 0
 }
 
+function stableCollectionOffset(accountId: string): number {
+  let hash = 0
+  for (const character of accountId) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0
+  }
+  return hash % 30_000
+}
+
 function currentAppMetrics(): Electron.ProcessMetric[] {
   if (!cachedAppMetrics) {
     cachedAppMetrics = app.getAppMetrics()
@@ -121,6 +129,7 @@ export function createNativeSessionViewFactory(
     let requestedZoomFactor = 1
     let parked = true
     let parkedCollectionTimer: NodeJS.Timeout | null = null
+    const parkedCollectionOffsetMs = stableCollectionOffset(accountId)
     let currentBounds = { height: 720, width: 1_280, x: 0, y: 0 }
     let proxyCredentials: Pick<SessionProxyConfig, 'password' | 'username'> | null = null
     let loadedExtensionId: string | null = null
@@ -249,13 +258,13 @@ export function createNativeSessionViewFactory(
           }]).catch(() => undefined)
           parkedCollectionTimer = setTimeout(
             collectAndReschedule,
-            PARKED_COLLECTION_INTERVAL_MS,
+            PARKED_COLLECTION_INTERVAL_MS + parkedCollectionOffsetMs,
           )
         }
       }
       parkedCollectionTimer = setTimeout(
         collectAndReschedule,
-        PARKED_INITIAL_COLLECTION_DELAY_MS,
+        PARKED_INITIAL_COLLECTION_DELAY_MS + Math.min(parkedCollectionOffsetMs, 7_000),
       )
     }
 

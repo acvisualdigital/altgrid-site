@@ -72,7 +72,14 @@ describe('password recovery redirect', () => {
     expect(passwordRecoveryRedirectUrl({
       origin: 'http://127.0.0.1:3000',
       protocol: 'http:',
-    })).toBe('http://127.0.0.1:3000/?auth=recovery')
+    }, false)).toBe('http://127.0.0.1:3000/?auth=recovery')
+  })
+
+  it('returns to Electron during local desktop development', () => {
+    expect(passwordRecoveryRedirectUrl({
+      origin: 'http://127.0.0.1:3000',
+      protocol: 'http:',
+    }, true)).toBe('altgrid://app/?auth=recovery')
   })
 
   it('returns to the Android app from the stable Capacitor origin', () => {
@@ -152,7 +159,15 @@ describe('Google authentication redirect', () => {
       origin: 'https://altgrid.com.br',
       pathname: '/games.html',
       protocol: 'https:',
-    })).toBe('https://altgrid.com.br/games.html?auth=oauth')
+    }, false)).toBe('https://altgrid.com.br/games.html?auth=oauth')
+  })
+
+  it('returns to Electron during local desktop development', () => {
+    expect(googleAuthRedirectUrl({
+      origin: 'http://127.0.0.1:3000',
+      pathname: '/',
+      protocol: 'http:',
+    }, true)).toBe('altgrid://app/?auth=oauth')
   })
 
   it('returns to the Android app from the Capacitor origin', () => {
@@ -617,6 +632,105 @@ afterEach(() => {
 })
 
 describe('AuthApp session lifecycle', () => {
+  it('shows one house advertising popup per FREE login when no campaign is active', () => {
+    installBrowser('https://app.example.com/')
+    vi.useFakeTimers()
+    const app = new AuthApp(createRoot(), createAuthServiceDouble().service)
+    const harness = app as unknown as {
+      activeDialog: string | null
+      appAds: unknown[]
+      render(): void
+      renderDialog(): string
+      renderSidebar(): string
+      scheduleSponsoredPopup(): void
+      selectedSponsoredAdId: string | null
+      session: Session
+      sponsoredPopupShownForUserId: string | null
+    }
+    harness.session = session
+    harness.appAds = []
+    harness.activeDialog = null
+    harness.render = vi.fn()
+
+    harness.scheduleSponsoredPopup()
+    vi.advanceTimersByTime(6_000)
+
+    expect(harness.activeDialog).toBe('sponsored')
+    expect(harness.selectedSponsoredAdId).toBe('altgrid-house-ad')
+    expect(harness.renderDialog()).toContain('Seu jogo pode aparecer aqui')
+    expect(harness.renderDialog()).toContain('data-open-dialog="advertise"')
+    expect(harness.renderSidebar()).toContain('Anuncie no AltGrid')
+
+    harness.activeDialog = null
+    harness.scheduleSponsoredPopup()
+    vi.advanceTimersByTime(6_000)
+    expect(harness.activeDialog).toBeNull()
+    expect(harness.sponsoredPopupShownForUserId).toBe(user.id)
+    app.destroy()
+  })
+
+  it('explains the manual review flow and only offers PIX after admin approval', () => {
+    installBrowser('https://app.example.com/')
+    const app = new AuthApp(createRoot(), createAuthServiceDouble().service)
+    const harness = app as unknown as {
+      activeDialog: string | null
+      appAdPlans: Array<Record<string, unknown>>
+      appAdTestStage: 1 | 2 | 3 | 4
+      games: Array<Record<string, unknown>>
+      myAppAdRequests: Array<Record<string, unknown>>
+      renderDialog(): string
+    }
+    harness.activeDialog = 'advertise'
+    harness.games = []
+    harness.appAdPlans = [{
+      code: 'sidebar',
+      name: 'Vitrine lateral',
+      description: 'Destaque na lateral do app.',
+      placement: 'sidebar',
+      min_days: 7,
+      max_days: 90,
+      price_per_day: 3,
+      currency: 'BRL',
+      popup_enabled: false,
+    }]
+    harness.myAppAdRequests = [{
+      id: 'ad-pending',
+      advertiser_name: 'Idle Studio',
+      title: 'Pedido em análise',
+      requested_days: 7,
+      quoted_amount: 21,
+      currency: 'BRL',
+      status: 'pending',
+      admin_notes: null,
+    }, {
+      id: 'ad-approved-for-pix',
+      advertiser_name: 'Idle Studio',
+      title: 'Pagamento liberado',
+      requested_days: 14,
+      quoted_amount: 42,
+      currency: 'BRL',
+      status: 'payment_pending',
+      admin_notes: 'Campanha revisada.',
+    }]
+
+    const html = harness.renderDialog()
+    expect(html).toContain('Enviar para análise')
+    expect(html).toContain('Nenhum pagamento é criado nesta etapa.')
+    expect(html).toContain('Aprovação')
+    expect(html).toContain('Gerar PIX e pagar')
+    expect(html).toContain('data-pay-app-ad="ad-approved-for-pix"')
+    expect(html).not.toContain('data-pay-app-ad="ad-pending"')
+
+    harness.appAdTestStage = 2
+    expect(harness.renderDialog()).toContain('Campanha aguardando sua aprovação')
+    harness.appAdTestStage = 3
+    expect(harness.renderDialog()).toContain('PIX disponível para o anunciante')
+    expect(harness.renderDialog()).toContain('Ambiente de teste local · sem cobrança')
+    harness.appAdTestStage = 4
+    expect(harness.renderDialog()).toContain('O anúncio de teste está no ar')
+    app.destroy()
+  })
+
   it('lets a user resend the confirmation email from the success screen', async () => {
     installBrowser('https://app.example.com/')
     const root = createRoot()
@@ -1507,6 +1621,64 @@ describe('AuthApp session lifecycle', () => {
     ]))
     expect(getAdminUser).toHaveBeenCalledTimes(2)
 
+    app.destroy()
+  })
+
+  it('adds detailed admin notifications for new advertising orders and chat reports', async () => {
+    installBrowser('https://app.example.com/')
+    const root = createRoot()
+    const auth = createAuthServiceDouble()
+    const adRequest = {
+      id: 'ad-request-new',
+      advertiser_name: 'Idle Studio',
+      plan_name: 'Destaque FREE',
+      requested_days: 14,
+      quoted_amount: 70,
+      currency: 'BRL',
+      status: 'pending',
+      created_at: '2026-09-01T12:00:00.000Z',
+    }
+    const chatReport = {
+      id: 'chat-report-new',
+      message_id: 'message-reported',
+      reason: 'Spam repetido',
+      created_at: '2026-09-01T12:01:00.000Z',
+    }
+    const backend = {
+      getAdminPaymentLogs: vi.fn().mockResolvedValue({ payments: [] }),
+      getAdminAppAdRequests: vi.fn()
+        .mockResolvedValueOnce({ requests: [] })
+        .mockResolvedValueOnce({ requests: [adRequest] }),
+      getAdminChatReports: vi.fn()
+        .mockResolvedValueOnce({ reports: [], pagination: {} })
+        .mockResolvedValueOnce({ reports: [chatReport], pagination: {} }),
+      getEntitlements: vi.fn(),
+      getGames: vi.fn(),
+      getMe: vi.fn(),
+    }
+    const app = new AuthApp(root, auth.service, { backendApi: backend as never })
+    const harness = app as unknown as {
+      adminAccess: boolean
+      notificationCenter: { list(): Array<{ summary: string; title: string }> }
+      refreshAdminPaymentAlerts(): Promise<void>
+      render(): void
+    }
+    harness.adminAccess = true
+    harness.render = vi.fn()
+
+    await harness.refreshAdminPaymentAlerts()
+    expect(harness.notificationCenter.list()).toEqual([])
+    await harness.refreshAdminPaymentAlerts()
+    expect(harness.notificationCenter.list()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        summary: expect.stringContaining('Idle Studio · Destaque FREE · 14 dias'),
+        title: 'Novo pedido de anúncio',
+      }),
+      expect.objectContaining({
+        summary: expect.stringContaining('Spam repetido'),
+        title: 'Nova denúncia no chat',
+      }),
+    ]))
     app.destroy()
   })
 

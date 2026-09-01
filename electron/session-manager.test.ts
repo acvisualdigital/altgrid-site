@@ -293,7 +293,7 @@ describe('SessionManager', () => {
     expect(() => harness.manager.setEcoMode('true')).toThrow(TypeError)
   })
 
-  it('keeps the focused session smooth and applies the Eco budget to the others', async () => {
+  it('caps the focused session smoothly and applies the lower Eco budget to the others', async () => {
     const harness = createHarness()
     const events = vi.fn()
     harness.manager.subscribe(events)
@@ -310,12 +310,12 @@ describe('SessionManager', () => {
     harness.manager.setFrameRate('account-2', 0)
     harness.manager.setEcoMode(true)
 
-    expect(first.setFrameRateLimit).toHaveBeenLastCalledWith(60)
+    expect(first.setFrameRateLimit).toHaveBeenLastCalledWith(30)
     expect(second.setFrameRateLimit).toHaveBeenLastCalledWith(20)
 
     second.emit({ type: 'focused' })
     expect(first.setFrameRateLimit).toHaveBeenLastCalledWith(20)
-    expect(second.setFrameRateLimit).toHaveBeenLastCalledWith(0)
+    expect(second.setFrameRateLimit).toHaveBeenLastCalledWith(30)
     expect(events).toHaveBeenLastCalledWith(expect.objectContaining({
       accountId: 'account-2',
       type: 'focused',
@@ -323,7 +323,7 @@ describe('SessionManager', () => {
 
     harness.manager.setEcoMode(true, 30)
     expect(first.setFrameRateLimit).toHaveBeenLastCalledWith(30)
-    expect(second.setFrameRateLimit).toHaveBeenLastCalledWith(0)
+    expect(second.setFrameRateLimit).toHaveBeenLastCalledWith(30)
     expect(() => harness.manager.setEcoMode(true, 9)).toThrow(RangeError)
     expect(() => harness.manager.setEcoMode(true, 31)).toThrow(RangeError)
   })
@@ -345,7 +345,21 @@ describe('SessionManager', () => {
       await harness.manager.createSession(`account-${index}`, 'https://game.example/')
     }
     expect(harness.views.get('account-2')?.setFrameRateLimit).toHaveBeenLastCalledWith(5)
-    expect(harness.views.get('account-1')?.setFrameRateLimit).toHaveBeenLastCalledWith(0)
+    expect(harness.views.get('account-1')?.setFrameRateLimit).toHaveBeenLastCalledWith(30)
+  })
+
+  it('makes Eco Mode effective with a single focused account', async () => {
+    const harness = createHarness()
+    await harness.manager.createSession('account-1', 'https://game.example/')
+    harness.manager.showSession('account-1')
+    const view = harness.views.get('account-1')!
+    view.setFrameRateLimit.mockClear()
+
+    harness.manager.setEcoMode(true)
+    expect(view.setFrameRateLimit).toHaveBeenLastCalledWith(30)
+
+    harness.manager.setEcoMode(false)
+    expect(view.setFrameRateLimit).toHaveBeenLastCalledWith(0)
   })
 
   it('stores a desired FPS per session and updates native state before its snapshot', async () => {

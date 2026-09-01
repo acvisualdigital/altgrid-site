@@ -60,14 +60,18 @@ import type {
 } from './services/license-snapshot-service'
 import type {
   AppMetricsResponse,
+  CreateAppAdRequestInput,
   MeResponse,
   PixPayment,
   PublicAnnouncement,
+  PublicAppAd,
+  PublicAppAdPlan,
   PublicConfigResponse,
   PublicGame,
   PublicProduct,
   ReferralProgramResponse,
   ResolvedEntitlements,
+  UserAppAdRequest,
 } from './types/backend-api'
 import type { AdminPaymentLog, AdminUserDetail } from './types/admin-api'
 import type { PlanCode } from './types/database'
@@ -97,6 +101,7 @@ interface FieldErrors {
 type ActiveDialog =
   | 'add-account'
   | 'about'
+  | 'advertise'
   | 'delete-account'
   | 'chat-nickname'
   | 'free-limit'
@@ -111,6 +116,7 @@ type ActiveDialog =
   | 'rename-account'
   | 'referrals'
   | 'settings'
+  | 'sponsored'
   | 'shortcuts'
   | 'update'
   | null
@@ -132,6 +138,82 @@ const PLAN_RANK: Record<PlanCode, number> = {
   PRO: 1,
   PRO_PLUS: 2,
   FOUNDER: 3,
+}
+
+const DEFAULT_APP_AD_PLANS: readonly PublicAppAdPlan[] = [
+  {
+    code: 'sidebar',
+    name: 'Vitrine lateral',
+    description: 'Cartão patrocinado fixo; jogos aprovados recebem destaque no catálogo do app.',
+    placement: 'sidebar',
+    min_days: 7,
+    max_days: 90,
+    price_per_day: 3,
+    currency: 'BRL',
+    popup_enabled: false,
+  },
+  {
+    code: 'spotlight',
+    name: 'Destaque FREE',
+    description: 'Vitrine lateral, destaque no catálogo e pop-up controlado para usuários FREE.',
+    placement: 'sidebar_popup',
+    min_days: 7,
+    max_days: 60,
+    price_per_day: 5,
+    currency: 'BRL',
+    popup_enabled: true,
+  },
+  {
+    code: 'impact',
+    name: 'Campanha impacto',
+    description: 'Maior prioridade na lateral, no catálogo e no pop-up para usuários FREE.',
+    placement: 'sidebar_popup',
+    min_days: 7,
+    max_days: 30,
+    price_per_day: 8,
+    currency: 'BRL',
+    popup_enabled: true,
+  },
+]
+
+const LOCAL_APP_AD_PREVIEW_ID = 'local-app-ad-preview'
+const LOCAL_AD_TEST_MODE = import.meta.env.DEV
+const HOUSE_APP_AD_ID = 'altgrid-house-ad'
+const HOUSE_APP_AD: PublicAppAd = {
+  id: HOUSE_APP_AD_ID,
+  category: 'site',
+  game_slug: null,
+  advertiser_name: 'AltGrid para anunciantes',
+  title: 'Seu jogo pode aparecer aqui',
+  description: 'Divulgue seu jogo idle, produto ou site para uma comunidade que já joga em múltiplas contas.',
+  destination_url: 'https://altgrid.com.br/games.html#anunciar',
+  image_url: null,
+  cta_label: 'Anuncie no AltGrid',
+  placement: 'sidebar_popup',
+  popup_enabled: true,
+  starts_at: '2026-01-01T00:00:00.000Z',
+  ends_at: '2099-12-31T23:59:59.000Z',
+}
+const LOCAL_APP_AD_PREVIEW: PublicAppAd = {
+  id: LOCAL_APP_AD_PREVIEW_ID,
+  category: 'game',
+  game_slug: 'huntera',
+  advertiser_name: 'IdleForge Studio',
+  title: 'Uma nova aventura idle espera por você',
+  description: 'Evolua mesmo offline, monte sua equipe e descubra eventos especiais todos os dias.',
+  destination_url: 'https://altgrid.com.br/games.html',
+  image_url: null,
+  cta_label: 'Conhecer o jogo',
+  placement: 'sidebar_popup',
+  popup_enabled: true,
+  starts_at: '2026-09-01T00:00:00.000Z',
+  ends_at: '2099-12-31T23:59:59.000Z',
+}
+
+function localAppAdPreviewEnabled(): boolean {
+  return import.meta.env.DEV
+    && typeof navigator !== 'undefined'
+    && /Electron/i.test(navigator.userAgent)
 }
 
 export const EXTENSION_ACCOUNT_LIMITS: Readonly<Record<PlanCode, number>> = {
@@ -245,17 +327,26 @@ export function resolveChatScrollTop(
 type ApplicationBackend = Pick<BackendApi, 'getEntitlements' | 'getGames' | 'getMe'>
   & Partial<Pick<
     BackendApi,
+    | 'createAppAdRequest'
+    | 'createAppAdPixPayment'
     | 'createPixPayment'
     | 'getAppConfig'
     | 'getAppMetrics'
     | 'getAnnouncements'
+    | 'getAppAds'
+    | 'getAppAdPlans'
+    | 'getAppAdPayment'
+    | 'getMyAppAdRequests'
     | 'getHealth'
     | 'getAdminSession'
     | 'getAdminPaymentLogs'
+    | 'getAdminAppAdRequests'
+    | 'getAdminChatReports'
     | 'getAdminUser'
     | 'getPayment'
     | 'getProducts'
     | 'getReferralProgram'
+    | 'recordAppAdEvent'
     | 'sendPresenceHeartbeat'
     | 'updateProfile'
   >>
@@ -380,6 +471,7 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = 'altgrid.preference.sidebar-collapsed.v1'
 const UTILITY_BAR_COLLAPSED_STORAGE_KEY = 'altgrid.preference.utility-bar-collapsed.v1'
 const GRID_MODE_STORAGE_KEY = 'altgrid.preference.grid-mode.v1'
 const REFERRAL_CODE_STORAGE_KEY = 'altgrid.referral-code.v1'
+const RESOURCE_USAGE_REFRESH_INTERVAL_MS = 12_000
 
 function initialReferralCode(): string {
   try {
@@ -479,9 +571,12 @@ function uiIcon(name: UiIconName): string {
 
 export function passwordRecoveryRedirectUrl(
   location: Pick<Location, 'origin' | 'protocol'> = window.location,
+  desktopBridgeAvailable = typeof window !== 'undefined'
+    && Boolean((window as Window & { altgrid?: unknown }).altgrid),
 ): string {
   if (
-    location.protocol === 'altgrid:'
+    desktopBridgeAvailable
+    || location.protocol === 'altgrid:'
     || location.origin === 'https://localhost'
     || location.origin === 'capacitor://localhost'
   ) {
@@ -515,9 +610,12 @@ function formatDate(value: string | null): string {
 
 export function googleAuthRedirectUrl(
   location: Pick<Location, 'origin' | 'pathname' | 'protocol'> = window.location,
+  desktopBridgeAvailable = typeof window !== 'undefined'
+    && Boolean((window as Window & { altgrid?: unknown }).altgrid),
 ): string {
   if (
-    location.protocol === 'altgrid:'
+    desktopBridgeAvailable
+    || location.protocol === 'altgrid:'
     || location.origin === 'https://localhost'
     || location.origin === 'capacitor://localhost'
   ) {
@@ -806,7 +904,11 @@ export class AuthApp {
   private adminAccess = false
   private adminPaymentAlertTimer: ReturnType<typeof setInterval> | null = null
   private readonly adminPaymentStates = new Map<string, string>()
+  private readonly adminAdRequestStates = new Map<string, string>()
+  private readonly adminChatReportIds = new Set<string>()
   private adminPaymentsInitialized = false
+  private adminAdRequestsInitialized = false
+  private adminChatReportsInitialized = false
   private adminPaymentAlertLoading = false
   private freePlanPromptShown = false
   private configuredAccounts: ConfiguredAccount[] = []
@@ -817,6 +919,17 @@ export class AuthApp {
   private gameCatalogError: string | null = null
   private me: MeResponse | null = null
   private announcements: PublicAnnouncement[] = []
+  private appAds: PublicAppAd[] = []
+  private appAdPlans: PublicAppAdPlan[] = [...DEFAULT_APP_AD_PLANS]
+  private selectedSponsoredAdId: string | null = null
+  private appAdSubmitting = false
+  private appAdSuccess: string | null = null
+  private myAppAdRequests: UserAppAdRequest[] = []
+  private myAppAdRequestsLoading = false
+  private appAdPaymentRequestId: string | null = null
+  private appAdTestStage: 1 | 2 | 3 | 4 = 1
+  private appAdPopupTimer: ReturnType<typeof setTimeout> | null = null
+  private sponsoredPopupShownForUserId: string | null = null
   private products: PublicProduct[] = []
   private appMetrics: AppMetricsResponse | null = null
   private referralProgram: ReferralProgramResponse | null = null
@@ -1126,6 +1239,7 @@ export class AuthApp {
     this.stopPresenceTracking()
     this.stopResourceMonitoring()
     this.stopAdminPaymentAlerts()
+    this.stopAppAdPopupTimer()
     void this.releaseTrackedSessions()
     this.sessionSurfaceManager?.clear()
     this.sessionSurfaceManager = null
@@ -1244,6 +1358,17 @@ export class AuthApp {
       && this.session
     ) {
       void this.loadApplicationData(this.session, true)
+    }
+
+    if (
+      navigator.onLine
+      && this.currentView === 'authenticated'
+      && this.session
+    ) {
+      // Do not wait up to one minute after a temporary connection loss. This
+      // keeps the public online counter accurate when Windows resumes or the
+      // network changes while the app remains open.
+      void this.refreshPresenceAndMetrics(this.session.user.id)
     }
   }
 
@@ -1506,6 +1631,16 @@ export class AuthApp {
       this.games = this.gamePresetService?.getCachedGames() ?? []
       this.gameCatalogError = null
       this.announcements = []
+      this.appAds = []
+      this.appAdPlans = [...DEFAULT_APP_AD_PLANS]
+      this.selectedSponsoredAdId = null
+      this.appAdSuccess = null
+      this.myAppAdRequests = []
+      this.myAppAdRequestsLoading = false
+      this.appAdPaymentRequestId = null
+      this.appAdTestStage = 1
+      this.stopAppAdPopupTimer()
+      this.sponsoredPopupShownForUserId = null
       this.products = []
       this.appMetrics = null
       this.notificationCenter.setAnnouncements([])
@@ -1563,6 +1698,16 @@ export class AuthApp {
     this.me = null
     this.games = []
     this.announcements = []
+    this.appAds = []
+    this.appAdPlans = [...DEFAULT_APP_AD_PLANS]
+    this.selectedSponsoredAdId = null
+    this.appAdSuccess = null
+    this.myAppAdRequests = []
+    this.myAppAdRequestsLoading = false
+    this.appAdPaymentRequestId = null
+    this.appAdTestStage = 1
+    this.stopAppAdPopupTimer()
+    this.sponsoredPopupShownForUserId = null
     this.products = []
     this.appMetrics = null
     this.referralProgram = null
@@ -1606,6 +1751,42 @@ export class AuthApp {
     this.ecoModeEffective = false
     void this.syncEcoMode()
     this.chatService?.reset()
+  }
+
+  private stopAppAdPopupTimer(): void {
+    if (this.appAdPopupTimer !== null) clearTimeout(this.appAdPopupTimer)
+    this.appAdPopupTimer = null
+  }
+
+  private scheduleSponsoredPopup(): void {
+    this.stopAppAdPopupTimer()
+    if (this.permissionService.getCurrentPlan() !== 'FREE') return
+    const userId = this.session?.user.id
+    if (!userId || this.sponsoredPopupShownForUserId === userId) return
+    const ad = this.appAds.find((entry) => entry.popup_enabled) ?? HOUSE_APP_AD
+
+    const openWhenIdle = (): void => {
+      this.appAdPopupTimer = null
+      if (
+        this.destroyed
+        || this.permissionService.getCurrentPlan() !== 'FREE'
+        || this.session?.user.id !== userId
+        || this.sponsoredPopupShownForUserId === userId
+      ) return
+      if (this.activeDialog) {
+        this.appAdPopupTimer = setTimeout(openWhenIdle, 2_000)
+        return
+      }
+      this.sponsoredPopupShownForUserId = userId
+      this.selectedSponsoredAdId = ad.id
+      this.activeDialog = 'sponsored'
+      if (ad.id !== LOCAL_APP_AD_PREVIEW_ID && ad.id !== HOUSE_APP_AD_ID) {
+        void this.backendApi?.recordAppAdEvent?.(ad.id, 'impression', 'popup')
+          .catch(() => undefined)
+      }
+      this.render()
+    }
+    this.appAdPopupTimer = setTimeout(openWhenIdle, 6_000)
   }
 
   private startPresenceTracking(userId: string): void {
@@ -1653,7 +1834,9 @@ export class AuthApp {
     }
 
     const [, metricsResult] = await Promise.allSettled([
-      backendApi.sendPresenceHeartbeat(),
+      backendApi.sendPresenceHeartbeat([
+        ...new Set(this.getActiveAccounts().map((account) => account.gameSlug)),
+      ]),
       backendApi.getAppMetrics(),
     ])
 
@@ -1872,6 +2055,8 @@ export class AuthApp {
         entitlementsResult,
         gamesResult,
         announcementsResult,
+        appAdsResult,
+        appAdPlansResult,
         productsResult,
         healthResult,
         configResult,
@@ -1888,6 +2073,10 @@ export class AuthApp {
           this.gamePresetService?.loadGames() ?? Promise.resolve([]),
           backendApi.getAnnouncements?.()
             ?? Promise.resolve({ announcements: [] }),
+          backendApi.getAppAds?.()
+            ?? Promise.resolve({ ads: [], popup_cooldown_hours: 6 }),
+          backendApi.getAppAdPlans?.()
+            ?? Promise.resolve({ plans: [] }),
           backendApi.getProducts?.()
             ?? Promise.resolve({ products: [] }),
           backendApi.getHealth?.() ?? Promise.resolve(null),
@@ -1977,6 +2166,22 @@ export class AuthApp {
         this.appConfig = configResult.value.config
       }
 
+      if (appAdsResult.status === 'fulfilled') {
+        this.appAds = appAdsResult.value.ads.length > 0
+          ? appAdsResult.value.ads
+          : localAppAdPreviewEnabled()
+            ? [LOCAL_APP_AD_PREVIEW]
+            : []
+      } else if (localAppAdPreviewEnabled()) {
+        this.appAds = [LOCAL_APP_AD_PREVIEW]
+      }
+
+      if (appAdPlansResult.status === 'fulfilled') {
+        this.appAdPlans = appAdPlansResult.value.plans.length > 0
+          ? appAdPlansResult.value.plans
+          : [...DEFAULT_APP_AD_PLANS]
+      }
+
       this.adminAccess = adminResult.status === 'fulfilled'
         && adminResult.value !== null
 
@@ -2010,6 +2215,7 @@ export class AuthApp {
         this.activeDialog = 'plans'
       }
       this.render()
+      this.scheduleSponsoredPopup()
       void this.refreshAccountProxyStates()
       void this.refreshAccountExtensionStates()
       void this.syncEcoMode()
@@ -2324,6 +2530,7 @@ export class AuthApp {
     this.ensureSessionSurfaceManager()
     this.reconcileSessionCards(shell)
     this.bindViewActions()
+    this.bindDialogActions()
     this.updateConnectivityBanner()
     this.ensureWorkspaceObserver()
     this.applyWorkspacePresentation()
@@ -2384,6 +2591,15 @@ export class AuthApp {
       ? [this.games, this.gameCatalogError]
       : this.activeDialog === 'grid-manager'
         ? [this.configuredAccounts, this.savedGridWorkspaces, this.dialogGridWorkspaceId]
+      : this.activeDialog === 'advertise'
+        ? [
+            this.appAdTestStage,
+            this.appAdSubmitting,
+            this.appAdSuccess,
+            this.myAppAdRequestsLoading,
+            this.myAppAdRequests,
+            this.appAdPlans,
+          ]
       : this.activeDialog === 'extension'
         ? [this.extensionConfig, this.extensionLoading, this.extensionSaving]
       : this.activeDialog === 'plans'
@@ -2891,7 +3107,14 @@ export class AuthApp {
       (account) => account.id === this.focusedAccountId,
     )
     const selectedSlug = activeAccount?.gameSlug ?? this.games[0]?.slug
-    const visibleGames = this.games.slice(0, 6)
+    const featuredGameSlugs = new Set(
+      this.appAds
+        .filter((ad) => ad.category === 'game' && ad.game_slug)
+        .map((ad) => ad.game_slug as string),
+    )
+    const visibleGames = [...this.games]
+      .sort((left, right) => Number(featuredGameSlugs.has(right.slug)) - Number(featuredGameSlugs.has(left.slug)))
+      .slice(0, 6)
     const activeSessions = this.permissionService.getActiveSessionCount()
     const currentPlan = this.permissionService.getCurrentPlan()
     const profilePlanBadge = renderPlanBadge(currentPlan, this.me?.founder_number ?? null)
@@ -2911,21 +3134,28 @@ export class AuthApp {
           </div>
           <nav class="game-list" aria-label="Jogos suportados">
             ${visibleGames.length > 0
-              ? visibleGames.map((game) => `
-                <button class="game-list__item ${game.slug === selectedSlug ? 'is-selected' : ''}" data-select-game="${escapeHtml(game.slug)}" type="button">
+              ? visibleGames.map((game) => {
+                const featured = featuredGameSlugs.has(game.slug)
+                const onlinePlayers = this.appMetrics?.games?.[game.slug]
+                  ?? (localAppAdPreviewEnabled() && game.slug === LOCAL_APP_AD_PREVIEW.game_slug ? 128 : undefined)
+                return `
+                <button class="game-list__item ${game.slug === selectedSlug ? 'is-selected' : ''} ${featured ? 'is-sponsored' : ''}" data-select-game="${escapeHtml(game.slug)}" type="button">
                   <span class="game-list__icon">${this.renderGameIcon(game)}</span>
-                  <span>${escapeHtml(game.name)}</span>
+                  <span class="game-list__copy"><span>${escapeHtml(game.name)}${featured ? '<em>Destaque</em>' : ''}</span>${typeof onlinePlayers === 'number' ? `<small title="Usuários ativos neste jogo pelo AltGrid"><b aria-hidden="true"></b>${onlinePlayers.toLocaleString('pt-BR')} online</small>` : ''}</span>
                   <i aria-label="${game.slug === selectedSlug ? 'Selecionado' : 'Disponível'}"></i>
                 </button>
-              `).join('')
+              `}).join('')
               : '<p class="sidebar-empty">O catálogo será carregado quando os serviços estiverem disponíveis.</p>'}
           </nav>
           <button class="sidebar-more" data-open-dialog="more-games" type="button"><span aria-hidden="true">▦</span> Ver mais jogos</button>
         </div>
 
+        ${this.renderSidebarAdvertising()}
+
         <nav class="sidebar-menu" aria-label="Preferências">
           <p class="sidebar-menu__label">Conta e preferências</p>
           <button data-open-dialog="referrals" type="button"><span aria-hidden="true">✦</span><b>Indique e ganhe</b><i aria-hidden="true">›</i></button>
+          <button data-open-dialog="advertise" type="button"><span aria-hidden="true">↗</span><b>Anuncie no AltGrid</b><i aria-hidden="true">›</i></button>
           <button data-open-dialog="settings" type="button"><span aria-hidden="true">⚙</span><b>Configurações</b><i aria-hidden="true">›</i></button>
           <button data-open-dialog="shortcuts" type="button"><span aria-hidden="true">⌨</span><b>Atalhos</b><i aria-hidden="true">›</i></button>
           <button data-open-dialog="about" type="button"><span aria-hidden="true">ⓘ</span><b>Sobre o AltGrid</b><i aria-hidden="true">›</i></button>
@@ -2954,6 +3184,7 @@ export class AuthApp {
             <div class="sidebar-profile-popover__actions">
               <button class="menu-item" data-open-dialog="my-plan" type="button"><span><i aria-hidden="true">${uiIcon('gauge')}</i><span><b>Meu plano</b><small>Benefícios e limites</small></span></span><b aria-hidden="true">›</b></button>
               <button class="menu-item" data-open-dialog="referrals" type="button"><span><i aria-hidden="true">${uiIcon('gift')}</i><span><b>Indique e ganhe</b><small>Convites e recompensas</small></span></span><b aria-hidden="true">›</b></button>
+              <button class="menu-item sidebar-profile-popover__advertise" data-open-dialog="advertise" type="button"><span><i aria-hidden="true">${uiIcon('external')}</i><span><b>Anuncie no AltGrid</b><small>Divulgue seu jogo, produto ou site</small></span></span><b aria-hidden="true">›</b></button>
               <button class="menu-item" data-open-dialog="about" type="button"><span><i aria-hidden="true">${uiIcon('user')}</i><span><b>Minha conta</b><small>Perfil e informações</small></span></span><b aria-hidden="true">›</b></button>
               <button class="menu-item" data-open-dialog="settings" type="button"><span><i aria-hidden="true">${uiIcon('settings')}</i><span><b>Configurações</b><small>Preferências do aplicativo</small></span></span><b aria-hidden="true">›</b></button>
             </div>
@@ -3081,6 +3312,106 @@ export class AuthApp {
         </details>
       </div>
     `
+  }
+
+  private renderSidebarAdvertising(): string {
+    const ad = this.appAds[0]
+    if (!ad) {
+      return `
+        <section class="sidebar-advertising sidebar-advertising--empty" aria-label="Publicidade no AltGrid">
+          <span class="sidebar-advertising__label">Espaço publicitário</span>
+          <strong>Mostre sua marca para jogadores idle</strong>
+          <p>Divulgue jogos, produtos ou sites dentro do AltGrid.</p>
+          <button data-open-dialog="advertise" type="button">Anuncie no app <span aria-hidden="true">↗</span></button>
+        </section>
+      `
+    }
+    return `
+      <section class="sidebar-advertising" aria-label="Conteúdo patrocinado">
+        <span class="sidebar-advertising__label">Patrocinado</span>
+        ${ad.image_url ? `<img src="${escapeHtml(ad.image_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '<span class="sidebar-advertising__art" aria-hidden="true">AD</span>'}
+        <div class="sidebar-advertising__copy">
+          <small>${escapeHtml(ad.advertiser_name)}</small>
+          <strong>${escapeHtml(ad.title)}</strong>
+          <p>${escapeHtml(ad.description)}</p>
+        </div>
+        <button data-sponsored-link="${escapeHtml(ad.id)}" data-sponsored-placement="sidebar" type="button">${escapeHtml(ad.cta_label)} <span aria-hidden="true">↗</span></button>
+        ${ad.id === LOCAL_APP_AD_PREVIEW_ID ? `<button class="sidebar-advertising__preview" data-preview-sponsored-popup="${escapeHtml(ad.id)}" type="button">Ver pop-up de teste</button>` : ''}
+        <button class="sidebar-advertising__sell" data-open-dialog="advertise" type="button">Anuncie aqui</button>
+      </section>
+    `
+  }
+
+  private renderMyAppAdRequests(): string {
+    const labels: Record<UserAppAdRequest['status'], string> = {
+      pending: 'Aguardando análise',
+      reviewing: 'Em análise',
+      payment_pending: 'PIX liberado',
+      approved: 'Pago · campanha ativa',
+      rejected: 'Ajustes necessários',
+      cancelled: 'Cancelado',
+    }
+    if (this.myAppAdRequestsLoading) {
+      return '<section class="advertise-orders"><h3>Seus pedidos</h3><p class="advertise-orders__empty">Carregando seus pedidos…</p></section>'
+    }
+    if (this.myAppAdRequests.length === 0) return ''
+    return `<section class="advertise-orders" aria-labelledby="advertise-orders-title">
+      <div class="advertise-orders__heading"><div><small>ACOMPANHAMENTO</small><h3 id="advertise-orders-title">Seus pedidos</h3></div><span>Você só paga depois da aprovação.</span></div>
+      <div class="advertise-orders__list">${this.myAppAdRequests.map((request) => `
+        <article class="advertise-order is-${escapeHtml(request.status)}">
+          <div><span class="advertise-order__status">${escapeHtml(labels[request.status])}</span><strong>${escapeHtml(request.title)}</strong><small>${escapeHtml(request.advertiser_name)} · ${request.requested_days} dias</small></div>
+          <strong>${escapeHtml(formatCurrency(request.quoted_amount, request.currency))}</strong>
+          ${request.admin_notes ? `<p>${escapeHtml(request.admin_notes)}</p>` : ''}
+          ${request.status === 'payment_pending'
+            ? `<button class="button button--primary" data-pay-app-ad="${escapeHtml(request.id)}" type="button">Gerar PIX e pagar</button>`
+            : ''}
+        </article>`).join('')}</div>
+    </section>`
+  }
+
+  private renderAppAdFlow(): string {
+    const stages = [
+      ['Crie', 'Plano e campanha'],
+      ['Aprovação', 'Conferência AltGrid'],
+      ['PIX', 'Pagamento seguro'],
+      ['No ar', 'Ativação automática'],
+    ] as const
+    return `<ol class="advertise-flow" aria-label="Etapas da contratação">${stages.map(([title, subtitle], index) => {
+      const number = index + 1
+      const state = this.appAdTestStage === number
+        ? 'is-active'
+        : this.appAdTestStage > number ? 'is-complete' : ''
+      return `<li class="${state}"><b>${this.appAdTestStage > number ? '✓' : number}</b><span><strong>${title}</strong><small>${subtitle}</small></span></li>`
+    }).join('')}</ol>`
+  }
+
+  private renderAppAdTestStage(): string {
+    if (this.appAdTestStage === 2) {
+      return `<section class="advertise-test-stage advertise-test-stage--review" aria-live="polite">
+        <span class="advertise-test-stage__icon">⌕</span><p class="eyebrow">PEDIDO RECEBIDO</p>
+        <h3>Campanha aguardando sua aprovação</h3>
+        <p>O pedido fictício chegou ao painel administrativo. Nesta etapa você confere plano, conteúdo, destino e valor antes de liberar qualquer cobrança.</p>
+        <div class="advertise-test-summary"><span><small>Campanha</small><strong>Teste AltGrid · jogos idle</strong></span><span><small>Plano</small><strong>Destaque FREE · 7 dias</strong></span><span><small>Orçamento</small><strong>R$ 35,00</strong></span><span><small>Status</small><strong>Em análise</strong></span></div>
+        <div class="modal__actions"><button class="button button--primary" data-test-ad-stage="3" type="button">Aprovar e liberar PIX</button><button class="button button--secondary" data-test-ad-stage="1" type="button">Voltar ao formulário</button></div>
+      </section>`
+    }
+    if (this.appAdTestStage === 3) {
+      return `<section class="advertise-test-stage advertise-test-stage--pix" aria-live="polite">
+        <span class="advertise-test-stage__icon">PIX</span><p class="eyebrow">PAGAMENTO LIBERADO</p>
+        <h3>PIX disponível para o anunciante</h3>
+        <p>Esta é apenas uma demonstração local. Nenhum PIX real foi criado e nenhum valor deve ser pago.</p>
+        <div class="advertise-test-pix"><div class="advertise-test-pix__qr" aria-label="QR Code ilustrativo"><i></i><i></i><i></i><i></i><b>TESTE</b></div><div><small>VALOR DA CAMPANHA</small><strong>R$ 35,00</strong><span>Expira em 30 minutos</span><code>00020126...ALTGRID.TESTE.LOCAL...6304</code></div></div>
+        <div class="advertise-test-warning">Ambiente de teste local · sem cobrança</div>
+        <div class="modal__actions"><button class="button button--primary" data-test-ad-stage="4" type="button">Simular pagamento aprovado</button><button class="button button--secondary" data-test-ad-stage="2" type="button">Voltar</button></div>
+      </section>`
+    }
+    return `<section class="advertise-test-stage advertise-test-stage--active" aria-live="polite">
+      <span class="advertise-test-stage__icon">✓</span><p class="eyebrow">CAMPANHA ATIVA</p>
+      <h3>O anúncio de teste está no ar</h3>
+      <p>Após a confirmação do pagamento, a campanha entra automaticamente na lateral e, no plano escolhido, também no pop-up das contas FREE.</p>
+      <div class="advertise-test-metrics"><span><small>Status</small><strong>Ativo</strong></span><span><small>Período</small><strong>7 dias</strong></span><span><small>Posições</small><strong>Lateral + pop-up</strong></span></div>
+      <div class="modal__actions"><button class="button button--primary" data-test-ad-stage="1" type="button">Fazer outro teste</button><button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
+    </section>`
   }
 
   private renderGoogleAuthButton(label = 'Continuar com Google'): string {
@@ -4557,6 +4888,84 @@ export class AuthApp {
       `
     }
 
+    if (this.activeDialog === 'sponsored') {
+      const ad = this.appAds.find((entry) => entry.id === this.selectedSponsoredAdId)
+        ?? (this.selectedSponsoredAdId === HOUSE_APP_AD_ID ? HOUSE_APP_AD : null)
+      if (!ad) return ''
+      return `
+        <dialog class="modal modal--sponsored" id="app-dialog" aria-labelledby="dialog-title">
+          <button class="modal__close sponsored-modal__close" data-close-dialog type="button" aria-label="Fechar anúncio">×</button>
+          ${ad.image_url ? `<img class="sponsored-modal__image" src="${escapeHtml(ad.image_url)}" alt="" referrerpolicy="no-referrer" />` : '<div class="sponsored-modal__image sponsored-modal__image--empty" aria-hidden="true">AD</div>'}
+          <div class="sponsored-modal__body">
+            <p class="eyebrow">CONTEÚDO PATROCINADO · ${escapeHtml(ad.advertiser_name)}</p>
+            <h2 id="dialog-title">${escapeHtml(ad.title)}</h2>
+            <p>${escapeHtml(ad.description)}</p>
+            <div class="modal__actions">
+              ${ad.id === HOUSE_APP_AD_ID
+                ? `<button class="button button--primary" data-open-dialog="advertise" type="button">${escapeHtml(ad.cta_label)} ↗</button>`
+                : `<button class="button button--primary" data-sponsored-link="${escapeHtml(ad.id)}" data-sponsored-placement="popup" type="button">${escapeHtml(ad.cta_label)} ↗</button>`}
+              <button class="button button--secondary" data-close-dialog type="button">Agora não</button>
+            </div>
+            <small class="sponsored-modal__notice">${ad.id === HOUSE_APP_AD_ID ? 'Este espaço fica disponível quando não há uma campanha ativa.' : 'Anúncios ajudam a manter o plano FREE disponível.'}</small>
+          </div>
+        </dialog>
+      `
+    }
+
+    if (this.activeDialog === 'advertise') {
+      const defaultPlan = this.appAdPlans[0]
+      return `
+        <dialog class="modal modal--advertise" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="modal__header advertise-dialog__header">
+            <p class="eyebrow">ANUNCIE NO ALTGRID</p>
+            <h2 id="dialog-title">Sua marca diante de jogadores idle</h2>
+            <p>Monte sua campanha em poucos passos. Você envia, a equipe AltGrid confere o plano e o conteúdo, e o PIX só aparece depois da aprovação.</p>
+          </div>
+          ${this.renderAppAdFlow()}
+          ${this.appAdTestStage === 1 ? this.renderDialogError() : ''}
+          ${this.appAdSuccess ? `<div class="advertise-success" role="status"><span aria-hidden="true">✓</span><div><strong>Solicitação recebida</strong><p>${escapeHtml(this.appAdSuccess)}</p></div></div>` : ''}
+          ${this.appAdTestStage === 1 ? `<form class="advertise-form" data-advertise-form>
+              <section class="advertise-step"><header><span>01</span><div><h3>Escolha a exposição</h3><p>O valor será conferido por você e pelo administrador antes do PIX.</p></div></header><fieldset class="advertise-plans">
+                <legend>1. Escolha onde aparecer</legend>
+                ${this.appAdPlans.length > 0 ? this.appAdPlans.map((plan, index) => `
+                  <label class="advertise-plan">
+                    <input type="radio" name="plan_code" value="${escapeHtml(plan.code)}" data-ad-plan data-price-per-day="${plan.price_per_day}" data-min-days="${plan.min_days}" data-max-days="${plan.max_days}" ${index === 0 ? 'checked' : ''} required />
+                    <span><small>${plan.popup_enabled ? 'LATERAL + POP-UP FREE' : 'LATERAL'}</small><strong>${escapeHtml(plan.name)}</strong><p>${escapeHtml(plan.description)}</p><b>${escapeHtml(formatCurrency(plan.price_per_day, plan.currency))}/dia</b></span>
+                  </label>
+                `).join('') : '<p class="advertise-unavailable">Os planos de anúncio estão sendo atualizados. Tente novamente em instantes.</p>'}
+              </fieldset></section>
+              <section class="advertise-step"><header><span>02</span><div><h3>Conte sobre a campanha</h3><p>Preencha os dados que serão revisados antes da cobrança.</p></div></header><div class="advertise-fields">
+                <label>Tipo<select name="category" data-ad-category required><option value="game">Jogo idle</option><option value="product">Produto</option><option value="site">Site</option></select></label>
+                <label>Anunciante<input name="advertiser_name" maxlength="80" placeholder="Nome da empresa ou projeto" required /></label>
+                <label class="advertise-fields__wide" data-ad-game-field>Jogo que receberá destaque<select name="game_slug" required><option value="">Selecione um jogo suportado</option>${this.games.map((game) => `<option value="${escapeHtml(game.slug)}">${escapeHtml(game.name)}</option>`).join('')}<option value="__request__">Meu jogo ainda não está no catálogo</option></select><small>Após a aprovação, o jogo aparece no topo da lista com o selo Destaque.</small></label>
+                <div class="advertise-fields advertise-fields__wide advertise-catalog-request" data-ad-new-game hidden>
+                  <label>Nome do novo jogo<input name="catalog_game_name" maxlength="80" placeholder="Nome oficial do jogo" /></label>
+                  <label>Link oficial para jogar<input name="catalog_launch_url" type="url" maxlength="500" placeholder="https://seujogo.com/jogar" /></label>
+                  <label class="advertise-fields__wide">Logo do jogo em HTTPS<input name="catalog_icon_url" type="url" maxlength="500" placeholder="https://seujogo.com/logo.png" /></label>
+                  <p class="advertise-catalog-request__notice">A equipe verificará o jogo, o link e a logo antes de adicioná-lo ao catálogo. A campanha só ganhará o selo Destaque depois dessa aprovação.</p>
+                </div>
+                <label class="advertise-fields__wide">Título<input name="title" minlength="3" maxlength="70" placeholder="Uma chamada curta e clara" required /></label>
+                <label class="advertise-fields__wide">Descrição<textarea name="description" minlength="10" maxlength="180" rows="3" placeholder="Explique o que a pessoa encontrará ao clicar" required></textarea></label>
+                <label>Link HTTPS<input name="destination_url" type="url" maxlength="500" placeholder="https://seusite.com" required /></label>
+                <label>Imagem HTTPS <small>(opcional)</small><input name="image_url" type="url" maxlength="500" placeholder="https://seusite.com/banner.jpg" /></label>
+                <label>Texto do botão<input name="cta_label" maxlength="24" value="Saiba mais" required /></label>
+                <label>Dias<input name="requested_days" type="number" min="${defaultPlan?.min_days ?? 7}" max="${defaultPlan?.max_days ?? 90}" value="${defaultPlan?.min_days ?? 7}" required data-ad-days /></label>
+              </div></section>
+              <section class="advertise-step advertise-step--review"><header><span>03</span><div><h3>Revise e envie</h3><p>Nenhum pagamento é criado nesta etapa.</p></div></header>
+              <div class="advertise-quote" aria-live="polite"><span>Estimativa</span><strong data-ad-quote>${defaultPlan ? escapeHtml(formatCurrency(defaultPlan.price_per_day * defaultPlan.min_days, defaultPlan.currency)) : '—'}</strong><small>Valor final calculado e confirmado pelo servidor.</small></div>
+              <label class="advertise-consent"><input name="accept_review" type="checkbox" required /><span>Confirmo que tenho autorização para usar os textos, a marca e a imagem enviados.</span></label>
+              <div class="modal__actions">
+                <button class="button button--primary" type="submit" ${this.appAdSubmitting || this.appAdPlans.length === 0 ? 'disabled' : ''}>${this.appAdSubmitting ? 'Enviando…' : 'Enviar para análise'}</button>
+                <button class="button button--secondary" data-close-dialog type="button">Fechar</button>
+              </div>
+              ${LOCAL_AD_TEST_MODE ? '<button class="advertise-test-button" data-test-ad-stage="2" type="button"><span>▶</span><strong>Testar todas as etapas</strong><small>Usa uma campanha fictícia e não gera cobrança</small></button>' : ''}
+              </section>
+            </form>
+          ${this.renderMyAppAdRequests()}` : this.renderAppAdTestStage()}
+        </dialog>
+      `
+    }
+
     const utilityDialog = this.renderUtilityDialog()
 
     if (utilityDialog !== null) {
@@ -5194,7 +5603,7 @@ export class AuthApp {
               <button class="is-active" data-settings-tab="general" type="button">Geral</button><button data-settings-tab="accounts" type="button">Contas</button><button data-settings-tab="visual" type="button">Visual</button><button data-settings-tab="updates" type="button">Atualizações</button><button data-settings-tab="notifications" type="button">Notificações</button><button data-settings-tab="about" type="button">Sobre</button>
             </nav>
             <div class="settings-content">
-              <section data-settings-panel="general"><h3>Geral</h3><label class="setting-toggle"><span><strong>Eco Mode adaptativo</strong><small>${ecoModeNote}</small></span><input data-preference="eco-mode" type="checkbox" ${this.ecoModeRequested ? 'checked' : ''} ${ecoModeAvailable ? '' : 'disabled'} /></label><label class="setting-select"><span><strong>Máximo em segundo plano</strong><small>A conta em uso permanece suave. Com 4 ou 8 contas, o AltGrid reduz automaticamente as secundárias para 10 ou 5 FPS.</small></span><select data-eco-background-fps ${ecoModeAvailable ? '' : 'disabled'}><option value="10" ${this.ecoBackgroundFps === 10 ? 'selected' : ''}>Até 10 FPS</option><option value="20" ${this.ecoBackgroundFps === 20 ? 'selected' : ''}>Até 20 FPS</option><option value="30" ${this.ecoBackgroundFps === 30 ? 'selected' : ''}>Até 30 FPS</option></select></label><label class="setting-toggle"><span><strong>Restaurar última sessão</strong><small>Reabre as contas usadas na inicialização anterior.</small></span><input data-preference="restore-session" type="checkbox" ${restore ? 'checked' : ''} /></label><label class="setting-toggle"><span><strong>Confirmar antes de fechar</strong><small>Evita encerrar sessões por acidente.</small></span><input data-preference="confirm-close" type="checkbox" ${confirmClose ? 'checked' : ''} /></label></section>
+              <section data-settings-panel="general"><h3>Geral</h3><label class="setting-toggle"><span><strong>Eco Mode adaptativo</strong><small>${ecoModeNote}</small></span><input data-preference="eco-mode" type="checkbox" ${this.ecoModeRequested ? 'checked' : ''} ${ecoModeAvailable ? '' : 'disabled'} /></label><label class="setting-select"><span><strong>Máximo em segundo plano</strong><small>A conta em uso fica limitada a 30 FPS. Com 4 ou 8 contas, o AltGrid reduz automaticamente as secundárias para 10 ou 5 FPS.</small></span><select data-eco-background-fps ${ecoModeAvailable ? '' : 'disabled'}><option value="10" ${this.ecoBackgroundFps === 10 ? 'selected' : ''}>Até 10 FPS</option><option value="20" ${this.ecoBackgroundFps === 20 ? 'selected' : ''}>Até 20 FPS</option><option value="30" ${this.ecoBackgroundFps === 30 ? 'selected' : ''}>Até 30 FPS</option></select></label><label class="setting-toggle"><span><strong>Restaurar última sessão</strong><small>Reabre as contas usadas na inicialização anterior.</small></span><input data-preference="restore-session" type="checkbox" ${restore ? 'checked' : ''} /></label><label class="setting-toggle"><span><strong>Confirmar antes de fechar</strong><small>Evita encerrar sessões por acidente.</small></span><input data-preference="confirm-close" type="checkbox" ${confirmClose ? 'checked' : ''} /></label></section>
               <section data-settings-panel="accounts" hidden><h3>Contas e desempenho</h3><p>Cookies, sessões e proxies ficam somente neste dispositivo, isolados por conta.</p><div class="resource-summary"><span><small>Uso das sessões</small><strong>${escapeHtml(formatMemoryKb(totalPrivateKb))} · ${totalCpu.toFixed(1)}% CPU</strong></span><button class="button button--secondary" data-refresh-resource-usage type="button" ${this.resourceUsageLoading ? 'disabled' : ''}>${this.resourceUsageLoading ? 'Medindo…' : 'Medir agora'}</button></div>${usageRows ? `<div class="resource-list">${usageRows}</div>` : '<p class="modal__note">Abra suas contas e clique em “Medir agora” para ver o consumo por sessão.</p>'}<p class="modal__note">O perfil de 10 FPS reduz trabalho de CPU/GPU das contas em segundo plano. Como cada jogo mantém um navegador isolado e ativo, a RAM só é totalmente liberada ao fechar a conta.</p></section>
               <section data-settings-panel="visual" hidden><h3>Visual</h3><p>O tema escuro premium acompanha automaticamente o AltGrid.</p></section>
               <section data-settings-panel="updates" hidden><h3>Atualizações</h3><p>Canal atual: <strong>${updateChannel}</strong> · instalada ${APP_VERSION}${this.configText('latest_version') ? ` · disponível ${escapeHtml(this.configText('latest_version')!)}` : ''}</p><button class="button button--secondary" data-check-update type="button">Verificar atualização</button></section>
@@ -5266,12 +5675,13 @@ export class AuthApp {
         ? payment.qr_code_base64.replace(/\s/g, '')
         : null
       const approved = Boolean(payment && ['approved', 'paid', 'fulfilled'].includes(payment.status))
+      const advertisingPayment = Boolean(this.appAdPaymentRequestId)
       return `
         <dialog class="modal modal--payment" id="app-dialog" aria-labelledby="dialog-title">
-          <div class="modal__header"><p class="eyebrow">Pagamento seguro</p><h2 id="dialog-title">${approved ? 'Pagamento confirmado' : 'Ativar com PIX'}</h2></div>
+          <div class="modal__header"><p class="eyebrow">Pagamento seguro</p><h2 id="dialog-title">${approved ? 'Pagamento confirmado' : advertisingPayment ? 'Pagar campanha com PIX' : 'Ativar com PIX'}</h2>${advertisingPayment ? '<p>Plano e conteúdo aprovados pela equipe AltGrid. A campanha entra no ar somente após a confirmação do pagamento.</p>' : ''}</div>
           ${this.paymentError ? `<div class="form-alert is-visible" role="alert">${escapeHtml(this.paymentError)}</div>` : ''}
           ${payment
-            ? `<div class="payment-summary"><strong>${escapeHtml(formatCurrency(payment.amount, payment.currency))}</strong><small>${escapeHtml(payment.product_code)}</small></div>${approved ? '<div class="payment-approved"><span aria-hidden="true">✓</span><strong>Seu plano está sendo ativado.</strong></div>' : `${qrImage ? `<img class="pix-qr" src="data:image/png;base64,${qrImage}" alt="QR Code PIX" />` : ''}<label class="field pix-copy"><span>Pix Copia e Cola</span><textarea readonly rows="3" data-pix-code>${escapeHtml(payment.qr_code ?? '')}</textarea></label><button class="button button--secondary" data-copy-pix type="button">Copiar código PIX</button><p class="payment-waiting"><i class="spinner spinner--green"></i> Aguardando pagamento…</p>`}`
+            ? `<div class="payment-summary"><strong>${escapeHtml(formatCurrency(payment.amount, payment.currency))}</strong><small>${advertisingPayment ? 'Campanha publicitária AltGrid' : escapeHtml(payment.product_code)}</small></div>${approved ? `<div class="payment-approved"><span aria-hidden="true">✓</span><strong>${advertisingPayment ? 'Pagamento confirmado. Sua campanha está sendo ativada.' : 'Seu plano está sendo ativado.'}</strong></div>` : `${qrImage ? `<img class="pix-qr" src="data:image/png;base64,${qrImage}" alt="QR Code PIX" />` : ''}<label class="field pix-copy"><span>Pix Copia e Cola</span><textarea readonly rows="3" data-pix-code>${escapeHtml(payment.qr_code ?? '')}</textarea></label><button class="button button--secondary" data-copy-pix type="button">Copiar código PIX</button><p class="payment-waiting"><i class="spinner spinner--green"></i> Aguardando pagamento…</p>`}`
             : '<div class="payment-waiting"><i class="spinner spinner--green"></i> Preparando seu PIX…</div>'}
           <div class="modal__actions">${payment && !approved ? `<button class="button button--primary" data-refresh-payment type="button" ${this.paymentLoading ? 'disabled' : ''}>${this.paymentLoading ? 'Atualizando…' : 'Atualizar status'}</button>` : ''}<button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
         </dialog>
@@ -5487,11 +5897,15 @@ export class AuthApp {
           }
 
           button.closest('details')?.removeAttribute('open')
+          if (this.activeDialog === 'sponsored') this.selectedSponsoredAdId = null
           this.activeDialog = dialog
           this.dialogError = null
           this.render()
           if (dialog === 'referrals') {
             void this.loadReferralProgram()
+          }
+          if (dialog === 'advertise') {
+            void this.loadMyAppAdRequests()
           }
         })
       })
@@ -5504,6 +5918,36 @@ export class AuthApp {
           if (!account) return
           button.closest('details')?.removeAttribute('open')
           void this.openExtensionDialog(account)
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-sponsored-link]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const ad = this.appAds.find((entry) => entry.id === button.dataset.sponsoredLink)
+          if (!ad) return
+          const placement = button.dataset.sponsoredPlacement === 'popup' ? 'popup' : 'sidebar'
+          if (ad.id !== LOCAL_APP_AD_PREVIEW_ID) {
+            void this.backendApi?.recordAppAdEvent?.(ad.id, 'click', placement)
+              .catch(() => undefined)
+          }
+          void Promise.resolve(this.openExternalUrl(ad.destination_url)).catch(() => {
+            this.showSessionAlert('Não foi possível abrir o link do anúncio.')
+          })
+        })
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-preview-sponsored-popup]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const ad = this.appAds.find((entry) => entry.id === button.dataset.previewSponsoredPopup)
+          if (!ad) return
+          this.selectedSponsoredAdId = ad.id
+          this.activeDialog = 'sponsored'
+          this.dialogError = null
+          this.render()
         })
       })
 
@@ -6582,8 +7026,26 @@ export class AuthApp {
 
   private closeDialog(): void {
     const returnFocus = this.dialogReturnFocus
+    if (
+      this.activeDialog === 'sponsored'
+      && this.selectedSponsoredAdId
+      && this.selectedSponsoredAdId !== LOCAL_APP_AD_PREVIEW_ID
+      && this.selectedSponsoredAdId !== HOUSE_APP_AD_ID
+    ) {
+      void this.backendApi?.recordAppAdEvent?.(
+        this.selectedSponsoredAdId,
+        'dismiss',
+        'popup',
+      ).catch(() => undefined)
+    }
+    if (this.activeDialog === 'sponsored') this.selectedSponsoredAdId = null
+    if (this.activeDialog === 'advertise') {
+      this.appAdSuccess = null
+      this.appAdTestStage = 1
+    }
     if (this.activeDialog === 'payment') {
       this.stopPaymentPolling()
+      this.appAdPaymentRequestId = null
     }
     if (this.activeDialog === 'proxy' || this.activeDialog === 'copy-proxy') {
       this.proxyConfig = null
@@ -6668,6 +7130,106 @@ export class AuthApp {
 
   }
 
+  private async submitAppAdRequest(form: HTMLFormElement): Promise<void> {
+    if (!this.backendApi?.createAppAdRequest || this.appAdSubmitting) {
+      this.dialogError = 'O envio de anúncios está indisponível no momento.'
+      this.render()
+      return
+    }
+    const data = new FormData(form)
+    const destinationUrl = String(data.get('destination_url') ?? '').trim()
+    const imageUrl = String(data.get('image_url') ?? '').trim()
+    const catalogLaunchUrl = String(data.get('catalog_launch_url') ?? '').trim()
+    const catalogIconUrl = String(data.get('catalog_icon_url') ?? '').trim()
+    if (
+      !normalizeSafeGameUrl(destinationUrl)
+      || (imageUrl && !normalizeSafeGameUrl(imageUrl))
+      || (catalogLaunchUrl && !normalizeSafeGameUrl(catalogLaunchUrl))
+      || (catalogIconUrl && !normalizeSafeGameUrl(catalogIconUrl))
+    ) {
+      this.dialogError = 'Use somente links HTTPS válidos para o destino e para a imagem.'
+      this.render()
+      return
+    }
+    const input: CreateAppAdRequestInput = {
+      plan_code: String(data.get('plan_code') ?? ''),
+      category: String(data.get('category') ?? '') as CreateAppAdRequestInput['category'],
+      game_slug: String(data.get('category') ?? '') === 'game'
+        && String(data.get('game_slug') ?? '') !== '__request__'
+        ? String(data.get('game_slug') ?? '').trim()
+        : null,
+      catalog_game_name: String(data.get('game_slug') ?? '') === '__request__'
+        ? String(data.get('catalog_game_name') ?? '').trim()
+        : null,
+      catalog_launch_url: String(data.get('game_slug') ?? '') === '__request__'
+        ? catalogLaunchUrl
+        : null,
+      catalog_icon_url: String(data.get('game_slug') ?? '') === '__request__'
+        ? catalogIconUrl
+        : null,
+      advertiser_name: String(data.get('advertiser_name') ?? '').trim(),
+      title: String(data.get('title') ?? '').trim(),
+      description: String(data.get('description') ?? '').trim(),
+      destination_url: destinationUrl,
+      image_url: imageUrl || null,
+      cta_label: String(data.get('cta_label') ?? '').trim(),
+      requested_days: Number(data.get('requested_days')),
+    }
+    this.appAdSubmitting = true
+    this.dialogError = null
+    this.render()
+    try {
+      const response = await this.backendApi.createAppAdRequest(input)
+      this.appAdSuccess = `Pedido enviado com estimativa de ${formatCurrency(response.request.quoted_amount, response.request.currency)} para ${response.request.requested_days} dias. Aguarde sua análise administrativa; o PIX ainda não foi gerado.`
+      await this.loadMyAppAdRequests(false)
+    } catch (error) {
+      this.dialogError = backendErrorMessage(error)
+    } finally {
+      this.appAdSubmitting = false
+      this.render()
+    }
+  }
+
+  private async loadMyAppAdRequests(renderLoading = true): Promise<void> {
+    if (!this.backendApi?.getMyAppAdRequests || this.myAppAdRequestsLoading) return
+    this.myAppAdRequestsLoading = true
+    if (renderLoading) this.render()
+    try {
+      const response = await this.backendApi.getMyAppAdRequests()
+      this.myAppAdRequests = response.requests
+    } catch (error) {
+      this.dialogError = backendErrorMessage(error)
+    } finally {
+      this.myAppAdRequestsLoading = false
+      this.render()
+    }
+  }
+
+  private async createAppAdPixPayment(requestId: string, button: HTMLButtonElement): Promise<void> {
+    if (!this.backendApi?.createAppAdPixPayment) {
+      this.dialogError = 'O pagamento PIX para anúncios está indisponível no momento.'
+      this.render()
+      return
+    }
+    this.appAdPaymentRequestId = requestId
+    this.activeDialog = 'payment'
+    this.pixPayment = null
+    this.paymentError = null
+    this.paymentLoading = true
+    button.disabled = true
+    this.render()
+    try {
+      const response = await this.backendApi.createAppAdPixPayment(requestId)
+      this.pixPayment = response.payment
+      this.startPaymentPolling()
+    } catch (error) {
+      this.paymentError = backendErrorMessage(error)
+    } finally {
+      this.paymentLoading = false
+      this.render()
+    }
+  }
+
   private async createPixPayment(
     productCode: string,
     button: HTMLButtonElement,
@@ -6679,6 +7241,7 @@ export class AuthApp {
     }
 
     this.activeDialog = 'payment'
+    this.appAdPaymentRequestId = null
     this.pixPayment = null
     this.paymentError = null
     this.paymentLoading = true
@@ -6698,7 +7261,7 @@ export class AuthApp {
   }
 
   private async refreshPixPayment(button?: HTMLButtonElement): Promise<void> {
-    if (!this.backendApi?.getPayment || !this.pixPayment) {
+    if (!this.pixPayment) {
       return
     }
 
@@ -6707,13 +7270,20 @@ export class AuthApp {
     if (button) button.disabled = true
 
     try {
-      const response = await this.backendApi.getPayment(this.pixPayment.id)
+      const response = this.appAdPaymentRequestId
+        ? await this.backendApi?.getAppAdPayment?.(this.appAdPaymentRequestId)
+        : await this.backendApi?.getPayment?.(this.pixPayment.id)
+      if (!response) throw new Error('Consulta de pagamento indisponível.')
       this.pixPayment = response.payment
       if (
         this.session
         && ['approved', 'fulfilled', 'paid'].includes(response.payment.status)
       ) {
-        void this.loadApplicationData(this.session, true)
+        if (this.appAdPaymentRequestId) {
+          void this.loadMyAppAdRequests(false)
+        } else {
+          void this.loadApplicationData(this.session, true)
+        }
         this.stopPaymentPolling()
       }
     } catch (error) {
@@ -6783,7 +7353,11 @@ export class AuthApp {
     }
     this.adminPaymentAlertLoading = false
     this.adminPaymentsInitialized = false
+    this.adminAdRequestsInitialized = false
+    this.adminChatReportsInitialized = false
     this.adminPaymentStates.clear()
+    this.adminAdRequestStates.clear()
+    this.adminChatReportIds.clear()
   }
 
   private async refreshAdminPaymentAlerts(): Promise<void> {
@@ -6798,30 +7372,76 @@ export class AuthApp {
 
     this.adminPaymentAlertLoading = true
     try {
-      const response = await backendApi.getAdminPaymentLogs(1, 25)
+      const [paymentsResult, adsResult, reportsResult] = await Promise.allSettled([
+        backendApi.getAdminPaymentLogs(1, 25),
+        backendApi.getAdminAppAdRequests?.(null) ?? Promise.resolve({ requests: [] }),
+        backendApi.getAdminChatReports?.('pending', 1, 25)
+          ?? Promise.resolve({ reports: [], pagination: { has_more: false, page: 1, page_size: 25, total: 0 } }),
+      ])
       const nextStates = new Map<string, string>()
       const confirmedStatuses = new Set(['approved', 'fulfilled', 'paid'])
+      let supplementalNotificationAdded = false
 
-      for (const payment of [...response.payments].reverse()) {
-        nextStates.set(payment.id, payment.status)
-        if (!this.adminPaymentsInitialized) continue
+      if (paymentsResult.status === 'fulfilled') {
+        for (const payment of [...paymentsResult.value.payments].reverse()) {
+          nextStates.set(payment.id, payment.status)
+          if (!this.adminPaymentsInitialized) continue
 
-        const previousStatus = this.adminPaymentStates.get(payment.id)
-        const confirmed = confirmedStatuses.has(payment.status)
-        const becameConfirmed = previousStatus !== undefined
-          && !confirmedStatuses.has(previousStatus)
-          && confirmed
+          const previousStatus = this.adminPaymentStates.get(payment.id)
+          const confirmed = confirmedStatuses.has(payment.status)
+          const becameConfirmed = previousStatus !== undefined
+            && !confirmedStatuses.has(previousStatus)
+            && confirmed
 
-        if (previousStatus === undefined || becameConfirmed) {
-          await this.notifyAdminPayment(payment, confirmed)
+          if (previousStatus === undefined || becameConfirmed) {
+            await this.notifyAdminPayment(payment, confirmed)
+          }
         }
+        this.adminPaymentStates.clear()
+        nextStates.forEach((status, paymentId) => this.adminPaymentStates.set(paymentId, status))
+        this.adminPaymentsInitialized = true
       }
 
-      this.adminPaymentStates.clear()
-      nextStates.forEach((status, paymentId) => {
-        this.adminPaymentStates.set(paymentId, status)
-      })
-      this.adminPaymentsInitialized = true
+      if (adsResult.status === 'fulfilled') {
+        const nextAds = new Map<string, string>()
+        for (const request of [...adsResult.value.requests].reverse()) {
+          nextAds.set(request.id, request.status)
+          if (this.adminAdRequestsInitialized && !this.adminAdRequestStates.has(request.id)) {
+            this.notificationCenter.upsertSystemNotification({
+              id: `admin-ad-request:${request.id}`,
+              occurredAt: request.created_at,
+              title: 'Novo pedido de anúncio',
+              summary: `${request.advertiser_name} · ${request.plan_name} · ${request.requested_days} dias · ${formatCurrency(request.quoted_amount, request.currency)}`,
+            })
+            playAdminPaymentAlertSound(false)
+            supplementalNotificationAdded = true
+          }
+        }
+        this.adminAdRequestStates.clear()
+        nextAds.forEach((status, requestId) => this.adminAdRequestStates.set(requestId, status))
+        this.adminAdRequestsInitialized = true
+      }
+
+      if (reportsResult.status === 'fulfilled') {
+        const nextReportIds = new Set(reportsResult.value.reports.map((report) => report.id))
+        if (this.adminChatReportsInitialized) {
+          for (const report of reportsResult.value.reports) {
+            if (this.adminChatReportIds.has(report.id)) continue
+            this.notificationCenter.upsertSystemNotification({
+              id: `admin-chat-report:${report.id}`,
+              occurredAt: report.created_at,
+              title: 'Nova denúncia no chat',
+              summary: `${report.reason} · mensagem ${report.message_id}`,
+            })
+            playAdminPaymentAlertSound(false)
+            supplementalNotificationAdded = true
+          }
+        }
+        this.adminChatReportIds.clear()
+        nextReportIds.forEach((reportId) => this.adminChatReportIds.add(reportId))
+        this.adminChatReportsInitialized = true
+      }
+      if (supplementalNotificationAdded) this.render()
     } catch {
       // Administrative alerts retry on the next polling cycle.
     } finally {
@@ -6864,6 +7484,80 @@ export class AuthApp {
           this.closeDialog()
         })
       })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-test-ad-stage]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          if (!LOCAL_AD_TEST_MODE) return
+          const stage = Number(button.dataset.testAdStage)
+          if (![1, 2, 3, 4].includes(stage)) return
+          this.appAdTestStage = stage as 1 | 2 | 3 | 4
+          this.dialogError = null
+          this.render()
+        })
+      })
+
+    const advertiseForm = this.root.querySelector<HTMLFormElement>('[data-advertise-form]')
+    if (advertiseForm && advertiseForm.dataset.actionBound !== 'true') {
+      advertiseForm.dataset.actionBound = 'true'
+      const updateQuote = (): void => {
+        const selected = advertiseForm.querySelector<HTMLInputElement>('input[name="plan_code"]:checked')
+        const daysInput = advertiseForm.querySelector<HTMLInputElement>('[data-ad-days]')
+        const quote = advertiseForm.querySelector<HTMLElement>('[data-ad-quote]')
+        if (!selected || !daysInput || !quote) return
+        const minimum = Number(selected.dataset.minDays ?? 1)
+        const maximum = Number(selected.dataset.maxDays ?? 365)
+        daysInput.min = String(minimum)
+        daysInput.max = String(maximum)
+        const current = Number(daysInput.value)
+        if (!Number.isInteger(current) || current < minimum || current > maximum) {
+          daysInput.value = String(minimum)
+        }
+        const plan = this.appAdPlans.find((entry) => entry.code === selected.value)
+        quote.textContent = plan
+          ? formatCurrency(plan.price_per_day * Number(daysInput.value), plan.currency)
+          : '—'
+      }
+      const syncGameField = (): void => {
+        const category = advertiseForm.querySelector<HTMLSelectElement>('[data-ad-category]')
+        const field = advertiseForm.querySelector<HTMLElement>('[data-ad-game-field]')
+        const game = advertiseForm.elements.namedItem('game_slug')
+        const newGameFields = advertiseForm.querySelector<HTMLElement>('[data-ad-new-game]')
+        const isGame = category?.value === 'game'
+        const requestsNewGame = isGame
+          && game instanceof HTMLSelectElement
+          && game.value === '__request__'
+        if (field) field.hidden = !isGame
+        if (game instanceof HTMLSelectElement) {
+          game.disabled = !isGame
+          game.required = isGame
+        }
+        if (newGameFields) newGameFields.hidden = !requestsNewGame
+        for (const name of ['catalog_game_name', 'catalog_launch_url', 'catalog_icon_url']) {
+          const input = advertiseForm.elements.namedItem(name)
+          if (input instanceof HTMLInputElement) {
+            input.disabled = !requestsNewGame
+            input.required = requestsNewGame
+          }
+        }
+      }
+      advertiseForm.querySelectorAll<HTMLInputElement>('[data-ad-plan]')
+        .forEach((input) => input.addEventListener('change', updateQuote))
+      advertiseForm.querySelector<HTMLInputElement>('[data-ad-days]')
+        ?.addEventListener('input', updateQuote)
+      advertiseForm.querySelector<HTMLSelectElement>('[data-ad-category]')
+        ?.addEventListener('change', syncGameField)
+      const gameSelect = advertiseForm.elements.namedItem('game_slug')
+      if (gameSelect instanceof HTMLSelectElement) {
+        gameSelect.addEventListener('change', syncGameField)
+      }
+      syncGameField()
+      advertiseForm.addEventListener('submit', (event) => {
+        event.preventDefault()
+        void this.submitAppAdRequest(advertiseForm)
+      })
+    }
 
     const chooseExtension = this.root.querySelector<HTMLButtonElement>('[data-choose-extension]')
     if (chooseExtension) this.bindButtonOnce(chooseExtension, () => { void this.chooseAccountExtension() })
@@ -7138,6 +7832,15 @@ export class AuthApp {
             copyPix.textContent = 'Código copiado'
           })
           .catch(() => this.showSessionAlert('Não foi possível copiar o código PIX.'))
+      })
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-pay-app-ad]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const requestId = button.dataset.payAppAd
+          if (requestId) void this.createAppAdPixPayment(requestId, button)
+        })
       })
     }
 
@@ -7987,7 +8690,7 @@ export class AuthApp {
       if (this.currentView === 'authenticated' && !document.hidden) {
         void this.refreshResourceUsage()
       }
-    }, 6_000)
+    }, RESOURCE_USAGE_REFRESH_INTERVAL_MS)
   }
 
   private stopResourceMonitoring(): void {

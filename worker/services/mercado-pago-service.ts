@@ -373,6 +373,72 @@ export class MercadoPagoPaymentService implements PaymentService {
     return { payment: basePaymentResponse(payment) }
   }
 
+  async createAppAdPixPayment(
+    user: SafeUser,
+    requestId: string,
+  ): Promise<Record<string, unknown>> {
+    if (!user.email) {
+      throw new ApiError(409, 'verified_email_required', 'Confirme um e-mail antes de iniciar o pagamento.')
+    }
+    const accessToken = configuredSecret(this.options.accessToken, 'MERCADOPAGO_ACCESS_TOKEN')
+    const localPayment = await this.repository.getAppAdPaymentRequest(user.id, requestId)
+    if (!localPayment) throw new ApiError(404, 'advertising_request_not_found', 'Pedido de anúncio não encontrado.')
+    if (localPayment.status === 'approved') return { payment: basePaymentResponse(localPayment) }
+    if (localPayment.status !== 'payment_pending' && localPayment.status !== 'pending' && localPayment.status !== 'in_process') {
+      throw new ApiError(409, 'advertising_payment_unavailable', 'O pedido ainda não foi liberado para pagamento.')
+    }
+    if (localPayment.provider_payment_id) return { payment: basePaymentResponse(localPayment) }
+
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1_000).toISOString()
+    const providerBody: Record<string, unknown> = {
+      transaction_amount: Number(localPayment.amount),
+      description: `AltGrid anúncio · ${String((localPayment.metadata as Record<string, unknown>).title ?? requestId)}`,
+      payment_method_id: 'pix',
+      payer: { email: user.email },
+      external_reference: requestId,
+      date_of_expiration: expiresAt,
+      metadata: { altgrid_app_ad_request_id: requestId },
+    }
+    if (this.options.webhookUrl?.trim()) providerBody.notification_url = this.options.webhookUrl.trim()
+
+    try {
+      const response = await providerRequest(this.fetchImplementation, `${MERCADO_PAGO_API}/v1/payments`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': `app-ad-${requestId}`,
+        },
+        body: JSON.stringify(providerBody),
+        signal: AbortSignal.timeout(15_000),
+      })
+      const snapshot = paymentSnapshot(await providerJson(response))
+      if (snapshot.external_reference !== requestId) {
+        throw new ApiError(502, 'payment_provider_error', 'O provedor retornou uma referência de pagamento inválida.')
+      }
+      const attached = await this.repository.attachAppAdPayment(user.id, requestId, snapshot)
+      return { payment: basePaymentResponse(attached) }
+    } catch (error) {
+      try {
+        await this.repository.failPendingAppAdPayment(user.id, requestId, 'provider creation failed')
+      } catch {
+        // Preserve the provider error.
+      }
+      throw error
+    }
+  }
+
+  async getAppAdPayment(userId: string, requestId: string): Promise<Record<string, unknown> | null> {
+    let payment = await this.repository.getAppAdPaymentRequest(userId, requestId)
+    if (!payment) return null
+    if (this.shouldReconcile(payment)) {
+      await this.reconcileRecord(payment, 'status_refresh')
+      payment = await this.repository.getAppAdPaymentRequest(userId, requestId)
+      if (!payment) return null
+    }
+    return { payment: basePaymentResponse(payment) }
+  }
+
   private shouldReconcile(payment: PaymentRecord): payment is PaymentRecord & {
     provider_payment_id: string
   } {
@@ -387,16 +453,20 @@ export class MercadoPagoPaymentService implements PaymentService {
     source: 'admin_refresh' | 'scheduled_refresh' | 'status_refresh',
   ): Promise<void> {
     const snapshot = await this.getProviderPayment(payment.provider_payment_id)
-    if (snapshot.external_reference !== payment.id) {
+    const expectedExternalReference = payment.product_code === 'APP_ADVERTISING'
+      ? String((payment.metadata as Record<string, unknown>).request_id ?? '')
+      : payment.id
+    if (!expectedExternalReference || snapshot.external_reference !== expectedExternalReference) {
       throw new ApiError(502, 'payment_provider_error', 'Referência de pagamento inválida.')
     }
     const eventId = `${source}:${snapshot.id}:${snapshot.date_last_updated ?? snapshot.status}`
-    await this.repository.processMercadoPagoPayment(
-      snapshot,
-      eventId,
-      await this.payloadHash(JSON.stringify(snapshot)),
-      { source, provider_status: snapshot.status },
-    )
+    const processor = payment.product_code === 'APP_ADVERTISING'
+      ? this.repository.processAppAdPayment.bind(this.repository)
+      : this.repository.processMercadoPagoPayment.bind(this.repository)
+    await processor(snapshot, eventId, await this.payloadHash(JSON.stringify(snapshot)), {
+      source,
+      provider_status: snapshot.status,
+    })
   }
 
   async reconcilePayment(paymentId: string): Promise<Record<string, unknown> | null> {
@@ -415,7 +485,11 @@ export class MercadoPagoPaymentService implements PaymentService {
     failed: number
     updated: number
   }> {
-    const payments = await this.repository.listPendingMercadoPagoPayments(limit)
+    const [productPayments, appAdPayments] = await Promise.all([
+      this.repository.listPendingMercadoPagoPayments(limit),
+      this.repository.listPendingAppAdPayments(limit),
+    ])
+    const payments = [...productPayments, ...appAdPayments].slice(0, Math.max(1, limit))
     let failed = 0
     let updated = 0
     for (const payment of payments) {
@@ -438,7 +512,7 @@ export class MercadoPagoPaymentService implements PaymentService {
     return hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload)))
   }
 
-  async handleWebhook(request: Request): Promise<void> {
+  async handleWebhook(request: Request): Promise<PaymentRecord | null> {
     const webhookSecret = configuredSecret(
       this.options.webhookSecret,
       'MERCADOPAGO_WEBHOOK_SECRET',
@@ -489,7 +563,11 @@ export class MercadoPagoPaymentService implements PaymentService {
       throw new ApiError(400, 'validation_error', 'Evento sem identificador.')
     }
     const eventId = `notification:${notificationId}`
-    await this.repository.processMercadoPagoPayment(
+    const appAdPayment = await this.repository.getAppAdPaymentRequest(null, snapshot.external_reference)
+    const processor = appAdPayment
+      ? this.repository.processAppAdPayment.bind(this.repository)
+      : this.repository.processMercadoPagoPayment.bind(this.repository)
+    const processed = await processor(
       snapshot,
       eventId,
       await this.payloadHash(rawBody),
@@ -500,5 +578,8 @@ export class MercadoPagoPaymentService implements PaymentService {
         provider_status: snapshot.status,
       },
     )
+    return appAdPayment
+      ? this.repository.getAppAdPaymentRequest(null, processed.payment_id)
+      : this.repository.getPaymentById(processed.payment_id)
   }
 }

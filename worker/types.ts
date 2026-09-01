@@ -6,6 +6,11 @@ import type {
   FeatureMap,
   LicenseSnapshotResponse,
   PublicGame,
+  PublicAppAd,
+  PublicAppAdPlan,
+  CreateAppAdRequestInput,
+  AppAdRequestReceipt,
+  UserAppAdRequest,
   RegisterDeviceInput,
   ReferralProgramResponse,
   SafeProfile,
@@ -14,6 +19,8 @@ import type {
 import type {
   AdminAuditEntry,
   AdminAnnouncement,
+  AdminAppAdRequest,
+  AdminAppAdStatus,
   AdminAnnouncementInput,
   AdminAnnouncementUpdate,
   AdminChatReport,
@@ -39,7 +46,31 @@ export interface RateLimitBinding {
   limit(options: { key: string }): Promise<{ success: boolean }>
 }
 
-export interface WorkerEnvironment extends Env {}
+export interface WorkerEnvironment extends Env {
+  ADMIN_WHATSAPP_NUMBER?: string
+  WHATSAPP_ACCESS_TOKEN?: string
+  WHATSAPP_PHONE_NUMBER_ID?: string
+}
+
+export type AdminMobileNotificationType =
+  | 'ad_request'
+  | 'chat_direct'
+  | 'chat_report'
+  | 'purchase_approved'
+  | 'purchase_attempt'
+
+export interface AdminMobileNotificationInput {
+  eventKey: string
+  type: AdminMobileNotificationType
+  title: string
+  occurredAt?: string
+  details: Array<{ label: string; value: string }>
+}
+
+export interface AdminMobileNotifier {
+  readonly enabled?: boolean
+  notify(input: AdminMobileNotificationInput): Promise<void>
+}
 
 export interface PlanRecord {
   id: string
@@ -76,7 +107,7 @@ export interface EntitlementRecord {
 
 export interface BackendRepository {
   getAppMetrics(): Promise<AppMetricsResponse>
-  heartbeatPresence(userId: string): Promise<void>
+  heartbeatPresence(userId: string, activeGameSlugs: readonly string[]): Promise<void>
   getProfile(userId: string): Promise<SafeProfile | null>
   updateProfile?(userId: string, displayName: string): Promise<SafeProfile>
   getPlans(): Promise<PlanRecord[]>
@@ -198,6 +229,16 @@ export interface PlatformRepository {
   getAppConfig(): Promise<Record<string, Json>>
   getAnnouncements(): Promise<AnnouncementRecord[]>
   getPublicProducts(): Promise<PublicProductRecord[]>
+  getAppAdPlans(): Promise<PublicAppAdPlan[]>
+  getActiveAppAds(): Promise<PublicAppAd[]>
+  createAppAdRequest(userId: string, input: CreateAppAdRequestInput): Promise<AppAdRequestReceipt>
+  getUserAppAdRequests(userId: string): Promise<UserAppAdRequest[]>
+  recordAppAdEvent(
+    userId: string,
+    campaignId: string,
+    eventType: 'impression' | 'click' | 'dismiss',
+    placement: 'sidebar' | 'popup',
+  ): Promise<void>
 }
 
 export interface ChatRepository {
@@ -216,6 +257,10 @@ export interface ChatRepository {
     channelId: string,
     message: string,
   ): Promise<ChatMessageRecord>
+  getDirectChatAdminRecipient?(
+    senderUserId: string,
+    channelId: string,
+  ): Promise<{ userId: string } | null>
   reportChatMessage(
     userId: string,
     messageId: string,
@@ -248,6 +293,20 @@ export interface PaymentRepository {
     payloadHash: string,
     providerData: Json,
   ): Promise<{ payment_id: string; status: string; fulfilled: boolean; duplicate: boolean }>
+  getAppAdPaymentRequest(userId: string | null, requestId: string): Promise<PaymentRecord | null>
+  attachAppAdPayment(
+    userId: string,
+    requestId: string,
+    snapshot: MercadoPagoSnapshot,
+  ): Promise<PaymentRecord>
+  failPendingAppAdPayment(userId: string, requestId: string, reason: string): Promise<void>
+  listPendingAppAdPayments(limit: number): Promise<PaymentRecord[]>
+  processAppAdPayment(
+    snapshot: MercadoPagoSnapshot,
+    eventId: string,
+    payloadHash: string,
+    providerData: Json,
+  ): Promise<{ payment_id: string; status: string; fulfilled: boolean; duplicate: boolean }>
 }
 
 export interface PaymentService {
@@ -256,6 +315,11 @@ export interface PaymentService {
     productCode: string,
     requestKey: string,
   ): Promise<Record<string, unknown>>
+  createAppAdPixPayment(
+    user: SafeUser,
+    requestId: string,
+  ): Promise<Record<string, unknown>>
+  getAppAdPayment(userId: string, requestId: string): Promise<Record<string, unknown> | null>
   getPayment(userId: string, paymentId: string): Promise<Record<string, unknown> | null>
   reconcilePayment(paymentId: string): Promise<Record<string, unknown> | null>
   reconcilePendingPayments(limit?: number): Promise<{
@@ -263,7 +327,7 @@ export interface PaymentService {
     failed: number
     updated: number
   }>
-  handleWebhook(request: Request): Promise<void>
+  handleWebhook(request: Request): Promise<PaymentRecord | null>
 }
 
 export interface LicenseSnapshotService {
@@ -331,6 +395,13 @@ export interface AdminRepository {
     status: Extract<AdminPublisherRequestStatus, 'reviewing' | 'approved' | 'rejected'>,
     notes: string | null,
   ): Promise<AdminPublisherRequest>
+  getAdminAppAdRequests(actorUserId: string, status: AdminAppAdStatus | null): Promise<AdminAppAdRequest[]>
+  reviewAdminAppAdRequest(
+    actorUserId: string,
+    requestId: string,
+    status: Extract<AdminAppAdStatus, 'reviewing' | 'payment_pending' | 'rejected'>,
+    notes: string | null,
+  ): Promise<AdminAppAdRequest>
   getAdminConfig(): Promise<AdminConfigEntry[]>
   updateAdminConfig(
     actorUserId: string,

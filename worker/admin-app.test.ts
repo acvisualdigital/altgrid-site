@@ -16,6 +16,7 @@ const PRODUCT_ID = '50000000-0000-4000-8000-000000000001'
 const REPORT_ID = '83000000-0000-4000-8000-000000000001'
 const MESSAGE_ID = '84000000-0000-4000-8000-000000000001'
 const REFERRAL_ID = '86000000-0000-4000-8000-000000000001'
+const APP_AD_ID = '87000000-0000-4000-8000-000000000001'
 
 const adminUser: SafeUser = {
   id: ADMIN_ID,
@@ -493,5 +494,54 @@ describe('administrative Worker API', () => {
       { kind: 'ban', reason: 'Ban', expires_at: '2099-08-27T12:00:00.000Z' },
     ))
     expect(invalidBan.status).toBe(400)
+  })
+
+  it('lists, filters and reviews app advertising requests through the admin queue', async () => {
+    adminRepository.admin = true
+    adminRepository.appAdRequests = [{
+      id: APP_AD_ID,
+      user_id: TARGET_ID,
+      user_email: 'cliente@example.com',
+      display_name: 'Cliente',
+      plan_code: 'spotlight',
+      plan_name: 'Destaque FREE',
+      category: 'game',
+      advertiser_name: 'Estúdio Idle',
+      title: 'Novo jogo idle',
+      description: 'Conheça uma nova aventura idle no navegador.',
+      destination_url: 'https://idle.example.com',
+      image_url: null,
+      cta_label: 'Jogar agora',
+      requested_days: 7,
+      quoted_amount: 35,
+      currency: 'BRL',
+      status: 'pending',
+      admin_notes: null,
+      reviewed_by: null,
+      reviewed_at: null,
+      starts_at: null,
+      ends_at: null,
+      created_at: '2026-09-01T10:00:00.000Z',
+      updated_at: '2026-09-01T10:00:00.000Z',
+    }]
+
+    const list = await api.fetch(request('/v1/admin/app-ads?status=pending'))
+    expect(list.status).toBe(200)
+    await expect(list.json()).resolves.toMatchObject({
+      requests: [{ id: APP_AD_ID, quoted_amount: 35, status: 'pending' }],
+    })
+
+    const approve = await api.fetch(request(`/v1/admin/app-ads/${APP_AD_ID}/review`, 'POST', {
+      status: 'payment_pending',
+      notes: 'Plano e peça revisados. PIX liberado.',
+    }))
+    expect(approve.status).toBe(200)
+    await expect(approve.json()).resolves.toMatchObject({
+      request: { id: APP_AD_ID, status: 'payment_pending', starts_at: null },
+    })
+    expect(adminRepository.audit[0]).toMatchObject({ action: 'app.advertising.payment_pending' })
+
+    const invalid = await api.fetch(request('/v1/admin/app-ads?status=unknown'))
+    expect(invalid.status).toBe(400)
   })
 })

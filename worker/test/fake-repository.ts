@@ -21,6 +21,7 @@ export class FakeRepository implements BackendRepository {
     generated_at: '2026-08-25T12:00:00.000Z',
   }
   lastPresenceUserId: string | null = null
+  lastPresenceGameSlugs: readonly string[] = []
   profile: SafeProfile | null = {
     id: '10000000-0000-4000-8000-000000000001',
     display_name: 'Hunter',
@@ -59,8 +60,9 @@ export class FakeRepository implements BackendRepository {
     return this.metrics
   }
 
-  async heartbeatPresence(userId: string): Promise<void> {
+  async heartbeatPresence(userId: string, activeGameSlugs: readonly string[] = []): Promise<void> {
     this.lastPresenceUserId = userId
+    this.lastPresenceGameSlugs = activeGameSlugs
   }
 
   async getProfile(): Promise<SafeProfile | null> {

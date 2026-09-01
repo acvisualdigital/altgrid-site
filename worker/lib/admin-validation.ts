@@ -1,5 +1,6 @@
 import type {
   AdminAnnouncementInput,
+  AdminAppAdReviewInput,
   AdminAnnouncementUpdate,
   AdminChatReportStatus,
   AdminChatRestrictionInput,
@@ -188,6 +189,18 @@ export function readAdminReferralSearch(url: string): {
 export async function readAdminReferralReason(request: Request): Promise<string> {
   const body = await readJsonObject(request, new Set(['reason']))
   return requiredText(body.reason, 'reason', 500)
+}
+
+export async function readAdminAppAdReview(request: Request): Promise<AdminAppAdReviewInput> {
+  const body = await readJsonObject(request, new Set(['status', 'notes']))
+  const status = requiredText(body.status, 'status', 20)
+  if (!['reviewing', 'payment_pending', 'rejected'].includes(status)) {
+    throw validationError('Escolha revisar, liberar o PIX ou recusar o anúncio.')
+  }
+  return {
+    status: status as AdminAppAdReviewInput['status'],
+    notes: nullableText(body.notes, 'notes', 2_000),
+  }
 }
 
 export async function readGrantDays(request: Request): Promise<number> {

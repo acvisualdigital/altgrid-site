@@ -309,7 +309,10 @@ export class ChatService {
 
   async send(message: string): Promise<void> {
     const channelId = this.state.selectedChannelId
-    const normalized = message.trim()
+    const normalized = message
+      .replace(/[\t\r\n]+/g, ' ')
+      .replace(/ {2,}/g, ' ')
+      .trim()
 
     if (!channelId) {
       throw new Error('Selecione um canal.')

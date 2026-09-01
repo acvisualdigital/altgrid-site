@@ -37,6 +37,7 @@ describe('SupabaseRepository presence and metrics RPC boundary', () => {
 
     expect(rpc).toHaveBeenCalledWith('record_presence', {
       p_user_id: USER_ID,
+      p_active_game_slugs: [],
     })
   })
 

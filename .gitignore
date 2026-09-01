@@ -9,6 +9,8 @@ store-release/
 .pnpm-store/
 .wrangler/
 .local-update-lab/
+.altgrid-dev-profile/
+tmp/
 
 .env
 .env.*

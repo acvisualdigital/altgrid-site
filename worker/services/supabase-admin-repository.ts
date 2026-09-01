@@ -2,6 +2,8 @@ import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js'
 
 import type {
   AdminAnnouncement,
+  AdminAppAdRequest,
+  AdminAppAdStatus,
   AdminAnnouncementInput,
   AdminAnnouncementUpdate,
   AdminAuditEntry,
@@ -460,6 +462,39 @@ export class SupabaseAdminRepository implements AdminRepository {
     const [enriched] = await this.getAdminPublisherRequests(actorUserId, status)
       .then((entries) => entries.filter((entry) => entry.id === reviewed.id))
     return enriched ?? reviewed
+  }
+
+  async getAdminAppAdRequests(
+    actorUserId: string,
+    status: AdminAppAdStatus | null,
+  ): Promise<AdminAppAdRequest[]> {
+    const { data, error } = await this.client.rpc('admin_list_app_ad_requests', {
+      p_actor_user_id: actorUserId,
+      p_status: status,
+    })
+    if (error) dataError(error)
+    return (data ?? []).map((entry: AdminAppAdRequest) => ({
+      ...entry,
+      quoted_amount: Number(entry.quoted_amount),
+    }))
+  }
+
+  async reviewAdminAppAdRequest(
+    actorUserId: string,
+    requestId: string,
+    status: Extract<AdminAppAdStatus, 'reviewing' | 'payment_pending' | 'rejected'>,
+    notes: string | null,
+  ): Promise<AdminAppAdRequest> {
+    await this.adminRpcResult<AdminAppAdRequest>('admin_review_app_ad_request', {
+      p_actor_user_id: actorUserId,
+      p_request_id: requestId,
+      p_status: status,
+      p_notes: notes,
+    })
+    const entries = await this.getAdminAppAdRequests(actorUserId, status)
+    const reviewed = entries.find((entry) => entry.id === requestId)
+    if (!reviewed) throw new ApiError(404, 'advertising_request_not_found', 'Solicitação não encontrada.')
+    return reviewed
   }
 
   async getAdminConfig(): Promise<AdminConfigEntry[]> {

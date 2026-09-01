@@ -1,5 +1,7 @@
 import type {
   AdminAnnouncement,
+  AdminAppAdRequest,
+  AdminAppAdStatus,
   AdminAnnouncementInput,
   AdminAnnouncementUpdate,
   AdminAuditEntry,
@@ -30,6 +32,7 @@ export class FakeAdminRepository implements AdminRepository {
   users: AdminUserDetail[] = []
   games: AdminGame[] = []
   publisherRequests: AdminPublisherRequest[] = []
+  appAdRequests: AdminAppAdRequest[] = []
   config: AdminConfigEntry[] = []
   products: AdminProduct[] = []
   announcements: AdminAnnouncement[] = []
@@ -221,6 +224,32 @@ export class FakeAdminRepository implements AdminRepository {
         : '2026-09-06T12:00:00.000Z'
     }
     this.record(actor, `site.publisher_request.${status}`, 'site_developer_request', requestId, entry as unknown as Json)
+    return entry
+  }
+
+  async getAdminAppAdRequests(
+    _actor: string,
+    status: AdminAppAdStatus | null,
+  ): Promise<AdminAppAdRequest[]> {
+    return this.appAdRequests.filter((entry) => !status || entry.status === status)
+  }
+
+  async reviewAdminAppAdRequest(
+    actor: string,
+    requestId: string,
+    status: Extract<AdminAppAdStatus, 'reviewing' | 'payment_pending' | 'rejected'>,
+    notes: string | null,
+  ): Promise<AdminAppAdRequest> {
+    const entry = this.appAdRequests.find((candidate) => candidate.id === requestId)
+    if (!entry) throw new Error('Advertising request not found')
+    entry.status = status
+    entry.admin_notes = notes
+    entry.reviewed_by = actor
+    entry.reviewed_at = '2026-09-01T12:00:00.000Z'
+    entry.updated_at = entry.reviewed_at
+    entry.starts_at = null
+    entry.ends_at = null
+    this.record(actor, `app.advertising.${status}`, 'app_ad_request', requestId, entry as unknown as Json)
     return entry
   }
 

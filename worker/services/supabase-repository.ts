@@ -9,6 +9,11 @@ import type {
   DeviceResponse,
   FeatureMap,
   PublicGame,
+  PublicAppAd,
+  PublicAppAdPlan,
+  CreateAppAdRequestInput,
+  AppAdRequestReceipt,
+  UserAppAdRequest,
   RegisterDeviceInput,
   ReferralProgramResponse,
   SafeProfile,
@@ -162,9 +167,10 @@ export class SupabaseRepository implements
     return data as AppMetricsResponse
   }
 
-  async heartbeatPresence(userId: string): Promise<void> {
+  async heartbeatPresence(userId: string, activeGameSlugs: readonly string[] = []): Promise<void> {
     const { error } = await this.client.rpc('record_presence', {
       p_user_id: userId,
+      p_active_game_slugs: activeGameSlugs,
     })
 
     if (error) throwDataError(error)
@@ -366,6 +372,104 @@ export class SupabaseRepository implements
     return (data ?? []) as PublicProductRecord[]
   }
 
+  async getAppAdPlans(): Promise<PublicAppAdPlan[]> {
+    const { data, error } = await this.client
+      .from('app_ad_plans')
+      .select('code,name,description,placement,min_days,max_days,price_per_day,currency,popup_enabled')
+      .eq('enabled', true)
+      .order('priority', { ascending: true })
+      .order('code', { ascending: true })
+    if (error) throwDataError(error)
+    return (data ?? []).map((plan) => ({
+      ...plan,
+      price_per_day: Number(plan.price_per_day),
+    })) as PublicAppAdPlan[]
+  }
+
+  async getActiveAppAds(): Promise<PublicAppAd[]> {
+    const now = new Date().toISOString()
+    const { data, error } = await this.client
+      .from('app_ad_requests')
+      .select('id,category,game_slug,advertiser_name,title,description,destination_url,image_url,cta_label,starts_at,ends_at,app_ad_plans!inner(placement,popup_enabled,priority)')
+      .eq('status', 'approved')
+      .lte('starts_at', now)
+      .gt('ends_at', now)
+      .order('starts_at', { ascending: false })
+      .limit(12)
+    if (error) throwDataError(error)
+    return (data ?? []).sort((left, right) => {
+      const leftPlan = Array.isArray(left.app_ad_plans) ? left.app_ad_plans[0] : left.app_ad_plans
+      const rightPlan = Array.isArray(right.app_ad_plans) ? right.app_ad_plans[0] : right.app_ad_plans
+      return Number(rightPlan?.priority ?? 0) - Number(leftPlan?.priority ?? 0)
+    }).map((entry) => {
+      const joined = Array.isArray(entry.app_ad_plans)
+        ? entry.app_ad_plans[0]
+        : entry.app_ad_plans
+      return {
+        id: entry.id,
+        category: entry.category,
+        game_slug: entry.game_slug,
+        advertiser_name: entry.advertiser_name,
+        title: entry.title,
+        description: entry.description,
+        destination_url: entry.destination_url,
+        image_url: entry.image_url,
+        cta_label: entry.cta_label,
+        placement: joined?.placement ?? 'sidebar',
+        popup_enabled: joined?.popup_enabled === true,
+        starts_at: entry.starts_at,
+        ends_at: entry.ends_at,
+      }
+    }) as PublicAppAd[]
+  }
+
+  async createAppAdRequest(
+    userId: string,
+    input: CreateAppAdRequestInput,
+  ): Promise<AppAdRequestReceipt> {
+    const { data, error } = await this.client.rpc('create_app_ad_request', {
+      p_user_id: userId,
+      p_plan_code: input.plan_code,
+      p_category: input.category,
+      p_game_slug: input.game_slug ?? null,
+      p_catalog_game_name: input.catalog_game_name ?? null,
+      p_catalog_launch_url: input.catalog_launch_url ?? null,
+      p_catalog_icon_url: input.catalog_icon_url ?? null,
+      p_advertiser_name: input.advertiser_name,
+      p_title: input.title,
+      p_description: input.description,
+      p_destination_url: input.destination_url,
+      p_image_url: input.image_url ?? null,
+      p_cta_label: input.cta_label,
+      p_requested_days: input.requested_days,
+    })
+    if (error) throwDataError(error)
+    return data as AppAdRequestReceipt
+  }
+
+  async getUserAppAdRequests(userId: string): Promise<UserAppAdRequest[]> {
+    const { data, error } = await this.client.rpc('list_user_app_ad_requests', {
+      p_user_id: userId,
+    })
+    if (error) throwDataError(error)
+    return (data ?? []) as UserAppAdRequest[]
+  }
+
+  async recordAppAdEvent(
+    userId: string,
+    campaignId: string,
+    eventType: 'impression' | 'click' | 'dismiss',
+    placement: 'sidebar' | 'popup',
+  ): Promise<void> {
+    const { error } = await this.client.rpc('record_app_ad_event', {
+      p_user_id: userId,
+      p_campaign_id: campaignId,
+      p_event_type: eventType,
+      p_placement: placement,
+    })
+    if (error) throwDataError(error)
+  }
+
   async getChatChannels(userId: string): Promise<ChatChannelRecord[]> {
     const [{ data, error }, directResult, hiddenResult] = await Promise.all([
       this.client
@@ -486,12 +590,44 @@ export class SupabaseRepository implements
     })
     if (error) throwDataError(error)
     const sentMessage = data as ChatMessageRecord
-    const { error: stateError } = await this.client
+
+    // The message RPC has already committed at this point. Auxiliary direct
+    // chat state must never turn a successful send into an error (and tempt
+    // the client to resend a duplicate). This update is a no-op for global or
+    // game channels and best-effort for direct conversations.
+    await this.client
       .from('chat_direct_user_state')
       .update({ hidden_at: null, updated_at: new Date().toISOString() })
       .eq('channel_id', channelId)
-    if (stateError) throwDataError(stateError)
     return sentMessage
+  }
+
+  async getDirectChatAdminRecipient(
+    senderUserId: string,
+    channelId: string,
+  ): Promise<{ userId: string } | null> {
+    const { data: pair, error: pairError } = await this.client
+      .from('chat_direct_pairs')
+      .select('user_low,user_high')
+      .eq('channel_id', channelId)
+      .maybeSingle()
+    if (pairError) throwDataError(pairError)
+    if (!pair) return null
+    const recipientId = pair.user_low === senderUserId
+      ? pair.user_high
+      : pair.user_high === senderUserId
+        ? pair.user_low
+        : null
+    if (!recipientId) return null
+
+    const { data: admin, error: adminError } = await this.client
+      .from('admin_users')
+      .select('user_id')
+      .eq('user_id', recipientId)
+      .eq('enabled', true)
+      .maybeSingle()
+    if (adminError) throwDataError(adminError)
+    return admin ? { userId: admin.user_id } : null
   }
 
   async reportChatMessage(
@@ -641,6 +777,77 @@ export class SupabaseRepository implements
       fulfilled: boolean
       duplicate: boolean
     }
+  }
+
+  async getAppAdPaymentRequest(
+    userId: string | null,
+    requestId: string,
+  ): Promise<PaymentRecord | null> {
+    const { data, error } = await this.client.rpc('get_app_ad_payment', {
+      p_request_id: requestId,
+      p_user_id: userId,
+    })
+    if (error) throwDataError(error)
+    return data as PaymentRecord | null
+  }
+
+  async attachAppAdPayment(
+    userId: string,
+    requestId: string,
+    snapshot: MercadoPagoSnapshot,
+  ): Promise<PaymentRecord> {
+    const { data, error } = await this.client.rpc('attach_app_ad_payment', {
+      p_user_id: userId,
+      p_request_id: requestId,
+      p_provider_payment_id: snapshot.id,
+      p_status: snapshot.status,
+      p_expires_at: snapshot.date_of_expiration,
+      p_checkout_data: snapshot.checkout as unknown as Json,
+    })
+    if (error) throwDataError(error)
+    return data as PaymentRecord
+  }
+
+  async failPendingAppAdPayment(
+    userId: string,
+    requestId: string,
+    reason: string,
+  ): Promise<void> {
+    const { error } = await this.client.rpc('fail_pending_app_ad_payment', {
+      p_user_id: userId,
+      p_request_id: requestId,
+      p_reason: reason,
+    })
+    if (error) throwDataError(error)
+  }
+
+  async listPendingAppAdPayments(limit: number): Promise<PaymentRecord[]> {
+    const { data, error } = await this.client.rpc('list_pending_app_ad_payments', {
+      p_limit: Math.max(1, Math.min(limit, 100)),
+    })
+    if (error) throwDataError(error)
+    return (data ?? []) as PaymentRecord[]
+  }
+
+  async processAppAdPayment(
+    snapshot: MercadoPagoSnapshot,
+    eventId: string,
+    payloadHash: string,
+    providerData: Json,
+  ): Promise<{ payment_id: string; status: string; fulfilled: boolean; duplicate: boolean }> {
+    const { data, error } = await this.client.rpc('process_app_ad_payment', {
+      p_provider_payment_id: snapshot.id,
+      p_external_reference: snapshot.external_reference,
+      p_provider_status: snapshot.status,
+      p_amount: snapshot.transaction_amount,
+      p_currency: snapshot.currency_id,
+      p_paid_at: snapshot.date_approved,
+      p_event_id: eventId,
+      p_payload_hash: payloadHash,
+      p_provider_data: providerData,
+    })
+    if (error) throwDataError(error)
+    return data as { payment_id: string; status: string; fulfilled: boolean; duplicate: boolean }
   }
 
   async registerDevice(

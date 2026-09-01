@@ -1,5 +1,62 @@
 # Changelog
 
+## 1.5.5
+
+### Desempenho e presença
+
+- Reduz o trabalho de renderização das contas limitadas pelo Eco Mode, evitando consultar a tela dezenas de vezes por segundo quando a conta está configurada para poucos FPS.
+- Espaça a limpeza de memória entre as contas e diminui a frequência do monitor de recursos, reduzindo picos de CPU sem pausar jogos ou conexões.
+- Remove animações contínuas desnecessárias no modo Descanso e reduz efeitos da interface enquanto o Eco Mode está ativo.
+- Restaura a compatibilidade do contador online com os avisos de presença enviados pelas versões 1.2.3 até 1.5.2.
+
+### Escala e estabilidade das sessões
+
+- Bloqueia atalhos do Chromium que podiam ampliar permanentemente o mapa ou o jogo.
+- Adiciona **Restaurar escala do jogo** por conta sem apagar login, cookies, grades, proxies ou extensões.
+- Reaplica a escala definida pelo AltGrid quando cada sessão abre ou recarrega.
+
+### Chat e conta
+
+- Adiciona **Mencionar @nick** nas ações de uma mensagem.
+- Permite remover uma conversa privada somente da própria lista, preservando a conversa da outra pessoa.
+- Reforça as validações de abertura de conversas diretas e os indicadores de mensagens não lidas.
+- Evita exibir falha no envio quando a mensagem já foi salva e apenas uma atualização auxiliar da conversa falhou.
+- Melhora a confirmação de cadastro e o reenvio do e-mail pelo domínio autenticado do AltGrid.
+
+### Plataformas e distribuição
+
+- Mantém a versão 1.5.5 alinhada no aplicativo, site, Windows, Android e macOS.
+- Publica instaladores separados para Macs Apple Silicon e Intel, com instruções para a primeira abertura.
+- Mantém o feed automático do Windows com hash e pacote integral da versão atual.
+
+### Publicidade no aplicativo
+
+- Adiciona uma área lateral para campanhas de jogos idle, produtos e sites, com alternativa institucional quando não houver anunciante.
+- Adiciona formulário de anúncio com escolha de formato, duração, jogo do catálogo e solicitação de inclusão de um novo jogo.
+- Mantém aprovação administrativa manual antes de liberar o PIX e ativar a campanha.
+- Adiciona destaque patrocinado no catálogo lateral, pop-up identificado para contas FREE e registro de impressões e cliques.
+- Adiciona avisos administrativos de novos pedidos e pagamentos pelo aplicativo e por WhatsApp quando configurado.
+
+### Interface e organização
+
+- Reorganiza menus de conta, planos, indicações, grades, ações de sessão e painéis para telas menores e notebooks.
+- Exibe dinamicamente o total de jogos suportados e usuários ativos, sem números fictícios na versão publicada.
+- Inclui uma simulação local das etapas de anúncio, isolada do ambiente de produção e sem cobrança.
+
+## 1.5.2
+
+### Correções anteriores
+
+- Corrige escala persistida das sessões, ações de chat privado e entrega dos e-mails de confirmação.
+
+## 1.5.1
+
+### Atualizador e macOS
+
+- Corrige a consulta do feed de atualizações e as novas tentativas automáticas no Windows.
+- Faz o launcher encerrar as sessões antes de instalar a atualização baixada.
+- Adiciona pacotes nativos para macOS em Apple Silicon e Intel.
+
 ## 1.5.0
 
 ### Conta, chat e administração

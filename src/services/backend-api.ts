@@ -6,6 +6,8 @@ import {
 } from './auth-service'
 import type {
   AppMetricsResponse,
+  AppAdEventResponse,
+  AppAdRequestResponse,
   ChatChannelsResponse,
   ChatDirectChannelResponse,
   ChatDirectDeleteResponse,
@@ -21,9 +23,13 @@ import type {
   PixPaymentResponse,
   PresenceHeartbeatResponse,
   PublicAnnouncementsResponse,
+  PublicAppAdsResponse,
+  PublicAppAdPlansResponse,
+  CreateAppAdRequestInput,
   PublicConfigResponse,
   PublicGamesResponse,
   PublicProductsResponse,
+  UserAppAdRequestsResponse,
   ReferralProgramResponse,
   RegisterDeviceInput,
   ResolvedEntitlements,
@@ -31,6 +37,10 @@ import type {
 } from '../types/backend-api'
 import type {
   AdminActionResponse,
+  AdminAppAdRequestResponse,
+  AdminAppAdRequestsResponse,
+  AdminAppAdReviewInput,
+  AdminAppAdStatus,
   AdminAnnouncementInput,
   AdminAnnouncementResponse,
   AdminAnnouncementsResponse,
@@ -203,16 +213,70 @@ export class BackendApi {
       this.publicRequest<AppMetricsResponse>('/v1/app/metrics'))
   }
 
-  sendPresenceHeartbeat(): Promise<PresenceHeartbeatResponse> {
+  sendPresenceHeartbeat(activeGameSlugs: readonly string[] = []): Promise<PresenceHeartbeatResponse> {
     return this.privateRequest<PresenceHeartbeatResponse>(
       '/v1/presence/heartbeat',
-      { method: 'POST' },
+      {
+        body: JSON.stringify({ active_game_slugs: activeGameSlugs }),
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      },
     )
   }
 
   getAnnouncements(): Promise<PublicAnnouncementsResponse> {
     return this.deduplicate('public:/v1/app/announcements', () =>
       this.publicRequest<PublicAnnouncementsResponse>('/v1/app/announcements'))
+  }
+
+  getAppAds(): Promise<PublicAppAdsResponse> {
+    return this.deduplicate('public:/v1/app/ads', () =>
+      this.publicRequest<PublicAppAdsResponse>('/v1/app/ads'))
+  }
+
+  getAppAdPlans(): Promise<PublicAppAdPlansResponse> {
+    return this.deduplicate('public:/v1/app/ads/plans', () =>
+      this.publicRequest<PublicAppAdPlansResponse>('/v1/app/ads/plans'))
+  }
+
+  createAppAdRequest(input: CreateAppAdRequestInput): Promise<AppAdRequestResponse> {
+    return this.privateRequest<AppAdRequestResponse>('/v1/app/ads/requests', {
+      body: JSON.stringify(input),
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    })
+  }
+
+  getMyAppAdRequests(): Promise<UserAppAdRequestsResponse> {
+    return this.privateRead<UserAppAdRequestsResponse>('/v1/app/ads/requests')
+  }
+
+  createAppAdPixPayment(requestId: string): Promise<PixPaymentResponse> {
+    return this.privateRequest<PixPaymentResponse>(
+      `/v1/app/ads/requests/${encodeURIComponent(requestId)}/pix`,
+      { method: 'POST' },
+    )
+  }
+
+  getAppAdPayment(requestId: string): Promise<PixPaymentResponse> {
+    return this.privateRead<PixPaymentResponse>(
+      `/v1/app/ads/requests/${encodeURIComponent(requestId)}/pix`,
+    )
+  }
+
+  recordAppAdEvent(
+    campaignId: string,
+    eventType: 'impression' | 'click' | 'dismiss',
+    placement: 'sidebar' | 'popup',
+  ): Promise<AppAdEventResponse> {
+    return this.privateRequest<AppAdEventResponse>(
+      `/v1/app/ads/${encodeURIComponent(campaignId)}/events`,
+      {
+        body: JSON.stringify({ event_type: eventType, placement }),
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      },
+    )
   }
 
   getProducts(): Promise<PublicProductsResponse> {
@@ -447,6 +511,22 @@ export class BackendApi {
   getAdminPublisherRequests(status?: string | null): Promise<AdminPublisherRequestsResponse> {
     const query = status ? `?status=${encodeURIComponent(status)}` : ''
     return this.privateRead<AdminPublisherRequestsResponse>(`/v1/admin/publisher-requests${query}`)
+  }
+
+  getAdminAppAdRequests(status?: AdminAppAdStatus | null): Promise<AdminAppAdRequestsResponse> {
+    const query = status ? `?status=${encodeURIComponent(status)}` : ''
+    return this.privateRead<AdminAppAdRequestsResponse>(`/v1/admin/app-ads${query}`)
+  }
+
+  reviewAdminAppAdRequest(
+    requestId: string,
+    input: AdminAppAdReviewInput,
+  ): Promise<AdminAppAdRequestResponse> {
+    return this.adminJsonMutation<AdminAppAdRequestResponse>(
+      `/v1/admin/app-ads/${encodeURIComponent(requestId)}/review`,
+      'POST',
+      input,
+    )
   }
 
   reviewAdminPublisherRequest(

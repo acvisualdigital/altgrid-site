@@ -6,6 +6,8 @@ import { BackendApi, BackendApiError } from './services/backend-api'
 import { validateSafeGameUrl } from './services/game-preset-service'
 import type {
   AdminAnnouncement,
+  AdminAppAdRequest,
+  AdminAppAdStatus,
   AdminAnnouncementInput,
   AdminAnnouncementType,
   AdminAuditEntry,
@@ -27,6 +29,7 @@ import type {
 import type { Json, PlanCode } from './types/database'
 
 type AdminTab =
+  | 'app-ads'
   | 'announcements'
   | 'audit'
   | 'chat'
@@ -44,6 +47,11 @@ const ADMIN_TAB_META: Record<AdminTab, {
   icon: string
   label: string
 }> = {
+  'app-ads': {
+    description: 'Orçamentos, criativos, duração e campanhas exibidas dentro do aplicativo.',
+    icon: 'AD',
+    label: 'Anúncios no app',
+  },
   users: {
     description: 'Contas, planos, dispositivos e histórico individual.',
     icon: '◎',
@@ -106,6 +114,7 @@ type AdminBackend = Pick<
   | 'deleteAdminChatMessage'
   | 'clearAdminChat'
   | 'getAdminAnnouncements'
+  | 'getAdminAppAdRequests'
   | 'getAdminAudit'
   | 'getAdminChatReports'
   | 'getAdminConfig'
@@ -122,6 +131,7 @@ type AdminBackend = Pick<
   | 'approveAdminReferral'
   | 'rejectAdminReferral'
   | 'reviewAdminPublisherRequest'
+  | 'reviewAdminAppAdRequest'
   | 'reviewAdminChatReport'
   | 'revokeAdminDevice'
   | 'revokeAdminLicense'
@@ -238,6 +248,8 @@ export class AdminApp {
   private paymentTotal = 0
   private publisherRequests: AdminPublisherRequest[] = []
   private publisherStatus: AdminPublisherRequestStatus | null = null
+  private appAdRequests: AdminAppAdRequest[] = []
+  private appAdStatus: AdminAppAdStatus | null = null
   private referrals: AdminReferralLog[] = []
   private referralStats: AdminReferralStats = {
     total: 0, pending: 0, qualified: 0, rewarded: 0, rejected: 0,
@@ -362,6 +374,8 @@ export class AdminApp {
     this.paymentTotal = 0
     this.publisherRequests = []
     this.publisherStatus = null
+    this.appAdRequests = []
+    this.appAdStatus = null
     this.referrals = []
     this.referralStats = { total: 0, pending: 0, qualified: 0, rewarded: 0, rejected: 0 }
     this.referralStatus = null
@@ -381,7 +395,7 @@ export class AdminApp {
   }
 
   private async loadOverview(expectedRevision = this.revision): Promise<void> {
-    const [games, payments, referrals, announcements, chat, publishers] = await Promise.allSettled([
+    const [games, payments, referrals, announcements, chat, publishers, appAds] = await Promise.allSettled([
       this.backend.getAdminGames(),
       this.backend.getAdminPaymentLogs(1, 50),
       this.backend.getAdminReferrals(null, '', 1, 50),
@@ -390,6 +404,7 @@ export class AdminApp {
       typeof this.backend.getAdminPublisherRequests === 'function'
         ? this.backend.getAdminPublisherRequests(null)
         : Promise.resolve({ requests: [] }),
+      this.backend.getAdminAppAdRequests(null),
     ])
 
     if (expectedRevision !== this.revision) {
@@ -411,6 +426,7 @@ export class AdminApp {
     }
     if (chat.status === 'fulfilled') this.chatReports = chat.value.reports
     if (publishers.status === 'fulfilled') this.publisherRequests = publishers.value.requests
+    if (appAds.status === 'fulfilled') this.appAdRequests = appAds.value.requests
 
     this.overviewReady = payments.status === 'fulfilled'
       && referrals.status === 'fulfilled'
@@ -447,6 +463,9 @@ export class AdminApp {
       } else if (tab === 'publishers') {
         const response = await this.backend.getAdminPublisherRequests(this.publisherStatus)
         if (expectedRevision === this.revision) this.publisherRequests = response.requests
+      } else if (tab === 'app-ads') {
+        const response = await this.backend.getAdminAppAdRequests(this.appAdStatus)
+        if (expectedRevision === this.revision) this.appAdRequests = response.requests
       } else if (tab === 'config') {
         const response = await this.backend.getAdminConfig()
         if (expectedRevision === this.revision) {
@@ -572,6 +591,7 @@ export class AdminApp {
                   ${this.renderTab('users')}
                   ${this.renderTab('games')}
                   ${this.renderTab('publishers')}
+                  ${this.renderTab('app-ads')}
                   ${this.renderTab('products')}
                   ${this.renderTab('payments')}
                   ${this.renderTab('referrals')}
@@ -671,6 +691,8 @@ export class AdminApp {
         ? this.chatReports.filter((report) => report.status === 'pending').length
         : tab === 'publishers'
           ? this.publisherRequests.filter((entry) => ['pending', 'reviewing'].includes(entry.status)).length
+        : tab === 'app-ads'
+          ? this.appAdRequests.filter((entry) => ['pending', 'reviewing'].includes(entry.status)).length
         : 0
     return `
       <button
@@ -719,6 +741,9 @@ export class AdminApp {
     }
     if (this.activeTab === 'publishers') {
       return this.renderPublisherRequests()
+    }
+    if (this.activeTab === 'app-ads') {
+      return this.renderAppAdRequests()
     }
     if (this.activeTab === 'config') {
       return this.renderConfig()
@@ -1030,6 +1055,63 @@ export class AdminApp {
             </div>
           </article>
         `).join('') : '<p class="admin-empty">Nenhuma solicitação neste filtro.</p>'}
+      </div>
+    `
+  }
+
+  private renderAppAdRequests(): string {
+    const statusLabels: Record<AdminAppAdStatus, string> = {
+      pending: 'Aguardando', reviewing: 'Em análise', payment_pending: 'Aguardando PIX', approved: 'Pago · no ar',
+      rejected: 'Recusado', cancelled: 'Cancelado',
+    }
+    const categoryLabels = { game: 'Jogo', product: 'Produto', site: 'Site' }
+    return `
+      <form class="admin-search" id="admin-app-ad-filter">
+        <label>Status
+          <select name="status">
+            <option value="" ${this.appAdStatus === null ? 'selected' : ''}>Todos</option>
+            ${(Object.keys(statusLabels) as AdminAppAdStatus[]).map((status) => `<option value="${status}" ${this.appAdStatus === status ? 'selected' : ''}>${statusLabels[status]}</option>`).join('')}
+          </select>
+        </label>
+        <button class="button button--secondary button--compact" type="submit">Filtrar</button>
+      </form>
+      <div class="admin-ad-list">
+        ${this.appAdRequests.length ? this.appAdRequests.map((entry) => `
+          <article class="admin-editor admin-ad-card" data-app-ad-card="${escapeHtml(entry.id)}">
+            <header class="admin-ad-card__header">
+              ${entry.image_url ? `<img src="${escapeHtml(entry.image_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '<span aria-hidden="true">AD</span>'}
+              <div>
+                <small>${escapeHtml(categoryLabels[entry.category])} · ${escapeHtml(entry.plan_name)}</small>
+                <h2>${escapeHtml(entry.title)}</h2>
+                <p>${escapeHtml(entry.advertiser_name)} · ${escapeHtml(entry.user_email ?? entry.display_name ?? entry.user_id)}</p>
+              </div>
+              <span class="admin-request-status is-${escapeHtml(entry.status)}">${escapeHtml(statusLabels[entry.status])}</span>
+            </header>
+            <p class="admin-ad-card__description">${escapeHtml(entry.description)}</p>
+            ${entry.catalog_game_name ? `<div class="admin-note admin-note--warning"><strong>Inclusão no catálogo solicitada</strong><span>${escapeHtml(entry.catalog_game_name)} deve ser verificado e cadastrado antes da campanha ganhar destaque.</span></div>` : ''}
+            <dl class="admin-ad-facts">
+              <div><dt>Duração</dt><dd>${entry.requested_days} dias</dd></div>
+              <div><dt>Orçamento</dt><dd>${escapeHtml(formatMoney(entry.quoted_amount, entry.currency))}</dd></div>
+              <div><dt>Botão</dt><dd>${escapeHtml(entry.cta_label)}</dd></div>
+              <div><dt>Enviado</dt><dd>${escapeHtml(formatDate(entry.created_at))}</dd></div>
+            </dl>
+            <div class="admin-ad-links">
+              <a href="${escapeHtml(entry.destination_url)}" target="_blank" rel="noopener noreferrer">Abrir destino ↗</a>
+              ${entry.image_url ? `<a href="${escapeHtml(entry.image_url)}" target="_blank" rel="noopener noreferrer">Abrir imagem ↗</a>` : ''}
+              ${entry.catalog_launch_url ? `<a href="${escapeHtml(entry.catalog_launch_url)}" target="_blank" rel="noopener noreferrer">Verificar jogo ↗</a>` : ''}
+              ${entry.catalog_icon_url ? `<a href="${escapeHtml(entry.catalog_icon_url)}" target="_blank" rel="noopener noreferrer">Verificar logo ↗</a>` : ''}
+              ${entry.starts_at ? `<span>No ar: ${escapeHtml(formatDate(entry.starts_at))} até ${escapeHtml(formatDate(entry.ends_at ?? ''))}</span>` : ''}
+            </div>
+            <label class="admin-form-field--wide">Observações administrativas
+              <textarea rows="3" maxlength="2000" data-app-ad-notes placeholder="Ajuste solicitado, validação de pagamento ou observação interna…">${escapeHtml(entry.admin_notes ?? '')}</textarea>
+            </label>
+            <div class="admin-row-actions admin-request-actions">
+              <button class="text-button" data-review-app-ad="${escapeHtml(entry.id)}" data-status="reviewing" type="button">Marcar em análise</button>
+              <button class="text-button text-button--strong" data-review-app-ad="${escapeHtml(entry.id)}" data-status="payment_pending" type="button">Aprovar orçamento e liberar PIX</button>
+              <button class="text-button admin-danger" data-review-app-ad="${escapeHtml(entry.id)}" data-status="rejected" type="button">Recusar</button>
+            </div>
+          </article>
+        `).join('') : '<p class="admin-empty">Nenhuma solicitação de anúncio neste filtro.</p>'}
       </div>
     `
   }
@@ -1647,6 +1729,31 @@ export class AdminApp {
       })
       this.notice = status === 'approved' ? 'Solicitação aprovada.' : status === 'rejected' ? 'Solicitação recusada.' : 'Solicitação marcada em análise.'
       await this.loadTab('publishers')
+    })
+
+    this.root.querySelector<HTMLFormElement>('#admin-app-ad-filter')
+      ?.addEventListener('submit', (event) => {
+        event.preventDefault()
+        const value = String(new FormData(event.currentTarget as HTMLFormElement).get('status') ?? '')
+        this.appAdStatus = value ? value as AdminAppAdStatus : null
+        void this.loadTab('app-ads')
+      })
+    this.bindMutationButtons('[data-review-app-ad]', async (button) => {
+      const status = button.dataset.status
+      if (!status || !['reviewing', 'payment_pending', 'rejected'].includes(status)) return
+      if (status === 'payment_pending' && !this.confirmAction('Confirmar este plano e liberar o PIX para o anunciante?')) return
+      const card = button.closest<HTMLElement>('[data-app-ad-card]')
+      const notes = card?.querySelector<HTMLTextAreaElement>('[data-app-ad-notes]')?.value.trim() || null
+      await this.backend.reviewAdminAppAdRequest(button.dataset.reviewAppAd!, {
+        status: status as 'reviewing' | 'payment_pending' | 'rejected',
+        notes,
+      })
+      this.notice = status === 'payment_pending'
+        ? 'Orçamento aprovado. O PIX foi liberado para o anunciante.'
+        : status === 'rejected'
+          ? 'Anúncio recusado.'
+          : 'Anúncio marcado em análise.'
+      await this.loadTab('app-ads')
     })
 
     this.root.querySelector<HTMLFormElement>('#admin-config-form')

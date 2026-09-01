@@ -6,9 +6,11 @@ import { EntitlementService } from './services/entitlement-service'
 import { FakeRepository } from './test/fake-repository'
 import type {
   AuthenticationService,
+  AdminMobileNotifier,
   ChatRepository,
   LicenseSnapshotService,
   PaymentService,
+  PaymentRecord,
   PlanRecord,
   PlatformRepository,
   RateLimitBinding,
@@ -61,6 +63,7 @@ describe('platform Worker endpoints', () => {
   let platformRepository: PlatformRepository
   let chatRepository: ChatRepository
   let paymentService: PaymentService
+  let adminMobileNotifier: AdminMobileNotifier
   let licenseSnapshotService: LicenseSnapshotService
   let chatLimit: RateLimitBinding
   let paymentLimit: RateLimitBinding
@@ -71,6 +74,18 @@ describe('platform Worker endpoints', () => {
     repository.plans = [freePlan]
     authentication = { authenticate: vi.fn(async () => user) }
     platformRepository = {
+      createAppAdRequest: vi.fn(async (_userId, input) => ({
+        id: '70000000-0000-4000-8000-000000000001',
+        status: 'pending' as const,
+        plan_code: input.plan_code,
+        requested_days: input.requested_days,
+        quoted_amount: input.requested_days * 3,
+        currency: 'BRL',
+        created_at: '2026-09-01T12:00:00.000Z',
+      })),
+      getActiveAppAds: vi.fn(async () => []),
+      getUserAppAdRequests: vi.fn(async () => []),
+      getAppAdPlans: vi.fn(async () => []),
       getAppConfig: vi.fn(async () => ({
         maintenance: false,
         minimum_version: '2.0.0',
@@ -91,6 +106,7 @@ describe('platform Worker endpoints', () => {
         currency: 'BRL',
         lifetime: true,
       }]),
+      recordAppAdEvent: vi.fn(async () => undefined),
     }
     chatRepository = {
       deleteDirectChat: vi.fn(async () => undefined),
@@ -106,6 +122,7 @@ describe('platform Worker endpoints', () => {
         reason: null,
       })),
       getChatMessages: vi.fn(async () => []),
+      getDirectChatAdminRecipient: vi.fn(async () => null),
       sendChatMessage: vi.fn(async (_userId, channelId, message) => ({
         id: MESSAGE_ID,
         channel_id: channelId,
@@ -128,20 +145,41 @@ describe('platform Worker endpoints', () => {
       })),
     }
     paymentService = {
+      createAppAdPixPayment: vi.fn(async () => ({ payment: { id: PAYMENT_ID, status: 'pending' } })),
       createPixPayment: vi.fn(async () => ({
-        payment: { id: PAYMENT_ID, status: 'pending' },
+        payment: {
+          id: PAYMENT_ID,
+          user_id: USER_ID,
+          provider: 'mercadopago',
+          provider_payment_id: '12345',
+          provider_external_reference: PAYMENT_ID,
+          product_code: 'PRO_LIFETIME',
+          amount: 129.9,
+          currency: 'BRL',
+          status: 'pending',
+          raw_status: 'pending',
+          fulfilled_at: null,
+          paid_at: null,
+          provider_expires_at: null,
+          failure_reason: null,
+          metadata: {},
+          created_at: '2026-09-01T12:00:00.000Z',
+          updated_at: '2026-09-01T12:00:00.000Z',
+        },
       })),
       getPayment: vi.fn(async () => ({
         payment: { id: PAYMENT_ID, status: 'approved' },
       })),
+      getAppAdPayment: vi.fn(async () => ({ payment: { id: PAYMENT_ID, status: 'approved' } })),
       reconcilePayment: vi.fn(async () => ({
         payment: { id: PAYMENT_ID, status: 'approved' },
       })),
       reconcilePendingPayments: vi.fn(async () => ({
         checked: 0, failed: 0, updated: 0,
       })),
-      handleWebhook: vi.fn(async () => undefined),
+      handleWebhook: vi.fn(async () => null),
     }
+    adminMobileNotifier = { notify: vi.fn(async () => undefined) }
     licenseSnapshotService = {
       createSnapshot: vi.fn(async () => ({
         snapshot: {
@@ -168,6 +206,7 @@ describe('platform Worker endpoints', () => {
       deviceRateLimiter: alwaysAllowed,
       chatRateLimiter: chatLimit,
       paymentRateLimiter: paymentLimit,
+      adminMobileNotifier,
     })
   })
 
@@ -278,7 +317,7 @@ describe('platform Worker endpoints', () => {
     const response = await api.fetch(request(
       `/v1/chat/channels/${CHANNEL_ID}/messages`,
       'POST',
-      { message: ' Olá, mundo! ' },
+      { message: ' Olá,\n  mundo! ' },
     ))
 
     expect(response.status).toBe(201)
@@ -295,6 +334,27 @@ describe('platform Worker endpoints', () => {
       { message: 'Teste', user_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff' },
     ))
     expect(impersonation.status).toBe(400)
+  })
+
+  it('notifies the administrator when a direct chat message is addressed to an admin account', async () => {
+    vi.mocked(chatRepository.getDirectChatAdminRecipient!).mockResolvedValueOnce({
+      userId: RECIPIENT_ID,
+    })
+    const response = await api.fetch(request(
+      `/v1/chat/channels/${CHANNEL_ID}/messages`,
+      'POST',
+      { message: 'Preciso de ajuda com minha conta.' },
+    ))
+    expect(response.status).toBe(201)
+    expect(adminMobileNotifier.notify).toHaveBeenCalledWith(expect.objectContaining({
+      eventKey: `chat:${MESSAGE_ID}:admin-direct`,
+      title: 'Nova mensagem direta',
+      type: 'chat_direct',
+      details: expect.arrayContaining([
+        { label: 'Mensagem', value: 'Preciso de ajuda com minha conta.' },
+      ]),
+    }))
+
   })
 
   it('lists only the authenticated user chat channels', async () => {
@@ -341,6 +401,11 @@ describe('platform Worker endpoints', () => {
       'checkout-001',
     )
     expect(paymentLimit.limit).toHaveBeenCalledWith({ key: `${USER_ID}:payment-create` })
+    expect(adminMobileNotifier.notify).toHaveBeenCalledWith(expect.objectContaining({
+      eventKey: `payment:${PAYMENT_ID}:attempt`,
+      title: 'Nova tentativa de compra',
+      type: 'purchase_attempt',
+    }))
 
     const status = await api.fetch(request(`/v1/payments/${PAYMENT_ID}`))
     expect(status.status).toBe(200)
@@ -354,15 +419,179 @@ describe('platform Worker endpoints', () => {
   })
 
   it('accepts the provider webhook without user auth and exposes signed snapshots only with auth', async () => {
+    vi.mocked(paymentService.handleWebhook).mockResolvedValueOnce({
+      id: PAYMENT_ID,
+      user_id: USER_ID,
+      provider: 'mercadopago',
+      provider_payment_id: '12345',
+      provider_external_reference: PAYMENT_ID,
+      product_code: 'PRO_LIFETIME',
+      amount: 129.9,
+      currency: 'BRL',
+      status: 'approved',
+      raw_status: 'approved',
+      fulfilled_at: '2026-09-01T12:00:00.000Z',
+      paid_at: '2026-09-01T12:00:00.000Z',
+      provider_expires_at: null,
+      failure_reason: null,
+      metadata: {},
+      created_at: '2026-09-01T11:55:00.000Z',
+      updated_at: '2026-09-01T12:00:00.000Z',
+    } satisfies PaymentRecord)
     const webhook = await api.fetch(new Request(
       'https://api.example.com/v1/webhooks/mercadopago?data.id=123',
       { method: 'POST', body: '{}' },
     ))
     expect(webhook.status).toBe(200)
     expect(paymentService.handleWebhook).toHaveBeenCalledOnce()
+    expect(adminMobileNotifier.notify).toHaveBeenCalledWith(expect.objectContaining({
+      eventKey: `payment:${PAYMENT_ID}:approved`,
+      title: 'Compra aprovada',
+      type: 'purchase_approved',
+    }))
 
     const snapshot = await api.fetch(request('/v1/license/snapshot'))
     expect(snapshot.status).toBe(200)
     expect(licenseSnapshotService.createSnapshot).toHaveBeenCalledWith(USER_ID)
+  })
+
+  it('serves advertising plans publicly and validates authenticated campaign requests', async () => {
+    vi.mocked(platformRepository.getAppAdPlans).mockResolvedValueOnce([{
+      code: 'sidebar',
+      name: 'Vitrine lateral',
+      description: 'Cartão patrocinado na lateral do AltGrid.',
+      placement: 'sidebar',
+      min_days: 7,
+      max_days: 90,
+      price_per_day: 3,
+      currency: 'BRL',
+      popup_enabled: false,
+    }])
+
+    const plans = await api.fetch(new Request('https://api.example.com/v1/app/ads/plans'))
+    expect(plans.status).toBe(200)
+    await expect(plans.json()).resolves.toMatchObject({
+      plans: [{ code: 'sidebar', price_per_day: 3 }],
+    })
+
+    const input = {
+      plan_code: 'sidebar',
+      category: 'game',
+      game_slug: 'huntera',
+      advertiser_name: 'Estúdio Idle',
+      title: 'Conheça nosso jogo',
+      description: 'Uma aventura idle criada para jogar todos os dias.',
+      destination_url: 'https://idle.example.com',
+      image_url: 'https://idle.example.com/banner.png',
+      cta_label: 'Jogar agora',
+      requested_days: 7,
+    }
+    const created = await api.fetch(request('/v1/app/ads/requests', 'POST', input))
+    expect(created.status).toBe(201)
+    expect(platformRepository.createAppAdRequest).toHaveBeenCalledWith(USER_ID, {
+      ...input,
+      destination_url: 'https://idle.example.com/',
+    })
+    expect(paymentLimit.limit).toHaveBeenCalledWith({ key: `${USER_ID}:advertising-request` })
+    expect(adminMobileNotifier.notify).toHaveBeenCalledWith(expect.objectContaining({
+      eventKey: 'app-ad:70000000-0000-4000-8000-000000000001:created',
+      title: 'Novo pedido de anúncio',
+      type: 'ad_request',
+    }))
+
+    const catalogRequest = await api.fetch(request('/v1/app/ads/requests', 'POST', {
+      ...input,
+      game_slug: null,
+      catalog_game_name: 'Novo Idle',
+      catalog_launch_url: 'https://novo-idle.example.com/play',
+      catalog_icon_url: 'https://novo-idle.example.com/icon.png',
+    }))
+    expect(catalogRequest.status).toBe(201)
+    expect(platformRepository.createAppAdRequest).toHaveBeenLastCalledWith(USER_ID, expect.objectContaining({
+      catalog_game_name: 'Novo Idle',
+      catalog_launch_url: 'https://novo-idle.example.com/play',
+      catalog_icon_url: 'https://novo-idle.example.com/icon.png',
+    }))
+
+    const unsafe = await api.fetch(request('/v1/app/ads/requests', 'POST', {
+      ...input,
+      destination_url: 'http://inseguro.example.com',
+    }))
+    expect(unsafe.status).toBe(400)
+
+    vi.mocked(platformRepository.getUserAppAdRequests).mockResolvedValueOnce([{
+      id: '70000000-0000-4000-8000-000000000001',
+      plan_code: 'sidebar',
+      advertiser_name: 'Estúdio Idle',
+      title: 'Conheça nosso jogo',
+      requested_days: 7,
+      quoted_amount: 21,
+      currency: 'BRL',
+      status: 'payment_pending',
+      admin_notes: 'Campanha aprovada para pagamento.',
+      starts_at: null,
+      ends_at: null,
+      created_at: '2026-09-01T12:00:00.000Z',
+      payment: null,
+    }])
+    const mine = await api.fetch(request('/v1/app/ads/requests'))
+    expect(mine.status).toBe(200)
+    await expect(mine.json()).resolves.toMatchObject({
+      requests: [{ status: 'payment_pending', quoted_amount: 21 }],
+    })
+
+    vi.mocked(paymentService.createAppAdPixPayment).mockResolvedValueOnce({
+      payment: {
+        id: PAYMENT_ID,
+        amount: 21,
+        currency: 'BRL',
+        status: 'pending',
+        created_at: '2026-09-01T12:15:00.000Z',
+      },
+    })
+    const pix = await api.fetch(request(
+      '/v1/app/ads/requests/70000000-0000-4000-8000-000000000001/pix',
+      'POST',
+    ))
+    expect(pix.status).toBe(201)
+    expect(paymentService.createAppAdPixPayment).toHaveBeenCalledWith(
+      user,
+      '70000000-0000-4000-8000-000000000001',
+    )
+    expect(adminMobileNotifier.notify).toHaveBeenCalledWith(expect.objectContaining({
+      eventKey: 'app-ad:70000000-0000-4000-8000-000000000001:pix-created',
+      title: 'PIX de anúncio gerado',
+      type: 'purchase_attempt',
+    }))
+
+    const paymentStatus = await api.fetch(request(
+      '/v1/app/ads/requests/70000000-0000-4000-8000-000000000001/pix',
+    ))
+    expect(paymentStatus.status).toBe(200)
+    expect(paymentService.getAppAdPayment).toHaveBeenCalledWith(
+      USER_ID,
+      '70000000-0000-4000-8000-000000000001',
+    )
+  })
+
+  it('records only validated advertising event payloads for authenticated users', async () => {
+    const campaignId = '70000000-0000-4000-8000-000000000001'
+    const response = await api.fetch(request(`/v1/app/ads/${campaignId}/events`, 'POST', {
+      event_type: 'click',
+      placement: 'sidebar',
+    }))
+    expect(response.status).toBe(200)
+    expect(platformRepository.recordAppAdEvent).toHaveBeenCalledWith(
+      USER_ID,
+      campaignId,
+      'click',
+      'sidebar',
+    )
+
+    const invalid = await api.fetch(request(`/v1/app/ads/${campaignId}/events`, 'POST', {
+      event_type: 'purchase',
+      placement: 'sidebar',
+    }))
+    expect(invalid.status).toBe(400)
   })
 })

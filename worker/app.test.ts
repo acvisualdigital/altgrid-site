@@ -122,14 +122,52 @@ describe('Cloudflare Worker API', () => {
       'https://api.example.com/v1/presence/heartbeat',
       {
         method: 'POST',
-        headers: { Authorization: `Bearer ${ACCESS_TOKEN}` },
+        headers: {
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ active_game_slugs: ['huntera', 'huntera', 'pokerealm'] }),
       },
     ))
 
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ ok: true })
     expect(repository.lastPresenceUserId).toBe(USER_ID)
+    expect(repository.lastPresenceGameSlugs).toEqual(['huntera', 'pokerealm'])
     expect(userRateLimit).toHaveBeenCalledWith({ key: USER_ID })
+  })
+
+  it('keeps the bodyless heartbeat used by installed AltGrid clients compatible', async () => {
+    const response = await api.fetch(new Request(
+      'https://api.example.com/v1/presence/heartbeat',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
+        },
+      },
+    ))
+
+    expect(response.status).toBe(200)
+    expect(repository.lastPresenceUserId).toBe(USER_ID)
+    expect(repository.lastPresenceGameSlugs).toEqual([])
+  })
+
+  it('accepts the zero-length heartbeat shape received at the Cloudflare edge', async () => {
+    const response = await api.fetch(new Request(
+      'https://api.example.com/v1/presence/heartbeat',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
+          'Content-Length': '0',
+        },
+      },
+    ))
+
+    expect(response.status).toBe(200)
+    expect(repository.lastPresenceUserId).toBe(USER_ID)
+    expect(repository.lastPresenceGameSlugs).toEqual([])
   })
 
   it('POST /v1/presence/heartbeat requires authentication', async () => {

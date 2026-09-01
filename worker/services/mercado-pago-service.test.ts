@@ -124,14 +124,42 @@ class FakePaymentRepository implements PaymentRepository {
       duplicate,
     }
   }
+
+  async getAppAdPaymentRequest(
+    _userId: string | null,
+    _requestId: string,
+  ): Promise<PaymentRecord | null> { return null }
+  async attachAppAdPayment(
+    _userId: string,
+    _requestId: string,
+    _snapshot: MercadoPagoSnapshot,
+  ): Promise<PaymentRecord> { return this.current }
+  async failPendingAppAdPayment(
+    _userId: string,
+    _requestId: string,
+    _reason: string,
+  ): Promise<void> { this.failed = true }
+  async listPendingAppAdPayments(_limit: number): Promise<PaymentRecord[]> { return [] }
+  async processAppAdPayment(
+    snapshot: MercadoPagoSnapshot,
+    eventId: string,
+    payloadHash: string,
+    providerData: Json,
+  ) {
+    return this.processMercadoPagoPayment(snapshot, eventId, payloadHash, providerData)
+  }
 }
 
-function providerPayment(status = 'pending') {
+function providerPayment(
+  status = 'pending',
+  externalReference = PAYMENT_ID,
+  amount = 129.9,
+) {
   return {
     id: '987654321',
-    external_reference: PAYMENT_ID,
+    external_reference: externalReference,
     status,
-    transaction_amount: 129.9,
+    transaction_amount: amount,
     currency_id: 'BRL',
     date_approved: status === 'approved' ? '2026-08-25T12:01:00.000Z' : null,
     date_of_expiration: '2026-08-25T12:30:00.000Z',
@@ -227,6 +255,105 @@ describe('MercadoPagoPaymentService', () => {
     await expect(service.createPixPayment(user, 'CUSTOM_PRICE', 'request-1'))
       .rejects.toMatchObject({ status: 404, code: 'product_unavailable' })
     expect(fetchImplementation).not.toHaveBeenCalled()
+  })
+
+  it('blocks advertising PIX until the admin releases the request for payment', async () => {
+    const requestId = '70000000-0000-4000-8000-000000000001'
+    const appPayment = payment({
+      id: '71000000-0000-4000-8000-000000000001',
+      provider_external_reference: requestId,
+      product_code: 'APP_ADVERTISING',
+      amount: 21,
+      status: 'reviewing',
+      metadata: { request_id: requestId, title: 'Conheça nosso jogo' },
+    })
+    repository.getAppAdPaymentRequest = vi.fn(async () => appPayment)
+    const fetchImplementation = vi.fn() as unknown as typeof fetch
+    const service = new MercadoPagoPaymentService(repository, {
+      accessToken: 'TEST-ACCESS-TOKEN',
+      fetchImplementation,
+    })
+
+    await expect(service.createAppAdPixPayment(user, requestId)).rejects.toMatchObject({
+      status: 409,
+      code: 'advertising_payment_unavailable',
+      message: 'O pedido ainda não foi liberado para pagamento.',
+    })
+    expect(fetchImplementation).not.toHaveBeenCalled()
+  })
+
+  it('creates and reconciles an advertising PIX using the approved request reference', async () => {
+    const requestId = '70000000-0000-4000-8000-000000000001'
+    let appPayment = payment({
+      id: '71000000-0000-4000-8000-000000000001',
+      provider_external_reference: requestId,
+      product_code: 'APP_ADVERTISING',
+      amount: 21,
+      status: 'payment_pending',
+      metadata: { request_id: requestId, title: 'Conheça nosso jogo' },
+    })
+    repository.getAppAdPaymentRequest = vi.fn(async () => appPayment)
+    repository.attachAppAdPayment = vi.fn(async (_userId, _requestId, snapshot) => {
+      appPayment = {
+        ...appPayment,
+        provider_payment_id: snapshot.id,
+        status: snapshot.status,
+        raw_status: snapshot.status,
+        metadata: {
+          request_id: requestId,
+          title: 'Conheça nosso jogo',
+          checkout: snapshot.checkout as unknown as Json,
+        },
+      }
+      return appPayment
+    })
+    repository.processAppAdPayment = vi.fn(async (snapshot) => {
+      appPayment = {
+        ...appPayment,
+        status: snapshot.status,
+        raw_status: snapshot.status,
+        paid_at: snapshot.date_approved,
+        fulfilled_at: snapshot.status === 'approved'
+          ? '2026-09-01T12:20:00.000Z'
+          : null,
+      }
+      return {
+        payment_id: requestId,
+        status: appPayment.status,
+        fulfilled: appPayment.fulfilled_at !== null,
+        duplicate: false,
+      }
+    })
+    const fetchImplementation = vi.fn()
+      .mockResolvedValueOnce(Response.json(providerPayment('pending', requestId, 21)))
+      .mockResolvedValueOnce(Response.json(providerPayment('approved', requestId, 21))) as unknown as typeof fetch
+    const service = new MercadoPagoPaymentService(repository, {
+      accessToken: 'TEST-ACCESS-TOKEN',
+      webhookUrl: 'https://api.example.com/v1/webhooks/mercadopago',
+      fetchImplementation,
+    })
+
+    await expect(service.createAppAdPixPayment(user, requestId)).resolves.toMatchObject({
+      payment: { amount: 21, status: 'pending', qr_code: '000201010212...' },
+    })
+    const creationCall = vi.mocked(fetchImplementation).mock.calls[0]
+    expect(JSON.parse(String(creationCall[1]?.body))).toMatchObject({
+      external_reference: requestId,
+      transaction_amount: 21,
+    })
+    expect(creationCall[1]?.headers).toMatchObject({
+      'X-Idempotency-Key': `app-ad-${requestId}`,
+    })
+
+    await expect(service.getAppAdPayment(USER_ID, requestId)).resolves.toMatchObject({
+      payment: { status: 'approved' },
+    })
+    expect(repository.processAppAdPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ external_reference: requestId, status: 'approved' }),
+      expect.stringContaining('status_refresh:'),
+      expect.any(String),
+      expect.objectContaining({ source: 'status_refresh' }),
+    )
   })
 
   it('returns a safe provider-unavailable error and never grants access on network failure', async () => {

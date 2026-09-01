@@ -81,8 +81,9 @@ if ('IntersectionObserver' in window) {
 const RELEASE_API = 'https://api.github.com/repos/acvisualdigital/altgrid-releases/releases/latest'
 const ANDROID_DOWNLOAD_URL = 'https://altgrid-api.altgrid.workers.dev/v1/downloads/android'
 const METRICS_API = 'https://altgrid-api.altgrid.workers.dev/v1/app/metrics'
+const GAMES_API = 'https://altgrid-api.altgrid.workers.dev/v1/games'
 const METRICS_REFRESH_INTERVAL_MS = 60_000
-const PAGE_RELEASE_VERSION = '1.5.2'
+const PAGE_RELEASE_VERSION = '1.5.5'
 
 const findAsset = (assets, pattern) => assets.find((asset) => pattern.test(asset.name))
 const versionParts = (version) => version.split('.').map((part) => Number.parseInt(part, 10) || 0)
@@ -167,6 +168,27 @@ window.setInterval(applyPublicMetrics, METRICS_REFRESH_INTERVAL_MS)
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') applyPublicMetrics()
 })
+
+const applyCatalogTotal = async () => {
+  try {
+    const response = await fetch(GAMES_API, { headers: { Accept: 'application/json' } })
+    if (!response.ok) throw new Error(`Games API returned ${response.status}`)
+
+    const payload = await response.json()
+    const total = Array.isArray(payload?.games)
+      ? payload.games.filter((game) => game?.enabled !== false).length
+      : 0
+    if (total > 0) {
+      document.querySelectorAll('[data-game-total]').forEach((element) => {
+        element.textContent = String(total)
+      })
+    }
+  } catch (error) {
+    console.info('AltGrid: total do catálogo temporariamente indisponível.', error)
+  }
+}
+
+applyCatalogTotal()
 
 const referralCode = (new URLSearchParams(window.location.search).get('ref') ?? '')
   .trim()

@@ -27,9 +27,11 @@ if (!temporaryOutput.startsWith(temporaryRoot + sep)) {
 
 const manifest = JSON.parse(await readFile(join(projectRoot, 'package.json'), 'utf8'))
 const version = String(manifest.version)
-const signed = Boolean(process.env.CSC_LINK?.trim() && process.env.CSC_KEY_PASSWORD?.trim())
+const developerSigned = Boolean(
+  process.env.CSC_LINK?.trim() && process.env.CSC_KEY_PASSWORD?.trim(),
+)
 const notarized = Boolean(
-  signed
+  developerSigned
   && process.env.APPLE_ID?.trim()
   && process.env.APPLE_APP_SPECIFIC_PASSWORD?.trim()
   && process.env.APPLE_TEAM_ID?.trim(),
@@ -47,7 +49,11 @@ try {
         gatekeeperAssess: false,
         hardenedRuntime: true,
         icon: 'electron/assets/icon.png',
-        identity: signed ? undefined : null,
+        // Apple Silicon requires a valid code signature even for local builds.
+        // Use the free ad-hoc identity when a paid Developer ID is unavailable;
+        // Gatekeeper will still require the documented manual authorization,
+        // but macOS can validate and launch every nested ARM64 executable.
+        identity: developerSigned ? undefined : '-',
         notarize: notarized ? { teamId: process.env.APPLE_TEAM_ID } : false,
       },
     },
@@ -70,7 +76,9 @@ try {
   }
 
   console.log(`macOS ${architectureName}: DMG e ZIP gerados em ${releaseDirectory}`)
-  console.log(signed ? 'Assinatura Developer ID habilitada.' : 'Pacote sem assinatura Apple.')
+  console.log(developerSigned
+    ? 'Assinatura Developer ID habilitada.'
+    : 'Assinatura ad-hoc aplicada; autorização manual do Gatekeeper será necessária.')
   console.log(notarized ? 'Notarização Apple habilitada.' : 'Pacote sem notarização Apple.')
 } finally {
   await rm(temporaryOutput, { force: true, recursive: true })

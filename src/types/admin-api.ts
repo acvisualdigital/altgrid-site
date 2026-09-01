@@ -279,6 +279,52 @@ export interface AdminAnnouncementResponse {
   announcement: AdminAnnouncement
 }
 
+export type AdminAppAdStatus = 'pending' | 'reviewing' | 'payment_pending' | 'approved' | 'rejected' | 'cancelled'
+
+export interface AdminAppAdRequest {
+  id: string
+  user_id: string
+  user_email: string | null
+  display_name: string | null
+  plan_code: string
+  plan_name: string
+  category: 'game' | 'product' | 'site'
+  game_slug?: string | null
+  catalog_game_name?: string | null
+  catalog_launch_url?: string | null
+  catalog_icon_url?: string | null
+  advertiser_name: string
+  title: string
+  description: string
+  destination_url: string
+  image_url: string | null
+  cta_label: string
+  requested_days: number
+  quoted_amount: number
+  currency: string
+  status: AdminAppAdStatus
+  admin_notes: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+  starts_at: string | null
+  ends_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AdminAppAdRequestsResponse {
+  requests: AdminAppAdRequest[]
+}
+
+export interface AdminAppAdRequestResponse {
+  request: AdminAppAdRequest
+}
+
+export interface AdminAppAdReviewInput {
+  status: Extract<AdminAppAdStatus, 'reviewing' | 'payment_pending' | 'rejected'>
+  notes?: string | null
+}
+
 export type AdminChatReportStatus = 'pending' | 'reviewed' | 'dismissed' | 'actioned'
 
 export interface AdminChatReport {

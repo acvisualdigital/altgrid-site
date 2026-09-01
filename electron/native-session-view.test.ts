@@ -286,7 +286,7 @@ describe('createNativeSessionViewFactory', () => {
       const view = electronMocks.views[0]!
 
       nativeView.setVisible(false)
-      await vi.advanceTimersByTimeAsync(2_000)
+      await vi.advanceTimersByTimeAsync(15_000)
 
       expect(view.webContents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledWith(
         999,
@@ -294,7 +294,7 @@ describe('createNativeSessionViewFactory', () => {
       )
       expect(view.webContents.close).not.toHaveBeenCalled()
 
-      await vi.advanceTimersByTimeAsync(30_000)
+      await vi.advanceTimersByTimeAsync(330_000)
       expect(view.webContents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(2)
     } finally {
       vi.useRealTimers()

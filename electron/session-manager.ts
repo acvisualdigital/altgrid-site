@@ -20,6 +20,7 @@ const AUTO_FIT_MIN_ZOOM = 0.67
 const MIN_INTERFACE_ZOOM = 0.5
 const MAX_INTERFACE_ZOOM = 1
 const MAX_FRAME_RATE = 240
+const ECO_FOCUSED_FRAME_RATE = 30
 const DEFAULT_ECO_SECONDARY_FRAME_RATE = 20
 const MIN_ECO_SECONDARY_FRAME_RATE = 10
 const MAX_ECO_SECONDARY_FRAME_RATE = 30
@@ -682,15 +683,21 @@ export class SessionManager {
     ecoModeEnabled = this.ecoModeEnabled,
     ecoSecondaryFrameRate = this.ecoSecondaryFrameRate,
   ): number {
-    if (!ecoModeEnabled || record.accountId === this.focusedAccountId) {
+    if (!ecoModeEnabled) {
       return desiredFrameRate
     }
 
-    const adaptiveCeiling = this.records.size >= 8
-      ? Math.min(ecoSecondaryFrameRate, 5)
-      : this.records.size >= 4
-        ? Math.min(ecoSecondaryFrameRate, 10)
-        : ecoSecondaryFrameRate
+    // Eco Mode must produce a measurable saving even when only one account is
+    // open. Previous releases left the focused renderer unlimited, so toggling
+    // Eco with a single game could make no difference at all. Thirty FPS keeps
+    // the active idle game responsive while bounding its visual work.
+    const adaptiveCeiling = record.accountId === this.focusedAccountId
+      ? ECO_FOCUSED_FRAME_RATE
+      : this.records.size >= 8
+        ? Math.min(ecoSecondaryFrameRate, 5)
+        : this.records.size >= 4
+          ? Math.min(ecoSecondaryFrameRate, 10)
+          : ecoSecondaryFrameRate
 
     return desiredFrameRate === 0
       ? adaptiveCeiling

@@ -9,6 +9,7 @@ import {
 import { SupabaseAdminRepository } from './services/supabase-admin-repository'
 import { AsymmetricLicenseSnapshotService } from './services/license-snapshot-service'
 import { MercadoPagoPaymentService } from './services/mercado-pago-service'
+import { WhatsAppAdminNotifier } from './services/whatsapp-admin-notifier'
 import type { WorkerEnvironment } from './types'
 
 function allowedOrigins(value: string | undefined): string[] {
@@ -24,6 +25,14 @@ export default {
       const clients = createSupabaseClients(environment)
       const repository = new SupabaseRepository(clients.data)
       const entitlementService = new EntitlementService(repository)
+      const adminMobileNotifier = new WhatsAppAdminNotifier({
+        accessToken: environment.WHATSAPP_ACCESS_TOKEN,
+        apiVersion: environment.WHATSAPP_GRAPH_API_VERSION,
+        destinationNumber: environment.ADMIN_WHATSAPP_NUMBER,
+        phoneNumberId: environment.WHATSAPP_PHONE_NUMBER_ID,
+        templateLanguage: environment.WHATSAPP_TEMPLATE_LANGUAGE,
+        templateName: environment.WHATSAPP_TEMPLATE_NAME,
+      })
       const api = createApi(
         {
           authentication: new SupabaseAuthenticationService(clients.auth),
@@ -47,6 +56,7 @@ export default {
           deviceRateLimiter: environment.DEVICE_RATE_LIMITER,
           chatRateLimiter: environment.CHAT_RATE_LIMITER,
           paymentRateLimiter: environment.PAYMENT_RATE_LIMITER,
+          adminMobileNotifier,
         },
         { allowedOrigins: allowedOrigins(environment.ALLOWED_ORIGINS) },
       )

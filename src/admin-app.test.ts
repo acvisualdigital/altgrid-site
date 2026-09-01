@@ -48,6 +48,7 @@ function backendDouble(overrides: Partial<Record<keyof BackendApi, unknown>> = {
     deleteAdminAnnouncement: vi.fn(),
     deleteAdminChatMessage: vi.fn(),
     getAdminAnnouncements: vi.fn().mockResolvedValue({ announcements: [] }),
+    getAdminAppAdRequests: vi.fn().mockResolvedValue({ requests: [] }),
     getAdminAudit: vi.fn().mockResolvedValue({
       entries: [],
       pagination: { has_more: false, page: 1, page_size: 50, total: 0 },
@@ -77,6 +78,7 @@ function backendDouble(overrides: Partial<Record<keyof BackendApi, unknown>> = {
     rejectAdminReferral: vi.fn(),
     resetAdminDevice: vi.fn(),
     reviewAdminChatReport: vi.fn(),
+    reviewAdminAppAdRequest: vi.fn(),
     revokeAdminDevice: vi.fn(),
     revokeAdminLicense: vi.fn(),
     searchAdminUsers: vi.fn().mockResolvedValue({

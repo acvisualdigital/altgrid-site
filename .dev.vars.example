@@ -1,9 +1,15 @@
-# Worker-only secrets. Copy to .dev.vars for local development.
 SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-# Optional in staging. Pix endpoints stay unavailable until all three are set.
-MERCADOPAGO_ACCESS_TOKEN=your-mercado-pago-access-token
+PRIVATE_LICENSE_KEY=your-private-license-key
+MERCADOPAGO_ACCESS_TOKEN=your-mercado-pago-token
 MERCADOPAGO_WEBHOOK_SECRET=your-mercado-pago-webhook-secret
-MERCADOPAGO_WEBHOOK_URL=https://api.example.com/v1/webhooks/mercadopago
-# PKCS#8 Ed25519 private key, base64 or PEM. Keep this server-side only.
-PRIVATE_LICENSE_KEY=your-pkcs8-ed25519-private-key
+MERCADOPAGO_WEBHOOK_URL=https://api.your-domain.example/v1/webhooks/mercadopago
+
+# WhatsApp Cloud API — alertas somente para a conta administrativa.
+WHATSAPP_ACCESS_TOKEN=your-permanent-system-user-token
+WHATSAPP_PHONE_NUMBER_ID=your-phone-number-id
+ADMIN_WHATSAPP_NUMBER=5571999999999
+WHATSAPP_GRAPH_API_VERSION=v23.0
+# Template aprovado com uma variável no corpo: {{1}}
+WHATSAPP_TEMPLATE_NAME=altgrid_admin_alert
+WHATSAPP_TEMPLATE_LANGUAGE=pt_BR
