@@ -75,7 +75,8 @@ h1, h2, h3, p { margin-top: 0; }
 .button-founder { color: #211500; background: linear-gradient(135deg, var(--gold-soft), var(--gold)); box-shadow: 0 14px 34px rgba(233, 185, 73, 0.12); }
 .hero-actions .button-primary { min-width: 242px; justify-content: flex-start; }
 .hero-actions .button-pending { min-width: 210px; justify-content: flex-start; }
-.button-icon { display: grid; place-items: center; width: 27px; height: 27px; font-size: 1.35rem; }
+.button-icon { display: grid; flex: 0 0 auto; place-items: center; width: 27px; height: 27px; font-size: 1.35rem; }
+.button-icon svg { display: block; width: 22px; height: 22px; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .hero-actions .button strong, .hero-actions .button small { display: block; }
 .hero-actions .button small { margin-top: 2px; font-size: 0.66rem; font-weight: 600; opacity: 0.68; }
 .hero-notes { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 22px; color: var(--quiet); font-size: 0.74rem; font-weight: 650; }
@@ -389,9 +390,9 @@ h1, h2, h3, p { margin-top: 0; }
 .hero-v15 .hero-lede { max-width: 670px; }
 .hero-v15 .hero-actions .button { min-width: 245px; }
 .hero-v15 .hero-actions .button-secondary { justify-content: flex-start; }
-.hero-platform-pair { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; width: min(100%,760px); }
+.hero-platform-pair { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; width: min(100%,560px); }
 .hero-v15 .hero-platform-pair .button { min-width: 0; min-height: 58px; }
-.hero-platform-pair .button-pending { justify-content: flex-start; }
+.hero-platform-pair .button-pending { grid-column: 1 / -1; justify-content: flex-start; }
 .hero-orbit { position: absolute; z-index: -1; border: 1px solid rgba(76,255,143,.08); border-radius: 50%; pointer-events: none; }
 .hero-orbit-a { top: 70px; right: -210px; width: 720px; height: 720px; }
 .hero-orbit-b { top: 160px; right: -80px; width: 460px; height: 460px; }
@@ -489,9 +490,35 @@ h1, h2, h3, p { margin-top: 0; }
 .download-spotlight-actions .button-primary { justify-content: flex-start; }
 .download-spotlight-actions .button strong,.download-spotlight-actions .button small { display: block; text-align: left; }
 .download-spotlight-actions .button small { margin-top: 3px; }
-.download-platform-pair { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+.download-platform-pair { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
 .download-platform-pair .button { justify-content: flex-start; min-width: 0; padding-inline: 14px; }
+.download-platform-pair .button-pending { grid-column: 1 / -1; }
+.hero-platform-pair .button > span:last-child,.download-platform-pair .button > span:last-child { min-width: 0; }
+.hero-platform-pair .button strong,.hero-platform-pair .button small,.download-platform-pair .button strong,.download-platform-pair .button small { overflow-wrap: anywhere; }
 .download-notice { color: var(--quiet); font-size: .67rem; line-height: 1.55; text-align: center; }
+
+.mac-download-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin-top: 28px; }
+.mac-download-card { display: grid; grid-template-columns: 46px minmax(0,1fr); gap: 6px 14px; align-items: center; min-width: 0; padding: 20px; color: var(--text); border: 1px solid var(--line); border-radius: 15px; background: linear-gradient(145deg,rgba(18,32,25,.94),rgba(9,17,13,.96)); box-shadow: 0 18px 40px rgba(0,0,0,.16); transition: transform .2s,border-color .2s,box-shadow .2s; }
+.mac-download-card:hover { border-color: var(--line-strong); box-shadow: 0 22px 48px rgba(0,0,0,.24),0 0 35px rgba(37,230,111,.06); transform: translateY(-2px); }
+.mac-download-card .button-icon { grid-row: 1 / span 2; width: 46px; height: 46px; color: #06110a; background: var(--green); border-radius: 12px; }
+.mac-download-card .button-icon svg { width: 25px; height: 25px; }
+.mac-download-copy { display: grid; min-width: 0; }
+.mac-download-copy small { margin-bottom: 3px; color: var(--green); font: 700 .62rem Consolas,monospace; letter-spacing: .06em; text-transform: uppercase; }
+.mac-download-copy strong { font-size: 1rem; }
+.mac-download-copy > span { margin-top: 4px; color: var(--muted); font-size: .72rem; line-height: 1.4; }
+.mac-download-cta { grid-column: 2; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding-top: 12px; color: var(--text); border-top: 1px solid var(--line); font-size: .76rem; font-weight: 750; }
+.mac-download-cta b { color: var(--green); font-size: 1rem; }
+.mac-help-section { border-color: rgba(76,255,143,.26) !important; background: radial-gradient(circle at 90% 0,rgba(37,230,111,.09),transparent 35%),var(--surface) !important; }
+.mac-help-section > .eyebrow { margin-bottom: 10px; }
+.mac-help-steps { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin: 26px 0 0 !important; padding: 0 !important; list-style: none !important; }
+.mac-help-steps li { display: grid; grid-template-columns: 34px minmax(0,1fr); gap: 12px; align-items: start; margin: 0 !important; padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: rgba(5,12,8,.52); }
+.mac-help-steps li > span { display: grid; place-items: center; width: 34px; height: 34px; color: #06110a; background: var(--green); border-radius: 9px; font-weight: 850; }
+.mac-help-steps strong { display: block; margin: 2px 0 5px; color: var(--text); }
+.mac-help-steps p { margin: 0 !important; font-size: .84rem; line-height: 1.55; }
+.mac-terminal-help { margin-top: 14px; padding: 17px; border: 1px solid rgba(242,190,75,.24); border-radius: 12px; background: rgba(242,190,75,.055); }
+.mac-terminal-help strong { color: var(--gold-soft); }
+.mac-terminal-help p { margin: 7px 0 !important; font-size: .84rem; }
+.mac-terminal-help code { display: block; overflow-x: auto; margin: 12px 0; padding: 12px 14px; color: var(--green); border: 1px solid var(--line); border-radius: 8px; background: #050b07; font-size: .78rem; white-space: nowrap; }
 
 @media (max-width: 1100px) {
   .hero-v15 .hero-grid,.control-grid,.catalog-panel,.download-spotlight { grid-template-columns: 1fr; }
@@ -526,4 +553,7 @@ h1, h2, h3, p { margin-top: 0; }
   .catalog-stack img { width: 50px; height: 50px; }
   .catalog-actions,.community-actions { flex-direction: column; }
   .catalog-actions .button,.community-actions .button { width: 100%; }
+  .mac-download-grid { grid-template-columns: 1fr; }
+  .mac-download-card { width: 100%; padding: 17px; }
+  .mac-help-steps { grid-template-columns: 1fr; }
 }
