@@ -49,6 +49,7 @@ import { decodePathSegment, requireUuid } from './lib/validation'
 import type { AdminRepository, PaymentService } from './types'
 
 export function adminAllowedMethods(pathname: string): string[] | null {
+  if (pathname === '/v1/admin/push-devices') return ['POST', 'DELETE']
   if (pathname === '/v1/admin/announcements') return ['GET', 'POST']
   if (pathname === '/v1/admin/chat/reports') return ['GET']
   if (pathname === '/v1/admin/chat/clear') return ['POST']
@@ -113,6 +114,28 @@ export async function handleAdminRequest(
   repository: AdminRepository,
   paymentService?: PaymentService,
 ): Promise<Response> {
+  if (pathname === '/v1/admin/push-devices') {
+    let body: { platform?: unknown; token?: unknown }
+    try {
+      body = await request.json() as { platform?: unknown; token?: unknown }
+    } catch {
+      throw new ApiError(400, 'invalid_json', 'Corpo da solicitação inválido.')
+    }
+    const token = typeof body.token === 'string' ? body.token.trim() : ''
+    if (token.length < 20 || token.length > 4096) {
+      throw new ApiError(400, 'invalid_push_token', 'Token de notificação inválido.')
+    }
+    if (body.platform !== 'android') {
+      throw new ApiError(400, 'invalid_push_platform', 'Plataforma de notificação inválida.')
+    }
+    if (request.method === 'DELETE') {
+      await repository.unregisterAdminPushDevice(actorUserId, token)
+    } else {
+      await repository.registerAdminPushDevice(actorUserId, token, 'android')
+    }
+    return jsonResponse({ ok: true } satisfies AdminActionResponse)
+  }
+
   if (pathname === '/v1/admin/session') {
     const body: AdminSessionResponse = {
       admin: { user_id: actorUserId, role: 'admin' },

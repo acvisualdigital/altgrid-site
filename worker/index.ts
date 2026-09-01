@@ -10,6 +10,8 @@ import { SupabaseAdminRepository } from './services/supabase-admin-repository'
 import { AsymmetricLicenseSnapshotService } from './services/license-snapshot-service'
 import { MercadoPagoPaymentService } from './services/mercado-pago-service'
 import { WhatsAppAdminNotifier } from './services/whatsapp-admin-notifier'
+import { FirebaseAdminNotifier } from './services/firebase-admin-notifier'
+import { CompositeAdminNotifier } from './services/composite-admin-notifier'
 import type { WorkerEnvironment } from './types'
 
 function allowedOrigins(value: string | undefined): string[] {
@@ -25,19 +27,27 @@ export default {
       const clients = createSupabaseClients(environment)
       const repository = new SupabaseRepository(clients.data)
       const entitlementService = new EntitlementService(repository)
-      const adminMobileNotifier = new WhatsAppAdminNotifier({
-        accessToken: environment.WHATSAPP_ACCESS_TOKEN,
-        apiVersion: environment.WHATSAPP_GRAPH_API_VERSION,
-        destinationNumber: environment.ADMIN_WHATSAPP_NUMBER,
-        phoneNumberId: environment.WHATSAPP_PHONE_NUMBER_ID,
-        templateLanguage: environment.WHATSAPP_TEMPLATE_LANGUAGE,
-        templateName: environment.WHATSAPP_TEMPLATE_NAME,
-      })
+      const adminRepository = new SupabaseAdminRepository(clients.data)
+      const adminMobileNotifier = new CompositeAdminNotifier([
+        new FirebaseAdminNotifier({
+          projectId: environment.FIREBASE_PROJECT_ID,
+          repository: adminRepository,
+          serviceAccountJson: environment.FIREBASE_SERVICE_ACCOUNT_JSON,
+        }),
+        new WhatsAppAdminNotifier({
+          accessToken: environment.WHATSAPP_ACCESS_TOKEN,
+          apiVersion: environment.WHATSAPP_GRAPH_API_VERSION,
+          destinationNumber: environment.ADMIN_WHATSAPP_NUMBER,
+          phoneNumberId: environment.WHATSAPP_PHONE_NUMBER_ID,
+          templateLanguage: environment.WHATSAPP_TEMPLATE_LANGUAGE,
+          templateName: environment.WHATSAPP_TEMPLATE_NAME,
+        }),
+      ])
       const api = createApi(
         {
           authentication: new SupabaseAuthenticationService(clients.auth),
           repository,
-          adminRepository: new SupabaseAdminRepository(clients.data),
+          adminRepository,
           entitlementService,
           platformRepository: repository,
           chatRepository: repository,

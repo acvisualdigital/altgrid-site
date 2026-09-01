@@ -7,6 +7,15 @@ export interface AdminSessionResponse {
   }
 }
 
+export interface AdminPushDeviceInput {
+  platform: 'android'
+  token: string
+}
+
+export interface AdminPushDeviceResponse {
+  ok: true
+}
+
 export interface AdminPagination {
   page: number
   page_size: number

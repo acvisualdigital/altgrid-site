@@ -50,6 +50,8 @@ export interface WorkerEnvironment extends Env {
   ADMIN_WHATSAPP_NUMBER?: string
   WHATSAPP_ACCESS_TOKEN?: string
   WHATSAPP_PHONE_NUMBER_ID?: string
+  FIREBASE_PROJECT_ID?: string
+  FIREBASE_SERVICE_ACCOUNT_JSON?: string
 }
 
 export type AdminMobileNotificationType =
@@ -336,6 +338,9 @@ export interface LicenseSnapshotService {
 
 export interface AdminRepository {
   isAdmin(userId: string): Promise<boolean>
+  registerAdminPushDevice(userId: string, token: string, platform: 'android'): Promise<void>
+  unregisterAdminPushDevice(userId: string, token: string): Promise<void>
+  getActiveAdminPushTokens(): Promise<string[]>
   searchAdminUsers(
     actorUserId: string,
     query: string,

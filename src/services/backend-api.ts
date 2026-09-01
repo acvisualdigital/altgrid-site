@@ -68,6 +68,8 @@ import type {
   AdminReferralsResponse,
   AdminReferralStatus,
   AdminSessionResponse,
+  AdminPushDeviceInput,
+  AdminPushDeviceResponse,
   AdminSetPlanInput,
   AdminUserDetailResponse,
   AdminUsersResponse,
@@ -392,6 +394,22 @@ export class BackendApi {
     return this.privateRead<AdminSessionResponse>('/v1/admin/session')
   }
 
+  registerAdminPushDevice(input: AdminPushDeviceInput): Promise<AdminPushDeviceResponse> {
+    return this.adminJsonMutation<AdminPushDeviceResponse>(
+      '/v1/admin/push-devices',
+      'POST',
+      input,
+    )
+  }
+
+  unregisterAdminPushDevice(input: AdminPushDeviceInput): Promise<AdminPushDeviceResponse> {
+    return this.adminJsonMutation<AdminPushDeviceResponse>(
+      '/v1/admin/push-devices',
+      'DELETE',
+      input,
+    )
+  }
+
   searchAdminUsers(
     query = '',
     page = 1,
@@ -712,7 +730,7 @@ export class BackendApi {
 
   private adminJsonMutation<ResponseBody>(
     path: string,
-    method: 'PATCH' | 'POST',
+    method: 'DELETE' | 'PATCH' | 'POST',
     body: unknown,
   ): Promise<ResponseBody> {
     return this.privateRequest<ResponseBody>(path, {

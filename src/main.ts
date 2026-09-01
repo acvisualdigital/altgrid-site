@@ -15,6 +15,7 @@ import { PermissionService } from './services/permission-service'
 import { SupabaseChatRealtimeGateway } from './services/supabase-chat-realtime'
 import { createMobileSessionLauncher } from './services/mobile-session-adapter'
 import { createMobileUpdateService } from './services/mobile-update-service'
+import { AdminPushNotificationService } from './services/admin-push-notification-service'
 
 const root = document.querySelector<HTMLElement>('#app')
 
@@ -60,6 +61,9 @@ try {
   const desktop = createElectronDesktopIntegration()
   const mobile = desktop ? null : createMobileSessionLauncher()
   const mobileUpdater = desktop ? null : createMobileUpdateService(__APP_VERSION__)
+  const adminPushNotifications = backendApi && mobile
+    ? new AdminPushNotificationService(backendApi)
+    : null
   const chatService = backendApi
     ? new ChatService(
         backendApi,
@@ -96,6 +100,15 @@ try {
           .catch(() => undefined)
       })
     : null
+  const unsubscribeFromAdminPush = adminPushNotifications
+    ? authService.onAuthStateChange((_event, session) => {
+        if (session) {
+          void adminPushNotifications.enableForCurrentAdmin().catch(() => undefined)
+        } else {
+          void adminPushNotifications.disable()
+        }
+      })
+    : null
   const adminRoute = /^\/admin(?:\/|$)/.test(window.location.pathname)
   if (adminRoute && !backendApi) {
     throw new Error('ALTGRID_API_BASE_URL is required for admin')
@@ -120,12 +133,16 @@ try {
     void app.start()
     window.addEventListener('beforeunload', () => {
       unsubscribeFromDeviceRegistration?.()
+      unsubscribeFromAdminPush?.()
+      void adminPushNotifications?.dispose()
       app.destroy()
       desktop?.dispose()
       mobileUpdater?.dispose()
     }, { once: true })
   }).catch(() => {
     unsubscribeFromDeviceRegistration?.()
+    unsubscribeFromAdminPush?.()
+    void adminPushNotifications?.dispose()
     desktop?.dispose()
     mobileUpdater?.dispose()
     renderStartupError()

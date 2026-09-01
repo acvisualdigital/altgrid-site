@@ -40,10 +40,25 @@ export class FakeAdminRepository implements AdminRepository {
   chatRestrictions: AdminChatRestriction[] = []
   audit: AdminAuditEntry[] = []
   referrals: AdminReferralLog[] = []
+  pushTokens: string[] = []
   calls: Array<{ action: string; actor: string; target: string; value?: unknown }> = []
 
   async isAdmin(): Promise<boolean> {
     return this.admin
+  }
+
+  async registerAdminPushDevice(userId: string, token: string): Promise<void> {
+    if (!this.pushTokens.includes(token)) this.pushTokens.push(token)
+    this.calls.push({ action: 'register-push', actor: userId, target: token })
+  }
+
+  async unregisterAdminPushDevice(userId: string, token: string): Promise<void> {
+    this.pushTokens = this.pushTokens.filter((candidate) => candidate !== token)
+    this.calls.push({ action: 'unregister-push', actor: userId, target: token })
+  }
+
+  async getActiveAdminPushTokens(): Promise<string[]> {
+    return [...this.pushTokens]
   }
 
   async searchAdminUsers(

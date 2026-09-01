@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "330448977351",
+    "project_id": "altgrid-d0504",
+    "storage_bucket": "altgrid-d0504.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:330448977351:android:1d1569e85a508b6563ade2",
+        "android_client_info": {
+          "package_name": "io.altgrid.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCT47wSKnHk3jKVMmgxT_4OAMMDrD8oZng"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:330448977351:android:5931eafdf96c7be163ade2",
+        "android_client_info": {
+          "package_name": "io.altgrid.app.preview"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCT47wSKnHk3jKVMmgxT_4OAMMDrD8oZng"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

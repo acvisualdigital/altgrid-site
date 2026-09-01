@@ -54,6 +54,10 @@ import { SessionSurfaceManager } from './services/session-surface-manager'
 import { parseProxyLine } from './services/proxy-line-parser'
 import { ChatService, type ChatState } from './services/chat-service'
 import { NotificationCenterService } from './services/notification-center-service'
+import {
+  ADMIN_PUSH_EVENT,
+  type AdminPushEventDetail,
+} from './services/admin-push-notification-service'
 import type {
   OfflineLicenseService,
   OfflineLicenseSource,
@@ -1137,6 +1141,7 @@ export class AuthApp {
     window.addEventListener('resize', this.handleWorkspaceResize)
     window.addEventListener('keydown', this.handleKeyDown)
     window.addEventListener('pointerdown', this.handleGlobalPointerDown)
+    window.addEventListener(ADMIN_PUSH_EVENT, this.handleAdminPush)
     this.unsubscribeFromSessionEscape =
       this.sessionLauncher.registerEscapeHandler(this.handleSessionEscape)
       ?? null
@@ -1259,6 +1264,7 @@ export class AuthApp {
     window.removeEventListener('resize', this.handleWorkspaceResize)
     window.removeEventListener('keydown', this.handleKeyDown)
     window.removeEventListener('pointerdown', this.handleGlobalPointerDown)
+    window.removeEventListener(ADMIN_PUSH_EVENT, this.handleAdminPush)
     this.disconnectWorkspaceObserver()
   }
 
@@ -1374,6 +1380,25 @@ export class AuthApp {
 
   private readonly handleWorkspaceResize = (): void => {
     this.scheduleWorkspaceLayout()
+  }
+
+  private readonly handleAdminPush = (event: Event): void => {
+    if (this.currentView !== 'authenticated' || !this.session) return
+    const detail = (event as CustomEvent<AdminPushEventDetail>).detail
+    if (!detail) return
+    const title = String(detail.title ?? '').trim().slice(0, 100)
+    const body = String(detail.body ?? '').trim().slice(0, 500)
+    if (!title || !body) return
+    const eventKey = String(detail.data?.event_key ?? Date.now())
+      .replace(/[^a-zA-Z0-9:_-]/g, '')
+      .slice(0, 160)
+    this.notificationCenter.upsertSystemNotification({
+      id: `admin-push:${eventKey || Date.now()}`,
+      title,
+      summary: body,
+    })
+    this.render()
+    this.showSessionAlert(`${title}: ${body}`)
   }
 
   private readonly handleGlobalPointerDown = (event: PointerEvent): void => {

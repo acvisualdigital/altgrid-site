@@ -150,6 +150,25 @@ describe('administrative Worker API', () => {
     expect(adminRepository.calls).toEqual([])
   })
 
+  it('registers and removes an Android push token only through an admin session', async () => {
+    adminRepository.admin = true
+    const token = 'fcm-registration-token-with-safe-length-1234567890'
+
+    const registered = await api.fetch(request('/v1/admin/push-devices', 'POST', {
+      platform: 'android',
+      token,
+    }))
+    expect(registered.status).toBe(200)
+    expect(adminRepository.pushTokens).toEqual([token])
+
+    const removed = await api.fetch(request('/v1/admin/push-devices', 'DELETE', {
+      platform: 'android',
+      token,
+    }))
+    expect(removed.status).toBe(200)
+    expect(adminRepository.pushTokens).toEqual([])
+  })
+
   it('accepts a valid server-authorized admin and returns a minimal session', async () => {
     adminRepository.admin = true
     const response = await api.fetch(request('/v1/admin/session'))

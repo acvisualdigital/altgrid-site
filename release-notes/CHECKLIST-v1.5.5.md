@@ -51,7 +51,7 @@ Atualizado em 1º de setembro de 2026. Este documento separa o que está prepara
 - Aprovação administrativa manual antes da cobrança.
 - PIX liberado somente após aprovação e ativação após confirmação do pagamento.
 - Destaque patrocinado na lista de jogos, além de impressões e cliques da campanha.
-- Avisos administrativos de pedido e pagamento no aplicativo e por WhatsApp quando configurado.
+- Avisos administrativos de tentativa de compra e pagamento aprovado no Android da conta ADM, com som, pop-up e detalhes.
 - Simulação local das etapas do anúncio sem criar pedido ou cobrança real.
 
 ### Distribuição
@@ -62,7 +62,7 @@ Atualizado em 1º de setembro de 2026. Este documento separa o que está prepara
 
 ## Validações concluídas
 
-- 407 testes automatizados aprovados em 41 arquivos.
+- 409 testes automatizados aprovados em 41 arquivos.
 - Tipagem do aplicativo, Electron e Worker aprovada.
 - Build de produção do aplicativo e build seco da API aprovados.
 - Sete páginas e 22 jogos validados pelo preflight do site, sem avisos.
@@ -70,7 +70,7 @@ Atualizado em 1º de setembro de 2026. Este documento separa o que está prepara
 - Setup e portátil Windows 1.5.5 gerados localmente.
 - Pacote Microsoft Store 1.5.5 gerado localmente.
 - Pacote Microsoft Store refeito após a revisão final e conferido com identidade `ACVisualDigital.AltGrid`, versão interna `1.5.5.0` e executável correto.
-- APK Android de teste 1.5.5 gerado localmente e conferido como `io.altgrid.app.preview`, versão `1.5.5-preview`, código `10505`, Android 7+ (`minSdk 24`) e `targetSdk 36`. A assinatura de teste v2 foi validada. Arquivo com 10,48 MB e SHA-256 `B8433147192E0D8B9D965FCD664130C5B4E0D342E0C6CF9589F7386DF44ABFE0`.
+- APK Android de teste 1.5.5 gerado novamente após a integração do Firebase, com 12.381.780 bytes e SHA-256 `C58E38C84339177C0D6181AD1BBFF0BCE8242C1D6CE9B07DE91D3B34200E8A9B`.
 - Laboratório de atualização 1.5.2 → 1.5.5 gerou pacote completo e delta válidos.
 - Fluxo instalado do launcher repetido em 1º de setembro: a base 1.5.2 encontrou o feed local, concluiu o download em 100%, aplicou a atualização e reiniciou com manifesto 1.5.5.
 - O launcher escolheu o pacote completo no laboratório, apesar de existir delta; isso não impede a atualização, mas permanece como otimização para reduzir o tamanho do download futuro.
@@ -81,13 +81,16 @@ Atualizado em 1º de setembro de 2026. Este documento separa o que está prepara
 - Busca por credenciais expostas encontrou somente nomes de variáveis e exemplos fictícios.
 - As três migrações de publicidade foram aplicadas e conferidas no Supabase remoto.
 - Worker de produção publicado e validado: saúde, planos de anúncio, campanhas, métricas e CORS respondem corretamente.
-- Fluxos automatizados de FREE, FOUNDER, anúncios, PIX, notificações, presença e compatibilidade foram repetidos após a publicação: 407 testes aprovados.
+- Fluxos automatizados de FREE, FOUNDER, anúncios, PIX, notificações, presença e compatibilidade foram repetidos após a publicação: 409 testes aprovados.
 - Auditoria financeira isolada repetida sem cobrança real: 117 testes aprovados cobrindo a trava do PIX antes da liberação administrativa, valor aprovado, chave de idempotência, confirmação pelo provedor, assinatura do webhook e repetição segura de eventos.
 - Hotfix de presença validado em produção: o contador recuperou de 0 para 43 usuários ativos sem exigir reinicialização dos aplicativos.
 - Revisão manual FOUNDER concluída no aplicativo local: sessão Huntera, Descanso, Eco Mode, chat, perfil, planos e simulação completa de anúncio sem cobrança real.
 - Layout validado em desktop, notebook 1280×720 e notebook compacto 1024×600, sem rolagem horizontal e com ações principais acessíveis.
 - Avisos temporários conferidos manualmente: o alerta de Grades desaparece sozinho e não fica preso na interface.
-- Checagem final repetida em 1º de setembro de 2026: 407 testes, tipagem, preflight da `v1.5.5` e integridade das sete páginas/22 jogos aprovados.
+- Checagem final repetida em 1º de setembro de 2026: 409 testes, tipagem, preflight da `v1.5.5` e integridade das sete páginas/22 jogos aprovados.
+- Firebase Cloud Messaging configurado no projeto AltGrid para os pacotes Android final e de prévia, com credencial privada armazenada somente no cofre do Worker.
+- Registro de dispositivos limitado ao papel administrativo, migrações aplicadas no Supabase e permissão exclusiva do servidor corrigida.
+- Alerta real de teste recebido com sucesso no único Android ADM registrado.
 - Revisão manual FREE concluída no aplicativo local: identificação do plano, limites apresentados, pop-up patrocinado no login, destaque no catálogo, anúncio lateral e formulário de contratação conferidos sem envio ou cobrança.
 - Login Google e recuperação de senha no Electron local agora retornam pelo protocolo do aplicativo, em vez de deixar a sessão presa no navegador em `127.0.0.1`.
 - Modal de planos ajustado para manter sua área de ações acessível, com a lista de opções rolando dentro da janela em telas menores.
@@ -100,11 +103,10 @@ Atualizado em 1º de setembro de 2026. Este documento separa o que está prepara
 
 ## Pendências antes da publicação
 
-1. Configurar no Cloudflare os segredos `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` e `ADMIN_WHATSAPP_NUMBER` e confirmar a aprovação do template `altgrid_admin_alert`. A integração permanece opcional e desativada até isso; os segredos do Mercado Pago já estão presentes.
-2. Executar um pedido real de valor mínimo em ambiente controlado e confirmar PIX, webhook, ativação e notificações. A simulação automatizada está aprovada; esta etapa movimenta dinheiro e será feita somente com confirmação específica.
-3. Publicar a release `v1.5.5` com todos os artefatos antes de publicar o site, pois os links do site já apontam para a 1.5.5 localmente.
-4. Repetir um cadastro de teste e enviar o AppX 1.5.5 para nova certificação da Microsoft Store, informando que o e-mail via Resend foi validado.
-5. Publicar o site por último, limpar cache e conferir Windows, Android, macOS, catálogo e anúncios na URL pública.
+1. Executar um pedido real de valor mínimo em ambiente controlado e confirmar PIX, webhook e ativação. A simulação automatizada e a entrega de notificação ADM estão aprovadas; esta etapa movimenta dinheiro e será feita somente com confirmação específica.
+2. Publicar a release `v1.5.5` com todos os artefatos antes de publicar o site, pois os links do site já apontam para a 1.5.5 localmente.
+3. Repetir um cadastro de teste e enviar o AppX 1.5.5 para nova certificação da Microsoft Store, informando que o e-mail via Resend foi validado.
+4. Publicar o site por último, limpar cache e conferir Windows, Android, macOS, catálogo e anúncios na URL pública.
 
 ## Assinaturas adiadas por decisão do responsável
 

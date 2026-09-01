@@ -140,6 +140,43 @@ export class SupabaseAdminRepository implements AdminRepository {
     return data === true
   }
 
+  async registerAdminPushDevice(
+    userId: string,
+    token: string,
+    platform: 'android',
+  ): Promise<void> {
+    const { error } = await this.client.from('admin_push_devices').upsert({
+      enabled: true,
+      last_seen_at: new Date().toISOString(),
+      platform,
+      token,
+      updated_at: new Date().toISOString(),
+      user_id: userId,
+    }, { onConflict: 'token' })
+    if (error) dataError(error)
+  }
+
+  async unregisterAdminPushDevice(userId: string, token: string): Promise<void> {
+    const { error } = await this.client
+      .from('admin_push_devices')
+      .update({ enabled: false, updated_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('token', token)
+    if (error) dataError(error)
+  }
+
+  async getActiveAdminPushTokens(): Promise<string[]> {
+    const { data, error } = await this.client
+      .from('admin_push_devices')
+      .select('token')
+      .eq('enabled', true)
+      .limit(50)
+    if (error) dataError(error)
+    return (data ?? [])
+      .map((row) => typeof row.token === 'string' ? row.token : '')
+      .filter(Boolean)
+  }
+
   async searchAdminUsers(
     actorUserId: string,
     query: string,
