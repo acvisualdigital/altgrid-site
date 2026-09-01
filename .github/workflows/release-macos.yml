@@ -68,6 +68,28 @@ jobs:
         env:
           ALTGRID_MAC_ARCH: x64
 
+      - name: Verify macOS packages
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          for arch in arm64 x64; do
+            dmg="release/mac/AltGrid-mac-${arch}-${REQUESTED_VERSION}.dmg"
+            zip="release/mac/AltGrid-mac-${arch}-${REQUESTED_VERSION}.zip"
+            test -s "$dmg"
+            test -s "$zip"
+            hdiutil verify "$dmg"
+            unzip -tq "$zip"
+
+            mount_point="${RUNNER_TEMP}/altgrid-${arch}"
+            mkdir -p "$mount_point"
+            hdiutil attach -readonly -nobrowse -mountpoint "$mount_point" "$dmg"
+            plutil -lint "$mount_point/AltGrid.app/Contents/Info.plist"
+            binary_info="$(file "$mount_point/AltGrid.app/Contents/MacOS/AltGrid")"
+            echo "$binary_info"
+            echo "$binary_info" | grep -q "$arch"
+            hdiutil detach "$mount_point"
+          done
+
       - name: Publish macOS packages
         env:
           GH_TOKEN: ${{ secrets.ALTGRID_RELEASES_TOKEN }}
