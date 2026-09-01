@@ -659,7 +659,7 @@ describe('AuthApp session lifecycle', () => {
     expect(harness.selectedSponsoredAdId).toBe('altgrid-house-ad')
     expect(harness.renderDialog()).toContain('Seu jogo pode aparecer aqui')
     expect(harness.renderDialog()).toContain('data-open-dialog="advertise"')
-    expect(harness.renderSidebar()).toContain('Anuncie no AltGrid')
+    expect(harness.renderSidebar().match(/Anuncie no AltGrid/g)).toHaveLength(1)
 
     harness.activeDialog = null
     harness.scheduleSponsoredPopup()

@@ -3155,7 +3155,6 @@ export class AuthApp {
         <nav class="sidebar-menu" aria-label="Preferências">
           <p class="sidebar-menu__label">Conta e preferências</p>
           <button data-open-dialog="referrals" type="button"><span aria-hidden="true">✦</span><b>Indique e ganhe</b><i aria-hidden="true">›</i></button>
-          <button data-open-dialog="advertise" type="button"><span aria-hidden="true">↗</span><b>Anuncie no AltGrid</b><i aria-hidden="true">›</i></button>
           <button data-open-dialog="settings" type="button"><span aria-hidden="true">⚙</span><b>Configurações</b><i aria-hidden="true">›</i></button>
           <button data-open-dialog="shortcuts" type="button"><span aria-hidden="true">⌨</span><b>Atalhos</b><i aria-hidden="true">›</i></button>
           <button data-open-dialog="about" type="button"><span aria-hidden="true">ⓘ</span><b>Sobre o AltGrid</b><i aria-hidden="true">›</i></button>
