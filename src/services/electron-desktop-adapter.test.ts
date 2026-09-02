@@ -283,6 +283,20 @@ describe('ElectronSessionLauncher', () => {
     expect(harness.hasListener()).toBe(false)
   })
 
+  it('forwards the switch-account shortcut digit even while a game holds native focus', () => {
+    const harness = createSessionApi()
+    const launcher = new ElectronSessionLauncher(harness.api)
+    const shortcutHandler = vi.fn()
+    launcher.registerAccountShortcutHandler(shortcutHandler)
+
+    harness.emit({ accountId: 'account-1', detail: '3', type: 'switch-account' })
+    expect(shortcutHandler).toHaveBeenCalledWith('3')
+
+    launcher.dispose()
+    harness.emit({ accountId: 'account-1', detail: '4', type: 'switch-account' })
+    expect(shortcutHandler).toHaveBeenCalledOnce()
+  })
+
   it('hides an interrupted native view and makes it visible again after reload', async () => {
     const harness = createSessionApi()
     const launcher = new ElectronSessionLauncher(harness.api)

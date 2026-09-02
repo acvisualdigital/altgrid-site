@@ -15,7 +15,6 @@ const DEVICE_ID = '20000000-0000-4000-8000-000000000001'
 const PRODUCT_ID = '50000000-0000-4000-8000-000000000001'
 const REPORT_ID = '83000000-0000-4000-8000-000000000001'
 const MESSAGE_ID = '84000000-0000-4000-8000-000000000001'
-const REFERRAL_ID = '86000000-0000-4000-8000-000000000001'
 const APP_AD_ID = '87000000-0000-4000-8000-000000000001'
 
 const adminUser: SafeUser = {
@@ -30,7 +29,6 @@ const target: AdminUserDetail = {
   id: TARGET_ID,
   email: 'cliente@example.com',
   display_name: 'Cliente',
-  referral_code: 'HUNT-ABCDEFGH',
   created_at: '2026-08-20T10:00:00.000Z',
   plan: 'FREE',
   license_status: null,
@@ -45,16 +43,6 @@ const target: AdminUserDetail = {
     first_seen_at: '2026-08-20T10:00:00.000Z',
     last_seen_at: '2026-08-25T10:00:00.000Z',
     revoked_at: null,
-  }],
-  referrals: [{
-    id: '60000000-0000-4000-8000-000000000001',
-    referrer_user_id: TARGET_ID,
-    referred_user_id: '00000000-0000-4000-8000-000000000003',
-    status: 'pending',
-    qualification_reason: null,
-    created_at: '2026-08-21T10:00:00.000Z',
-    qualified_at: null,
-    rewarded_at: null,
   }],
   payments: [{
     id: '70000000-0000-4000-8000-000000000001',
@@ -108,8 +96,6 @@ describe('administrative Worker API', () => {
       updated_at: '2026-08-20T10:00:00.000Z',
     }]
     adminRepository.config = [
-      { key: 'referral_referrer_days', value: 7, updated_at: '2026-08-20T10:00:00.000Z' },
-      { key: 'referral_referred_days', value: 7, updated_at: '2026-08-20T10:00:00.000Z' },
       { key: 'founder_max_sales', value: 100, updated_at: '2026-08-20T10:00:00.000Z' },
       { key: 'maintenance', value: false, updated_at: '2026-08-20T10:00:00.000Z' },
       { key: 'minimum_version', value: '0.9.0-beta.1', updated_at: '2026-08-20T10:00:00.000Z' },
@@ -193,8 +179,6 @@ describe('administrative Worker API', () => {
   it('updates every typed runtime config and audits its before/after state', async () => {
     adminRepository.admin = true
     const updates = [
-      ['referral_referrer_days', 14],
-      ['referral_referred_days', 21],
       ['founder_max_sales', null],
       ['maintenance', true],
       ['minimum_version', '0.9.0-beta.1'],
@@ -222,8 +206,6 @@ describe('administrative Worker API', () => {
   })
 
   it.each([
-    ['referral_referrer_days', -1],
-    ['referral_referred_days', 3_651],
     ['founder_max_sales', 0],
     ['maintenance', 'true'],
     ['minimum_version', 'v1.0.0'],
@@ -243,9 +225,9 @@ describe('administrative Worker API', () => {
     expect(adminRepository.calls).toEqual([])
   })
 
-  it('searches users by referral/email/id and returns detail without a device hash', async () => {
+  it('searches users by email or id and returns detail without a device hash', async () => {
     adminRepository.admin = true
-    const list = await api.fetch(request('/v1/admin/users?q=HUNT-AB&page=1&page_size=10'))
+    const list = await api.fetch(request('/v1/admin/users?q=cliente&page=1&page_size=10'))
     expect(list.status).toBe(200)
     expect(await list.json()).toMatchObject({
       users: [{ id: TARGET_ID, email: 'cliente@example.com' }],
@@ -254,75 +236,8 @@ describe('administrative Worker API', () => {
 
     const detail = await api.fetch(request(`/v1/admin/users/${TARGET_ID}`))
     const payload = await detail.json() as { user: AdminUserDetail }
-    expect(payload.user.referrals).toHaveLength(1)
     expect(payload.user.payments).toHaveLength(1)
     expect(payload.user.devices[0]).not.toHaveProperty('device_hash')
-  })
-
-  it('lists referral logs and records manual approval and rejection', async () => {
-    adminRepository.admin = true
-    adminRepository.referrals = [{
-      id: REFERRAL_ID,
-      referrer_user_id: TARGET_ID,
-      referred_user_id: '00000000-0000-4000-8000-000000000003',
-      campaign_id: '87000000-0000-4000-8000-000000000001',
-      campaign_name: 'Corrida de Indicações',
-      status: 'pending',
-      qualification_reason: 'awaiting_24h_validation',
-      created_at: '2026-08-27T12:00:00.000Z',
-      qualified_at: null,
-      rewarded_at: null,
-      referrer_email: 'cliente@example.com',
-      referrer_display_name: 'Cliente',
-      referrer_code: 'HUNT-ABCDEFGH',
-      referred_email: 'indicado@example.com',
-      referred_display_name: 'Indicado',
-      device_hint: null,
-      reward_days: 0,
-    }]
-
-    const list = await api.fetch(request('/v1/admin/referrals?status=pending&q=cliente'))
-    expect(list.status).toBe(200)
-    expect(await list.json()).toMatchObject({
-      referrals: [{ id: REFERRAL_ID, status: 'pending' }],
-      stats: { total: 1, pending: 1, rewarded: 0 },
-      pagination: { total: 1 },
-    })
-
-    const approve = await api.fetch(request(
-      `/v1/admin/referrals/${REFERRAL_ID}/approve`,
-      'POST',
-      { reason: 'Cadastro confirmado pelo suporte' },
-    ))
-    expect(approve.status).toBe(200)
-    expect(await approve.json()).toMatchObject({
-      referral: { id: REFERRAL_ID, status: 'rewarded', reward_days: 1 },
-    })
-
-    const reject = await api.fetch(request(
-      `/v1/admin/referrals/${REFERRAL_ID}/reject`,
-      'POST',
-      { reason: 'Conta duplicada confirmada' },
-    ))
-    expect(reject.status).toBe(200)
-    expect(await reject.json()).toMatchObject({
-      referral: { id: REFERRAL_ID, status: 'rejected', reward_days: 0 },
-    })
-    expect(adminRepository.audit.map((entry) => entry.action)).toEqual([
-      'referral.reject',
-      'referral.approve',
-    ])
-  })
-
-  it('rejects referral moderation without a documented reason', async () => {
-    adminRepository.admin = true
-    const response = await api.fetch(request(
-      `/v1/admin/referrals/${REFERRAL_ID}/approve`,
-      'POST',
-      { reason: '' },
-    ))
-    expect(response.status).toBe(400)
-    expect(adminRepository.calls).toEqual([])
   })
 
   it('grants PRO days, changes plan and records both critical actions', async () => {
@@ -383,7 +298,6 @@ describe('administrative Worker API', () => {
       api.fetch(request(`/v1/admin/licenses/${LICENSE_ID}/revoke`, 'POST', {})),
       api.fetch(request(`/v1/admin/devices/${DEVICE_ID}/revoke`, 'POST', {})),
       api.fetch(request(`/v1/admin/devices/${DEVICE_ID}/reset`, 'POST', {})),
-      api.fetch(request('/v1/admin/config/referral_referrer_days', 'PATCH', { value: 14 })),
       api.fetch(request('/v1/admin/config/founder_max_sales', 'PATCH', { value: null })),
       api.fetch(request(`/v1/admin/products/${PRODUCT_ID}`, 'PATCH', {
         price_amount: 129.9,
@@ -392,8 +306,6 @@ describe('administrative Worker API', () => {
       })),
     ])
     expect(responses.every((response) => response.status === 200)).toBe(true)
-    expect(adminRepository.config.find((entry) => entry.key === 'referral_referrer_days')?.value)
-      .toBe(14)
     expect(adminRepository.config.find((entry) => entry.key === 'founder_max_sales')?.value)
       .toBeNull()
     expect(adminRepository.products[0]).toMatchObject({

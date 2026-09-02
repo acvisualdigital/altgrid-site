@@ -27,7 +27,6 @@ export interface AdminUserSummary {
   id: string
   email: string | null
   display_name: string | null
-  referral_code: string
   created_at: string
   plan: PlanCode
   license_status: string | null
@@ -44,49 +43,6 @@ export interface AdminDevice {
   first_seen_at: string
   last_seen_at: string
   revoked_at: string | null
-}
-
-export interface AdminReferral {
-  id: string
-  referrer_user_id: string
-  referred_user_id: string
-  status: string
-  qualification_reason: string | null
-  created_at: string
-  qualified_at: string | null
-  rewarded_at: string | null
-}
-
-export type AdminReferralStatus = 'pending' | 'qualified' | 'rewarded' | 'rejected'
-
-export interface AdminReferralLog extends AdminReferral {
-  campaign_id: string | null
-  campaign_name: string | null
-  referrer_email: string | null
-  referrer_display_name: string | null
-  referrer_code: string | null
-  referred_email: string | null
-  referred_display_name: string | null
-  device_hint: string | null
-  reward_days: number
-}
-
-export interface AdminReferralStats {
-  total: number
-  pending: number
-  qualified: number
-  rewarded: number
-  rejected: number
-}
-
-export interface AdminReferralsResponse {
-  referrals: AdminReferralLog[]
-  stats: AdminReferralStats
-  pagination: AdminPagination
-}
-
-export interface AdminReferralResponse {
-  referral: AdminReferralLog
 }
 
 export interface AdminPayment {
@@ -126,7 +82,6 @@ export interface AdminLicense {
 
 export interface AdminUserDetail extends AdminUserSummary {
   devices: AdminDevice[]
-  referrals: AdminReferral[]
   payments: AdminPayment[]
   licenses: AdminLicense[]
   chat_status: {

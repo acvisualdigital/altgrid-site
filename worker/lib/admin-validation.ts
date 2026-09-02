@@ -17,8 +17,6 @@ const MAX_ADMIN_BODY_SIZE = 16_384
 const GAME_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
 const CONFIG_KEYS = new Set([
-  'referral_referrer_days',
-  'referral_referred_days',
   'founder_max_sales',
   'maintenance',
   'minimum_version',
@@ -160,35 +158,6 @@ export function readAdminSearch(url: string): {
   const query = new URL(url).searchParams.get('q')?.trim() ?? ''
   if (query.length > 200) throw validationError('Busca muito longa.')
   return { query, page, pageSize }
-}
-
-export function readAdminReferralSearch(url: string): {
-  status: import('../../src/types/admin-api').AdminReferralStatus | null
-  query: string
-  page: number
-  pageSize: number
-} {
-  const { page, pageSize } = readAdminPagination(url, ['q', 'status'])
-  const params = new URL(url).searchParams
-  const query = params.get('q')?.trim() ?? ''
-  const rawStatus = params.get('status')?.trim() ?? ''
-  if (query.length > 200) throw validationError('Busca muito longa.')
-  if (rawStatus && !['pending', 'qualified', 'rewarded', 'rejected'].includes(rawStatus)) {
-    throw validationError('Status de indicação inválido.')
-  }
-  return {
-    status: rawStatus
-      ? rawStatus as import('../../src/types/admin-api').AdminReferralStatus
-      : null,
-    query,
-    page,
-    pageSize,
-  }
-}
-
-export async function readAdminReferralReason(request: Request): Promise<string> {
-  const body = await readJsonObject(request, new Set(['reason']))
-  return requiredText(body.reason, 'reason', 500)
 }
 
 export async function readAdminAppAdReview(request: Request): Promise<AdminAppAdReviewInput> {

@@ -10,8 +10,6 @@ import {
   validateEmail,
   validatePassword,
   validatePasswordConfirmation,
-  normalizeReferralCode,
-  validateReferralCode,
 } from './lib/auth-validation'
 import {
   AuthService,
@@ -73,7 +71,6 @@ import type {
   PublicConfigResponse,
   PublicGame,
   PublicProduct,
-  ReferralProgramResponse,
   ResolvedEntitlements,
   UserAppAdRequest,
 } from './types/backend-api'
@@ -118,7 +115,6 @@ type ActiveDialog =
   | 'copy-proxy'
   | 'proxy'
   | 'rename-account'
-  | 'referrals'
   | 'settings'
   | 'sponsored'
   | 'shortcuts'
@@ -349,7 +345,6 @@ type ApplicationBackend = Pick<BackendApi, 'getEntitlements' | 'getGames' | 'get
     | 'getAdminUser'
     | 'getPayment'
     | 'getProducts'
-    | 'getReferralProgram'
     | 'recordAppAdEvent'
     | 'sendPresenceHeartbeat'
     | 'updateProfile'
@@ -383,6 +378,7 @@ export interface AccountSessionLauncher {
     target: AccountSessionLaunchTarget | null,
   ): Promise<void> | void
   registerEscapeHandler(handler: () => void): (() => void) | void
+  registerAccountShortcutHandler?(handler: (digit: string) => void): (() => void) | void
   registerStatusHandler(
     handler: (event: AccountSessionStatusEvent) => void,
   ): (() => void) | void
@@ -474,27 +470,7 @@ const SESSION_INTERFACE_SCALE_STORAGE_KEY = 'altgrid.preference.session-interfac
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'altgrid.preference.sidebar-collapsed.v1'
 const UTILITY_BAR_COLLAPSED_STORAGE_KEY = 'altgrid.preference.utility-bar-collapsed.v1'
 const GRID_MODE_STORAGE_KEY = 'altgrid.preference.grid-mode.v1'
-const REFERRAL_CODE_STORAGE_KEY = 'altgrid.referral-code.v1'
 const RESOURCE_USAGE_REFRESH_INTERVAL_MS = 12_000
-
-function initialReferralCode(): string {
-  try {
-    const queryCode = normalizeReferralCode(
-      new URLSearchParams(window.location.search).get('ref') ?? '',
-    )
-    if (validateReferralCode(queryCode) === null && queryCode) {
-      localStorage.setItem(REFERRAL_CODE_STORAGE_KEY, queryCode)
-      return queryCode
-    }
-
-    const storedCode = normalizeReferralCode(
-      localStorage.getItem(REFERRAL_CODE_STORAGE_KEY) ?? '',
-    )
-    return validateReferralCode(storedCode) === null ? storedCode : ''
-  } catch {
-    return ''
-  }
-}
 
 export type EcoBackgroundFps = 10 | 20 | 30
 
@@ -715,10 +691,82 @@ const PLAN_BADGE_PRESENTATION: Record<PlanCode, {
   },
 }
 
+function creatorBadgeOverrideEnabledForEmail(email: string | null | undefined): boolean {
+  if (typeof globalThis === 'undefined' || typeof globalThis.localStorage === 'undefined') {
+    return false
+  }
+
+  try {
+    const enabled = globalThis.localStorage.getItem('altgrid.creator-tag.enabled') === 'true'
+    const storedEmail = globalThis.localStorage.getItem('altgrid.creator-tag.email')?.trim().toLowerCase() ?? ''
+    const normalizedEmail = email?.trim().toLowerCase() ?? ''
+    return enabled && Boolean(storedEmail) && Boolean(normalizedEmail) && storedEmail === normalizedEmail
+  } catch {
+    return false
+  }
+}
+
+export function founderBenefitsOverrideEnabledForEmail(email: string | null | undefined): boolean {
+  if (typeof globalThis === 'undefined' || typeof globalThis.localStorage === 'undefined') {
+    return false
+  }
+
+  try {
+    const enabled = globalThis.localStorage.getItem('altgrid.founder-benefits.enabled') === 'true'
+    const storedEmail = globalThis.localStorage.getItem('altgrid.founder-benefits.email')?.trim().toLowerCase() ?? ''
+    const normalizedEmail = email?.trim().toLowerCase() ?? ''
+    return enabled && Boolean(storedEmail) && Boolean(normalizedEmail) && storedEmail === normalizedEmail
+  } catch {
+    return false
+  }
+}
+
+export function localFounderOverrideEntitlementsForEmail(
+  email: string | null | undefined,
+  base: ResolvedEntitlements,
+): ResolvedEntitlements {
+  if (!founderBenefitsOverrideEnabledForEmail(email)) {
+    return base
+  }
+
+  return {
+    ...base,
+    account_limit: UNLIMITED_ACCOUNT_LIMIT,
+    expires_at: null,
+    features: {
+      ...base.features,
+      account_proxy: true,
+      advanced_grids: true,
+      eco_mode: true,
+      extended_screens: true,
+    },
+    founder_number: base.founder_number ?? 1,
+    lifetime: true,
+    plan: 'FOUNDER',
+  }
+}
+
+function renderCreatorBadge(): string {
+  return `<span class="plan-badge plan-badge--creator" aria-label="Plano Criador"><img class="plan-badge__icon" src="${escapeHtml(planFounderBadgeUrl)}" alt="" aria-hidden="true" /><span class="plan-badge__text">CRIADOR</span></span>`
+}
+
+function currentAccountDisplayPlanName(plan: PlanCode, email: string | null | undefined): string {
+  if (creatorBadgeOverrideEnabledForEmail(email)) {
+    return 'Criador'
+  }
+
+  return PLAN_PRESENTATION[plan].displayName
+}
+
 export function renderPlanBadge(
   plan: PlanCode,
   founderNumber: number | null = null,
+  userEmail: string | null = null,
 ): string {
+  if (creatorBadgeOverrideEnabledForEmail(userEmail)) {
+    return renderCreatorBadge()
+  }
+
   const presentation = PLAN_BADGE_PRESENTATION[plan]
   const planClass = plan.toLowerCase().replace('_', '-')
   const founderNumberText = plan === 'FOUNDER' && founderNumber !== null
@@ -870,6 +918,7 @@ export class AuthApp {
   private session: Session | null = null
   private unsubscribeFromAuth: (() => void) | null = null
   private unsubscribeFromSessionEscape: (() => void) | null = null
+  private unsubscribeFromSessionShortcut: (() => void) | null = null
   private unsubscribeFromChat: (() => void) | null = null
   private unsubscribeFromSessionStatus: (() => void) | null = null
   private destroyed = false
@@ -936,10 +985,6 @@ export class AuthApp {
   private sponsoredPopupShownForUserId: string | null = null
   private products: PublicProduct[] = []
   private appMetrics: AppMetricsResponse | null = null
-  private referralProgram: ReferralProgramResponse | null = null
-  private referralLoading = false
-  private referralError: string | null = null
-  private signupReferralCode = initialReferralCode()
   private pendingConfirmationEmail = ''
   private confirmationResendStatus: 'idle' | 'sending' | 'sent' | 'error' = 'idle'
   private confirmationResendMessage = ''
@@ -1088,6 +1133,9 @@ export class AuthApp {
       registerEscapeHandler: (handler) => (
         sessionLauncher?.registerEscapeHandler?.(handler)
       ),
+      registerAccountShortcutHandler: sessionLauncher?.registerAccountShortcutHandler
+        ? (handler) => sessionLauncher.registerAccountShortcutHandler!(handler)
+        : undefined,
       registerStatusHandler: (handler) => (
         sessionLauncher?.registerStatusHandler?.(handler)
       ),
@@ -1145,6 +1193,9 @@ export class AuthApp {
     this.unsubscribeFromSessionEscape =
       this.sessionLauncher.registerEscapeHandler(this.handleSessionEscape)
       ?? null
+    this.unsubscribeFromSessionShortcut =
+      this.sessionLauncher.registerAccountShortcutHandler?.(this.handleSessionShortcut)
+      ?? null
     this.unsubscribeFromSessionStatus =
       this.sessionLauncher.registerStatusHandler(this.handleSessionStatus)
       ?? null
@@ -1201,9 +1252,7 @@ export class AuthApp {
         this.prepareAuthenticatedSession(session)
       } else {
         this.session = session
-        this.currentView = this.recoveryMode
-          ? 'reset'
-          : this.signupReferralCode ? 'signup' : 'login'
+        this.currentView = this.recoveryMode ? 'reset' : 'login'
       }
     } catch (error) {
       if (
@@ -1252,6 +1301,8 @@ export class AuthApp {
     this.unsubscribeFromAuth = null
     this.unsubscribeFromSessionEscape?.()
     this.unsubscribeFromSessionEscape = null
+    this.unsubscribeFromSessionShortcut?.()
+    this.unsubscribeFromSessionShortcut = null
     this.unsubscribeFromSessionStatus?.()
     this.unsubscribeFromSessionStatus = null
     this.unsubscribeFromChat?.()
@@ -1440,18 +1491,28 @@ export class AuthApp {
     }
 
     if (event.ctrlKey && !event.altKey && !event.shiftKey && /^[1-9]$/.test(event.key)) {
-      const account = this.configuredAccounts[Number(event.key) - 1]
-
-      if (!account) {
-        return
+      if (this.switchToAccountByDigit(event.key)) {
+        event.preventDefault()
       }
-
-      event.preventDefault()
-      const button = this.root.querySelector<HTMLButtonElement>(
-        `[data-account-tab][data-account-id="${CSS.escape(account.id)}"]`,
-      )
-      button?.click()
     }
+  }
+
+  private readonly handleSessionShortcut = (digit: string): void => {
+    this.switchToAccountByDigit(digit)
+  }
+
+  private switchToAccountByDigit(digit: string): boolean {
+    const account = this.configuredAccounts[Number(digit) - 1]
+
+    if (!account) {
+      return false
+    }
+
+    const button = this.root.querySelector<HTMLButtonElement>(
+      `[data-account-tab][data-account-id="${CSS.escape(account.id)}"]`,
+    )
+    button?.click()
+    return true
   }
 
   private readonly handleSessionEscape = (): void => {
@@ -1735,9 +1796,6 @@ export class AuthApp {
     this.sponsoredPopupShownForUserId = null
     this.products = []
     this.appMetrics = null
-    this.referralProgram = null
-    this.referralLoading = false
-    this.referralError = null
     this.notificationCenter.setAnnouncements([])
     this.pixPayment = null
     this.paymentError = null
@@ -2155,14 +2213,18 @@ export class AuthApp {
         entitlementsResult.status === 'fulfilled'
         && entitlementsResult.value
       ) {
-        this.permissionService.updateEntitlements(
+        const entitlements = localFounderOverrideEntitlementsForEmail(
+          this.session?.user.email ?? null,
           entitlementsResult.value.entitlements,
         )
+        this.permissionService.updateEntitlements(entitlements)
         this.offlineLicenseSource = entitlementsResult.value.source
       } else if (meResult.status === 'fulfilled' && meResult.value) {
-        this.permissionService.updateEntitlements(
+        const entitlements = localFounderOverrideEntitlementsForEmail(
+          this.session?.user.email ?? null,
           entitlementsFromMe(meResult.value),
         )
+        this.permissionService.updateEntitlements(entitlements)
       }
 
       if (gamesResult.status === 'fulfilled') {
@@ -2260,41 +2322,6 @@ export class AuthApp {
     }).catch(() => undefined)
 
     return request
-  }
-
-  private async loadReferralProgram(force = false): Promise<void> {
-    if (!this.backendApi?.getReferralProgram || this.referralLoading) {
-      if (!this.backendApi?.getReferralProgram) {
-        this.referralError = 'O programa de indicações está temporariamente indisponível.'
-        this.render()
-      }
-      return
-    }
-
-    if (this.referralProgram && !force) return
-
-    const userId = this.session?.user.id
-    if (!userId) return
-
-    this.referralLoading = true
-    this.referralError = null
-    this.render()
-
-    try {
-      const program = await this.backendApi.getReferralProgram()
-      if (!this.destroyed && this.session?.user.id === userId) {
-        this.referralProgram = program
-      }
-    } catch (error) {
-      if (!this.destroyed && this.session?.user.id === userId) {
-        this.referralError = backendErrorMessage(error)
-      }
-    } finally {
-      if (!this.destroyed && this.session?.user.id === userId) {
-        this.referralLoading = false
-        this.render()
-      }
-    }
   }
 
   private async enterPasswordRecovery(session: Session | null): Promise<void> {
@@ -2669,8 +2696,6 @@ export class AuthApp {
                 ? [this.games, this.gameCatalogError]
                 : this.activeDialog === 'my-plan'
                   ? this.me
-                : this.activeDialog === 'referrals'
-                  ? [this.referralLoading, this.referralError, this.referralProgram]
                   : this.activeDialog === 'proxy' || this.activeDialog === 'copy-proxy'
                     ? [
                         this.proxyConfig,
@@ -2746,6 +2771,11 @@ export class AuthApp {
 
   private renderPlanName(): string {
     const plan = this.permissionService.getCurrentPlan()
+    const email = this.session?.user.email ?? this.me?.user.email ?? null
+
+    if (creatorBadgeOverrideEnabledForEmail(email)) {
+      return 'Criador'
+    }
 
     return plan === 'FOUNDER' && this.me?.founder_number
       ? `FOUNDER #${String(this.me.founder_number).padStart(4, '0')}`
@@ -2815,7 +2845,10 @@ export class AuthApp {
                 </button>
                 ${active
                   ? this.mobileSessionMode
-                    ? `<button class="account-tab__close" data-close-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Fechar sessão ${escapeHtml(account.displayName)}" title="Fechar sessão">×</button>`
+                    ? `<div class="account-tab__actions">
+                      <button class="account-tab__action account-tab__action--rest ${resting ? 'is-active' : ''}" ${resting ? 'data-restore-account' : 'data-background-account'} data-account-id="${escapeHtml(account.id)}" type="button" aria-label="${resting ? 'Restaurar' : 'Colocar em descanso'} ${escapeHtml(account.displayName)}" title="${resting ? 'Em descanso · toque para restaurar' : 'Descansar tela mantendo o jogo ativo'}">${resting ? '<span class="account-tab__play" aria-hidden="true">▶</span>' : uiIcon('moon')}</button>
+                      <button class="account-tab__action account-tab__action--close" data-close-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Fechar sessão ${escapeHtml(account.displayName)}" title="Fechar sessão">${uiIcon('close')}</button>
+                    </div>`
                     : `<div class="account-tab__actions">
                       ${this.extensionControlAvailable() ? `<button class="account-tab__action account-tab__action--extension ${extensionEnabled ? 'is-active' : ''}" data-extension-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Extensão de ${escapeHtml(account.displayName)}" title="${extensionState && !extensionWithinLimit ? 'Extensão preservada · fora do limite atual' : extensionEnabled ? `${escapeHtml(extensionState?.name ?? 'Extensão')} ativa` : extensionState ? 'Extensão configurada, mas desativada' : 'Configurar extensão por conta'}" ${extensionLoading ? 'disabled' : ''}>${extensionLoading ? '…' : 'E'}</button>` : ''}
                       ${this.proxyControlAvailable() ? `<button class="account-tab__action account-tab__action--proxy ${proxyEnabled ? 'is-active' : ''}" data-toggle-account-proxy data-account-id="${escapeHtml(account.id)}" type="button" aria-label="${proxyEnabled ? 'Desativar' : proxyState ? 'Ativar' : 'Configurar'} proxy de ${escapeHtml(account.displayName)}" title="${proxyEnabled ? 'Proxy ativo · clique para desativar' : proxyState ? 'Proxy salvo · clique para ativar' : 'Configurar proxy'}" ${proxyLoading ? 'disabled' : ''}>${proxyLoading ? '…' : 'P'}</button>` : ''}
@@ -3010,12 +3043,6 @@ export class AuthApp {
             'Confirmar senha',
             'new-password',
           )}
-          <div class="field field--referral">
-            <label for="signup-referral-code">Código de indicação <small>opcional</small></label>
-            <input id="signup-referral-code" name="referralCode" type="text" inputmode="text" autocomplete="off" maxlength="13" placeholder="HUNT-XXXXXXXX" value="${escapeHtml(this.signupReferralCode)}" aria-describedby="signup-referral-code-help signup-referral-code-error" />
-            <small id="signup-referral-code-help">Se você recebeu um link, o código aparece preenchido automaticamente.</small>
-            <span class="field__error" id="signup-referral-code-error"></span>
-          </div>
 
           <button class="button button--primary" data-submit type="submit">
             Criar conta
@@ -3171,7 +3198,8 @@ export class AuthApp {
       .slice(0, 6)
     const activeSessions = this.permissionService.getActiveSessionCount()
     const currentPlan = this.permissionService.getCurrentPlan()
-    const profilePlanBadge = renderPlanBadge(currentPlan, this.me?.founder_number ?? null)
+    const currentUserEmail = this.session?.user.email ?? this.me?.user.email ?? null
+    const profilePlanBadge = renderPlanBadge(currentPlan, this.me?.founder_number ?? null, currentUserEmail)
 
     return `
       <aside class="game-sidebar" data-sidebar-region aria-label="Navegação principal">
@@ -3209,7 +3237,6 @@ export class AuthApp {
 
         <nav class="sidebar-menu" aria-label="Preferências">
           <p class="sidebar-menu__label">Conta e preferências</p>
-          <button data-open-dialog="referrals" type="button"><span aria-hidden="true">✦</span><b>Indique e ganhe</b><i aria-hidden="true">›</i></button>
           <button data-open-dialog="settings" type="button"><span aria-hidden="true">⚙</span><b>Configurações</b><i aria-hidden="true">›</i></button>
           <button data-open-dialog="shortcuts" type="button"><span aria-hidden="true">⌨</span><b>Atalhos</b><i aria-hidden="true">›</i></button>
           <button data-open-dialog="about" type="button"><span aria-hidden="true">ⓘ</span><b>Sobre o AltGrid</b><i aria-hidden="true">›</i></button>
@@ -3237,7 +3264,6 @@ export class AuthApp {
             <p class="sidebar-profile-popover__section-label">Sua conta</p>
             <div class="sidebar-profile-popover__actions">
               <button class="menu-item" data-open-dialog="my-plan" type="button"><span><i aria-hidden="true">${uiIcon('gauge')}</i><span><b>Meu plano</b><small>Benefícios e limites</small></span></span><b aria-hidden="true">›</b></button>
-              <button class="menu-item" data-open-dialog="referrals" type="button"><span><i aria-hidden="true">${uiIcon('gift')}</i><span><b>Indique e ganhe</b><small>Convites e recompensas</small></span></span><b aria-hidden="true">›</b></button>
               <button class="menu-item sidebar-profile-popover__advertise" data-open-dialog="advertise" type="button"><span><i aria-hidden="true">${uiIcon('external')}</i><span><b>Anuncie no AltGrid</b><small>Divulgue seu jogo, produto ou site</small></span></span><b aria-hidden="true">›</b></button>
               <button class="menu-item" data-open-dialog="about" type="button"><span><i aria-hidden="true">${uiIcon('user')}</i><span><b>Minha conta</b><small>Perfil e informações</small></span></span><b aria-hidden="true">›</b></button>
               <button class="menu-item" data-open-dialog="settings" type="button"><span><i aria-hidden="true">${uiIcon('settings')}</i><span><b>Configurações</b><small>Preferências do aplicativo</small></span></span><b aria-hidden="true">›</b></button>
@@ -3301,7 +3327,6 @@ export class AuthApp {
               <span><span class="profile-name-with-plan"><strong>${escapeHtml(this.profileDisplayName())}</strong>${profilePlanBadge}</span><small>${escapeHtml(this.renderPlanName())}</small></span>
             </div>
             <button class="menu-item" data-open-dialog="my-plan" type="button">Meu plano <b aria-hidden="true">›</b></button>
-            <button class="menu-item" data-open-dialog="referrals" type="button">Indique e ganhe <b aria-hidden="true">›</b></button>
             <button class="menu-item" data-open-dialog="settings" type="button">Configurações <b aria-hidden="true">›</b></button>
             <button class="menu-item" data-open-dialog="about" type="button">Sobre o AltGrid <b aria-hidden="true">›</b></button>
             <button class="menu-item menu-item--danger" id="logout-button" type="button">Sair</button>
@@ -3974,7 +3999,7 @@ export class AuthApp {
     channel: ChatState['channels'][number] | undefined,
   ): string {
     const own = message.user_id === this.session?.user.id
-    const badge = renderPlanBadge(message.plan, message.founder_number)
+    const badge = renderPlanBadge(message.plan, message.founder_number, own ? (this.session?.user.email ?? null) : null)
 
     return `
       <article class="chat-message ${own ? 'is-own' : ''}" data-chat-message-channel="${escapeHtml(message.channel_id)}">
@@ -4260,7 +4285,7 @@ export class AuthApp {
                   <button class="session-menu__action" data-reload-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem"><i>${uiIcon('refresh')}</i><span>Recarregar</span></button>
                   <button class="session-menu__action" data-maximize-account data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem"><i>${uiIcon('screens')}</i><span>${this.mobileSessionMode ? (mobileFullscreen ? 'Sair da tela cheia' : 'Tela cheia · zoom automático') : 'Maximizar'}</span></button>
                   <button class="session-menu__action ${muted ? 'is-active' : ''}" data-toggle-session-mute data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem"><i>${uiIcon('volume')}</i><span>${muted ? 'Ativar som' : 'Silenciar'}</span></button>
-                  ${this.mobileSessionMode ? '' : `<button class="session-menu__action ${resting ? 'is-active' : ''}" ${resting ? 'data-restore-account' : 'data-background-account'} data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem"><i>${uiIcon('moon')}</i><span>${resting ? 'Despertar' : 'Descansar'}</span></button>`}
+                  <button class="session-menu__action ${resting ? 'is-active' : ''}" ${resting ? 'data-restore-account' : 'data-background-account'} data-account-id="${escapeHtml(account.id)}" type="button" role="menuitem"><i>${uiIcon('moon')}</i><span>${resting ? 'Despertar' : 'Descansar'}</span></button>
                 </div>
               </section>
 
@@ -4452,10 +4477,6 @@ export class AuthApp {
       `
     }
 
-    if (this.mobileSessionMode) {
-      return ''
-    }
-
     if (this.backgroundAccountIds.has(account.id)) {
       return `
         <button class="session-rest-screen" data-restore-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Despertar ${escapeHtml(account.displayName)}">
@@ -4466,6 +4487,10 @@ export class AuthApp {
           <b>Despertar tela</b>
         </button>
       `
+    }
+
+    if (this.mobileSessionMode) {
+      return ''
     }
 
     return `
@@ -5532,103 +5557,18 @@ export class AuthApp {
       `
     }
 
-    if (this.activeDialog === 'referrals') {
-      const program = this.referralProgram
-      const campaignEnd = program
-        ? new Intl.DateTimeFormat('pt-BR', {
-            dateStyle: 'medium',
-            timeStyle: 'short',
-          }).format(new Date(program.campaign.ends_at))
-        : null
-      const ranking = program?.leaderboard ?? []
-      const leaderScore = ranking[0]?.valid_referrals ?? 0
-      const currentScore = program?.stats.valid ?? 0
-      const scoreToLead = Math.max(0, leaderScore - currentScore + (program?.stats.position === 1 ? 0 : 1))
-      const rankingProgress = leaderScore > 0
-        ? Math.min(100, Math.round((currentScore / Math.max(leaderScore, 1)) * 100))
-        : currentScore > 0 ? 100 : 0
-      return `
-        <dialog class="modal modal--referrals referral-variant--compact" id="app-dialog" aria-labelledby="dialog-title">
-          <div class="referral-hero">
-            <div>
-              <p class="eyebrow">INDIQUE E GANHE</p>
-              <h2 id="dialog-title">Convide amigos. Ganhe PRO.</h2>
-              <p>Você recebe <strong>1 dia de PRO</strong> por indicação válida e ainda disputa planos vitalícios.</p>
-            </div>
-            <div class="referral-hero__mark" aria-hidden="true">${uiIcon('gift')}</div>
-          </div>
-
-          ${this.referralError ? `<div class="form-alert is-visible" role="alert">${escapeHtml(this.referralError)}</div>` : ''}
-          ${this.referralLoading && !program ? '<div class="referral-loading"><span class="spinner spinner--green"></span><span>Validando indicações e carregando o ranking…</span></div>' : ''}
-          ${program ? `
-            <div class="referral-command-center">
-              <section class="referral-invite" aria-label="Seu convite AltGrid">
-                <div class="referral-invite__heading">
-                  <span class="referral-invite__icon">${uiIcon('sparkles')}</span>
-                  <span><small>SEU CONVITE EXCLUSIVO</small><strong>${escapeHtml(program.code)}</strong></span>
-                  <span class="referral-live-pill"><i></i> Campanha ativa</span>
-                </div>
-                <p>Compartilhe este link. O código já chega preenchido no cadastro do seu amigo.</p>
-                <div class="referral-link-box">
-                  <input data-referral-url type="text" readonly value="${escapeHtml(program.share_url)}" aria-label="Link de indicação" />
-                  <button class="button button--secondary" data-copy-referral type="button">${uiIcon('copy')} Copiar link</button>
-                  <button class="button button--primary" data-share-referral type="button">${uiIcon('share')} Compartilhar</button>
-                </div>
-              </section>
-
-              <aside class="referral-position" aria-label="Sua posição na campanha">
-                <div class="referral-position__top"><span><small>SUA POSIÇÃO</small><strong>${program.stats.position ? `#${program.stats.position}` : '—'}</strong></span><i>${uiIcon('trophy')}</i></div>
-                <div class="referral-position__progress"><i style="width:${rankingProgress}%"></i></div>
-                <p>${program.stats.position === 1 ? 'Você está liderando a corrida.' : scoreToLead > 0 ? `${scoreToLead} ${scoreToLead === 1 ? 'indicação' : 'indicações'} para assumir a liderança.` : 'Faça sua primeira indicação para entrar no ranking.'}</p>
-                <small>Campanha termina em ${escapeHtml(campaignEnd ?? '—')}</small>
-              </aside>
-            </div>
-
-            <section class="referral-metrics" aria-label="Seus resultados">
-              <article><i>${uiIcon('users')}</i><span><small>Convites enviados</small><strong>${program.stats.total}</strong></span></article>
-              <article class="is-success"><i>${uiIcon('check')}</i><span><small>Indicações válidas</small><strong>${program.stats.valid}</strong></span></article>
-              <article class="is-pending"><i>${uiIcon('clock')}</i><span><small>Em validação</small><strong>${program.stats.pending}</strong></span></article>
-              <article class="is-reward"><i>${uiIcon('star')}</i><span><small>Recompensa acumulada</small><strong>${program.stats.pro_days}d PRO</strong></span></article>
-            </section>
-
-            <div class="referral-content-grid">
-              <section class="referral-board referral-panel" aria-labelledby="referral-ranking-title">
-                <div class="referral-section-heading"><div><p class="eyebrow">RANKING AO VIVO</p><h3 id="referral-ranking-title">Quem está no topo</h3></div><button class="referral-refresh" data-refresh-referrals type="button">${uiIcon('refresh')} Atualizar</button></div>
-                <div class="referral-board__list">
-                  ${ranking.length > 0 ? ranking.slice(0, 10).map((entry) => `
-                    <div class="referral-rank-row ${entry.is_current_user ? 'is-current-user' : ''} ${entry.position <= 3 ? `is-top-${entry.position}` : ''}">
-                      <span class="referral-rank-row__position">${entry.position <= 3 ? ['1', '2', '3'][entry.position - 1] : entry.position}</span>
-                      <span class="referral-rank-row__avatar">${escapeHtml(entry.display_name.slice(0, 1).toUpperCase())}</span>
-                      <span><strong>${escapeHtml(entry.display_name)}${entry.is_current_user ? ' <em>VOCÊ</em>' : ''}</strong><small>${entry.prize_plan ? `Premiação atual: ${entry.prize_plan === 'PRO_PLUS' ? 'PLUS' : entry.prize_plan}` : 'Subindo no ranking'}</small></span>
-                      <b>${entry.valid_referrals}<small>${entry.valid_referrals === 1 ? ' indicação' : ' indicações'}</small></b>
-                    </div>
-                  `).join('') : '<div class="referral-empty"><span>✦</span><strong>O pódio está livre</strong><small>Compartilhe seu convite e seja o primeiro colocado.</small></div>'}
-                </div>
-              </section>
-
-              <aside class="referral-side-stack">
-                <section class="referral-podium referral-panel" aria-labelledby="referral-prizes-title">
-                  <div class="referral-section-heading"><div><p class="eyebrow">PRÊMIOS VITALÍCIOS</p><h3 id="referral-prizes-title">Pódio da campanha</h3></div></div>
-                  <div class="referral-podium__list">
-                    <article class="is-founder"><span>1</span><img src="${planFounderBadgeUrl}" alt="" /><div><strong>FOUNDER</strong><small>Plano máximo vitalício</small></div></article>
-                    <article class="is-plus"><span>2</span><img src="${planProPlusBadgeUrl}" alt="" /><div><strong>PLUS</strong><small>Plano Plus vitalício</small></div></article>
-                    <article class="is-pro"><span>3</span><img src="${planProBadgeUrl}" alt="" /><div><strong>PRO</strong><small>Plano PRO vitalício</small></div></article>
-                  </div>
-                </section>
-
-              </aside>
-            </div>
-            <p class="referral-validation-note">Indicações são validadas após 24h de uso. Conta, e-mail e dispositivo precisam ser únicos.</p>
-          ` : ''}
-          <div class="modal__actions modal__actions--end"><button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
-        </dialog>
-      `
-    }
-
     if (this.activeDialog === 'settings') {
       const restore = localStorage.getItem('altgrid.preference.restore-session') !== 'false'
       const confirmClose = localStorage.getItem('altgrid.preference.confirm-close') !== 'false'
       const notifications = localStorage.getItem('altgrid.preference.notifications') !== 'false'
+      const creatorTagEmail = this.session?.user.email ?? localStorage.getItem('altgrid.creator-tag.email') ?? ''
+      const creatorTagEnabled = this.session?.user.email
+        ? creatorBadgeOverrideEnabledForEmail(this.session.user.email)
+        : localStorage.getItem('altgrid.creator-tag.enabled') === 'true'
+      const founderBenefitsEmail = this.session?.user.email ?? localStorage.getItem('altgrid.founder-benefits.email') ?? ''
+      const founderBenefitsEnabled = this.session?.user.email
+        ? founderBenefitsOverrideEnabledForEmail(this.session.user.email)
+        : localStorage.getItem('altgrid.founder-benefits.enabled') === 'true'
       const ecoModeAvailable = this.ecoModeSupported
         && this.permissionService.canUseFeature('eco_mode')
       const ecoModeNote = !this.permissionService.canUseFeature('eco_mode')
@@ -5657,7 +5597,7 @@ export class AuthApp {
               <button class="is-active" data-settings-tab="general" type="button">Geral</button><button data-settings-tab="accounts" type="button">Contas</button><button data-settings-tab="visual" type="button">Visual</button><button data-settings-tab="updates" type="button">Atualizações</button><button data-settings-tab="notifications" type="button">Notificações</button><button data-settings-tab="about" type="button">Sobre</button>
             </nav>
             <div class="settings-content">
-              <section data-settings-panel="general"><h3>Geral</h3><label class="setting-toggle"><span><strong>Eco Mode adaptativo</strong><small>${ecoModeNote}</small></span><input data-preference="eco-mode" type="checkbox" ${this.ecoModeRequested ? 'checked' : ''} ${ecoModeAvailable ? '' : 'disabled'} /></label><label class="setting-select"><span><strong>Máximo em segundo plano</strong><small>A conta em uso fica limitada a 30 FPS. Com 4 ou 8 contas, o AltGrid reduz automaticamente as secundárias para 10 ou 5 FPS.</small></span><select data-eco-background-fps ${ecoModeAvailable ? '' : 'disabled'}><option value="10" ${this.ecoBackgroundFps === 10 ? 'selected' : ''}>Até 10 FPS</option><option value="20" ${this.ecoBackgroundFps === 20 ? 'selected' : ''}>Até 20 FPS</option><option value="30" ${this.ecoBackgroundFps === 30 ? 'selected' : ''}>Até 30 FPS</option></select></label><label class="setting-toggle"><span><strong>Restaurar última sessão</strong><small>Reabre as contas usadas na inicialização anterior.</small></span><input data-preference="restore-session" type="checkbox" ${restore ? 'checked' : ''} /></label><label class="setting-toggle"><span><strong>Confirmar antes de fechar</strong><small>Evita encerrar sessões por acidente.</small></span><input data-preference="confirm-close" type="checkbox" ${confirmClose ? 'checked' : ''} /></label></section>
+              <section data-settings-panel="general"><h3>Geral</h3><label class="setting-toggle"><span><strong>Eco Mode adaptativo</strong><small>${ecoModeNote}</small></span><input data-preference="eco-mode" type="checkbox" ${this.ecoModeRequested ? 'checked' : ''} ${ecoModeAvailable ? '' : 'disabled'} /></label><label class="setting-toggle"><span><strong>Tag Criador</strong><small>Mostra uma badge vermelha exclusiva para sua conta para testar o visual premium localmente.</small></span><input data-preference="creator-tag" type="checkbox" ${creatorTagEnabled ? 'checked' : ''} ${creatorTagEmail ? '' : 'disabled'} /></label><label class="setting-toggle"><span><strong>Benefícios Founder</strong><small>Ativa o plano máximo localmente para testar limites, proxy e recursos exclusivos sem mudar a conta real.</small></span><input data-preference="founder-benefits" type="checkbox" ${founderBenefitsEnabled ? 'checked' : ''} ${founderBenefitsEmail ? '' : 'disabled'} /></label><label class="setting-select"><span><strong>Máximo em segundo plano</strong><small>A conta em uso fica limitada a 30 FPS. Com 4 ou 8 contas, o AltGrid reduz automaticamente as secundárias para 10 ou 5 FPS.</small></span><select data-eco-background-fps ${ecoModeAvailable ? '' : 'disabled'}><option value="10" ${this.ecoBackgroundFps === 10 ? 'selected' : ''}>Até 10 FPS</option><option value="20" ${this.ecoBackgroundFps === 20 ? 'selected' : ''}>Até 20 FPS</option><option value="30" ${this.ecoBackgroundFps === 30 ? 'selected' : ''}>Até 30 FPS</option></select></label><label class="setting-toggle"><span><strong>Restaurar última sessão</strong><small>Reabre as contas usadas na inicialização anterior.</small></span><input data-preference="restore-session" type="checkbox" ${restore ? 'checked' : ''} /></label><label class="setting-toggle"><span><strong>Confirmar antes de fechar</strong><small>Evita encerrar sessões por acidente.</small></span><input data-preference="confirm-close" type="checkbox" ${confirmClose ? 'checked' : ''} /></label></section>
               <section data-settings-panel="accounts" hidden><h3>Contas e desempenho</h3><p>Cookies, sessões e proxies ficam somente neste dispositivo, isolados por conta.</p><div class="resource-summary"><span><small>Uso das sessões</small><strong>${escapeHtml(formatMemoryKb(totalPrivateKb))} · ${totalCpu.toFixed(1)}% CPU</strong></span><button class="button button--secondary" data-refresh-resource-usage type="button" ${this.resourceUsageLoading ? 'disabled' : ''}>${this.resourceUsageLoading ? 'Medindo…' : 'Medir agora'}</button></div>${usageRows ? `<div class="resource-list">${usageRows}</div>` : '<p class="modal__note">Abra suas contas e clique em “Medir agora” para ver o consumo por sessão.</p>'}<p class="modal__note">O perfil de 10 FPS reduz trabalho de CPU/GPU das contas em segundo plano. Como cada jogo mantém um navegador isolado e ativo, a RAM só é totalmente liberada ao fechar a conta.</p></section>
               <section data-settings-panel="visual" hidden><h3>Visual</h3><p>O tema escuro premium acompanha automaticamente o AltGrid.</p></section>
               <section data-settings-panel="updates" hidden><h3>Atualizações</h3><p>Canal atual: <strong>${updateChannel}</strong> · instalada ${APP_VERSION}${this.configText('latest_version') ? ` · disponível ${escapeHtml(this.configText('latest_version')!)}` : ''}</p><button class="button button--secondary" data-check-update type="button">Verificar atualização</button></section>
@@ -5955,9 +5895,6 @@ export class AuthApp {
           this.activeDialog = dialog
           this.dialogError = null
           this.render()
-          if (dialog === 'referrals') {
-            void this.loadReferralProgram()
-          }
           if (dialog === 'advertise') {
             void this.loadMyAppAdRequests()
           }
@@ -6655,7 +6592,7 @@ export class AuthApp {
       .forEach((button) => {
         this.bindButtonOnce(button, () => {
           const account = this.accountFromAction(button)
-          if (!account || this.mobileSessionMode) return
+          if (!account) return
           button.closest('details')?.removeAttribute('open')
           this.backgroundAccountIds.add(account.id)
           if (this.maximizedAccountId === account.id) {
@@ -7817,6 +7754,50 @@ export class AuthApp {
             void this.updateEcoModePreference(input.checked, input)
             return
           }
+          if (key === 'creator-tag') {
+            const email = this.session?.user.email ?? localStorage.getItem('altgrid.creator-tag.email') ?? ''
+            if (email) {
+              localStorage.setItem('altgrid.creator-tag.email', email)
+            }
+            localStorage.setItem('altgrid.creator-tag.enabled', String(input.checked))
+            this.render()
+            return
+          }
+          if (key === 'founder-benefits') {
+            const email = this.session?.user.email ?? localStorage.getItem('altgrid.founder-benefits.email') ?? ''
+            if (email) {
+              localStorage.setItem('altgrid.founder-benefits.email', email)
+            }
+            localStorage.setItem('altgrid.founder-benefits.enabled', String(input.checked))
+            this.render()
+            if (this.session?.user.email) {
+              this.permissionService.updateEntitlements(
+                localFounderOverrideEntitlementsForEmail(this.session.user.email, this.permissionService.getCurrentPlan() === 'FOUNDER'
+                  ? {
+                      account_limit: UNLIMITED_ACCOUNT_LIMIT,
+                      expires_at: null,
+                      features: {
+                        account_proxy: true,
+                        advanced_grids: true,
+                        eco_mode: true,
+                        extended_screens: true,
+                      },
+                      founder_number: 1,
+                      lifetime: true,
+                      plan: 'FOUNDER',
+                    }
+                  : {
+                      account_limit: this.permissionService.getAccountLimit(),
+                      expires_at: null,
+                      features: {},
+                      founder_number: null,
+                      lifetime: false,
+                      plan: this.permissionService.getCurrentPlan(),
+                    }),
+              )
+            }
+            return
+          }
           if (key) {
             localStorage.setItem(`altgrid.preference.${key}`, String(input.checked))
           }
@@ -7895,47 +7876,6 @@ export class AuthApp {
           const requestId = button.dataset.payAppAd
           if (requestId) void this.createAppAdPixPayment(requestId, button)
         })
-      })
-    }
-
-    const copyReferral = this.root.querySelector<HTMLButtonElement>(
-      '[data-copy-referral]',
-    )
-    if (copyReferral) {
-      this.bindButtonOnce(copyReferral, () => {
-        const url = this.root.querySelector<HTMLInputElement>('[data-referral-url]')?.value
-        if (!url) return
-        void navigator.clipboard.writeText(url)
-          .then(() => { copyReferral.textContent = 'Link copiado' })
-          .catch(() => this.showSessionAlert('Não foi possível copiar o link.'))
-      })
-    }
-
-    const shareReferral = this.root.querySelector<HTMLButtonElement>(
-      '[data-share-referral]',
-    )
-    if (shareReferral) {
-      this.bindButtonOnce(shareReferral, () => {
-        const url = this.referralProgram?.share_url
-        if (!url) return
-        const text = `Entre no AltGrid pelo meu convite ${this.referralProgram?.code} e conheça o gerenciador multissessão.`
-        if (navigator.share) {
-          void navigator.share({ title: 'Convite AltGrid', text, url })
-            .catch(() => undefined)
-          return
-        }
-        void navigator.clipboard.writeText(`${text}\n${url}`)
-          .then(() => { shareReferral.textContent = 'Convite copiado' })
-          .catch(() => this.showSessionAlert('Não foi possível compartilhar o convite.'))
-      })
-    }
-
-    const refreshReferrals = this.root.querySelector<HTMLButtonElement>(
-      '[data-refresh-referrals]',
-    )
-    if (refreshReferrals) {
-      this.bindButtonOnce(refreshReferrals, () => {
-        void this.loadReferralProgram(true)
       })
     }
 
@@ -9195,7 +9135,6 @@ export class AuthApp {
       const email = this.valueOf(form, 'email')
       const password = this.valueOf(form, 'password')
       const confirmation = this.valueOf(form, 'passwordConfirmation')
-      const referralCode = normalizeReferralCode(this.valueOf(form, 'referralCode'))
       const errors: FieldErrors = {
         email: validateEmail(email),
         password: validatePassword(password),
@@ -9203,7 +9142,6 @@ export class AuthApp {
           password,
           confirmation,
         ),
-        referralCode: validateReferralCode(referralCode),
       }
 
       if (!this.applyFieldErrors(form, errors)) {
@@ -9216,17 +9154,7 @@ export class AuthApp {
         const result: SignUpResult = await this.authService.signUp(
           email,
           password,
-          referralCode,
         )
-
-        if (referralCode) {
-          this.signupReferralCode = ''
-          try {
-            localStorage.removeItem(REFERRAL_CODE_STORAGE_KEY)
-          } catch {
-            // Storage is optional; signup already succeeded.
-          }
-        }
 
         if (result.session && !result.needsEmailConfirmation) {
           this.prepareAuthenticatedSession(result.session)

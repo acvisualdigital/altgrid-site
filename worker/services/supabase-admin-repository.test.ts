@@ -119,7 +119,7 @@ describe('SupabaseAdminRepository RPC boundary', () => {
   it('strips device hashes, raw metadata and provider payment IDs from detail', async () => {
     const { repository } = repositoryWithRpc(() => ({
       user: { id: TARGET, email: 'cliente@example.com', created_at: '2026-08-20T00:00:00.000Z' },
-      profile: { user_id: TARGET, display_name: 'Cliente', referral_code: 'HUNT-ABCDEFGH', created_at: '2026-08-20T00:00:00.000Z' },
+      profile: { user_id: TARGET, display_name: 'Cliente', created_at: '2026-08-20T00:00:00.000Z' },
       current_access: {
         plan_code: 'FREE',
         license_status: null,

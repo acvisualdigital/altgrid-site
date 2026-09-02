@@ -190,35 +190,3 @@ const applyCatalogTotal = async () => {
 
 applyCatalogTotal()
 
-const referralCode = (new URLSearchParams(window.location.search).get('ref') ?? '')
-  .trim()
-  .toUpperCase()
-
-if (/^HUNT-[A-HJ-NP-Z2-9]{8}$/.test(referralCode)) {
-  try {
-    localStorage.setItem('altgrid.referral-code.v1', referralCode)
-  } catch {
-    // The invitation remains visible even when browser storage is blocked.
-  }
-
-  const invitation = document.createElement('aside')
-  invitation.className = 'referral-invitation'
-  invitation.setAttribute('aria-label', 'Convite AltGrid')
-  invitation.innerHTML = `
-    <button class="referral-invitation__close" type="button" aria-label="Fechar convite">×</button>
-    <span class="referral-invitation__icon" aria-hidden="true">✦</span>
-    <div><small>VOCÊ RECEBEU UM CONVITE</small><strong>${referralCode}</strong><p>Abra o AltGrid e crie sua conta com este código já identificado.</p></div>
-    <div class="referral-invitation__actions"><a class="button button-primary" href="altgrid://app/?ref=${encodeURIComponent(referralCode)}">Abrir AltGrid</a><button class="button button-secondary" type="button" data-copy-site-referral>Copiar código</button></div>
-  `
-  document.body.append(invitation)
-
-  invitation.querySelector('.referral-invitation__close')?.addEventListener('click', () => {
-    invitation.remove()
-  })
-  invitation.querySelector('[data-copy-site-referral]')?.addEventListener('click', (event) => {
-    const button = event.currentTarget
-    navigator.clipboard.writeText(referralCode)
-      .then(() => { button.textContent = 'Código copiado' })
-      .catch(() => undefined)
-  })
-}

@@ -67,6 +67,7 @@ function integerBounds(bounds: GridLayout['slots'][number]['bounds']): SessionBo
  */
 export class ElectronSessionLauncher {
   private readonly escapeHandlers = new Set<() => void>()
+  private readonly shortcutHandlers = new Set<(digit: string) => void>()
   private readonly statusHandlers = new Set<(event: DesktopSessionStatusEvent) => void>()
   private readonly unavailableSessionIds = new Set<string>()
   private readonly unsubscribeFromEvents: () => void
@@ -76,6 +77,15 @@ export class ElectronSessionLauncher {
       if (event.type === 'escape') {
         for (const handler of this.escapeHandlers) {
           handler()
+        }
+        return
+      }
+
+      if (event.type === 'switch-account') {
+        if (event.detail) {
+          for (const handler of this.shortcutHandlers) {
+            handler(event.detail)
+          }
         }
         return
       }
@@ -194,6 +204,11 @@ export class ElectronSessionLauncher {
     return () => this.escapeHandlers.delete(handler)
   }
 
+  registerAccountShortcutHandler(handler: (digit: string) => void): () => void {
+    this.shortcutHandlers.add(handler)
+    return () => this.shortcutHandlers.delete(handler)
+  }
+
   registerStatusHandler(
     handler: (event: DesktopSessionStatusEvent) => void,
   ): () => void {
@@ -255,6 +270,7 @@ export class ElectronSessionLauncher {
 
   dispose(): void {
     this.escapeHandlers.clear()
+    this.shortcutHandlers.clear()
     this.statusHandlers.clear()
     this.unavailableSessionIds.clear()
     this.unsubscribeFromEvents()

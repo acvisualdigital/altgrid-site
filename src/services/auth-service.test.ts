@@ -118,22 +118,6 @@ describe('AuthService', () => {
     })
   })
 
-  it('sends a normalized referral code only as trusted signup metadata', async () => {
-    const { auth, service } = createHarness()
-    auth.signUp.mockResolvedValue({
-      data: { session: null, user },
-      error: null,
-    })
-
-    await service.signUp('hunter@example.com', 'secret123', ' hunt-abcdefgh ')
-
-    expect(auth.signUp).toHaveBeenCalledWith({
-      email: 'hunter@example.com',
-      password: 'secret123',
-      options: { data: { referral_code: 'HUNT-ABCDEFGH' } },
-    })
-  })
-
   it('returns the session after a successful login', async () => {
     const { auth, service } = createHarness()
     auth.signInWithPassword.mockResolvedValue({

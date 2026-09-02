@@ -1518,62 +1518,6 @@ form {
   gap: 7px;
 }
 
-.admin-referral-record {
-  padding: 9px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: var(--surface);
-}
-
-.admin-referral-record + .admin-referral-record {
-  margin-top: 6px;
-}
-
-.admin-referral-record__heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--text-secondary);
-  font-size: 9px;
-}
-
-.admin-referral-record__heading strong {
-  color: var(--green-hover);
-  text-transform: uppercase;
-}
-
-.admin-referral-record__heading small {
-  overflow: hidden;
-  color: var(--text-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.admin-referral-facts {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px 10px;
-  margin: 8px 0 0;
-}
-
-.admin-referral-facts div {
-  min-width: 0;
-}
-
-.admin-referral-facts dt {
-  color: var(--text-muted);
-  font-size: 8px;
-  text-transform: uppercase;
-}
-
-.admin-referral-facts dd {
-  margin: 2px 0 0;
-  overflow-wrap: anywhere;
-  color: var(--text-secondary);
-  font-size: 9px;
-}
-
 .admin-danger {
   color: #ff929a;
 }
@@ -6282,6 +6226,23 @@ form {
   box-shadow: 0 2px 10px rgba(173, 116, 27, 0.16), inset 0 1px 0 rgba(255, 244, 194, 0.24);
 }
 
+.plan-badge--creator {
+  color: #ffe1e1;
+  border-color: rgba(255, 120, 120, 0.82);
+  background: linear-gradient(110deg, rgba(120, 10, 10, 0.82), rgba(214, 34, 34, 0.46) 48%, rgba(78, 8, 8, 0.9));
+  box-shadow: 0 0 12px rgba(255, 94, 94, 0.28), inset 0 2px 0 rgba(255, 216, 216, 0.18);
+}
+
+.plan-badge--creator::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: '';
+  background: linear-gradient(120deg, transparent 14%, rgba(255, 233, 233, 0.28) 44%, transparent 65%);
+  transform: translateX(-110%);
+  animation: founder-badge-shine 4.5s ease-in-out infinite;
+}
+
 .plan-badge--founder::after {
   position: absolute;
   inset: 0;
@@ -8208,7 +8169,24 @@ form {
 }
 
 .app-frame--workspace.is-mobile-session .account-tab-shell.is-open .account-tab {
-  padding-right: 48px;
+  padding-right: 84px;
+}
+
+.app-frame--workspace.is-mobile-session .account-tab__actions {
+  gap: 4px;
+  padding: 4px;
+  top: 4px;
+  right: 4px;
+}
+
+.app-frame--workspace.is-mobile-session .account-tab__actions .account-tab__action {
+  width: 32px;
+  height: 32px;
+}
+
+.app-frame--workspace.is-mobile-session .account-tab__actions .account-tab__action .ui-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .app-frame--workspace.is-mobile-session .account-tab__game-icon {

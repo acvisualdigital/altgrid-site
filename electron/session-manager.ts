@@ -86,6 +86,7 @@ export type NativeSessionEvent =
       detail?: string
     }
   | { type: 'navigated'; url: string }
+  | { type: 'switch-account'; detail: string }
 
 export interface NativeSessionView {
   attach(): void

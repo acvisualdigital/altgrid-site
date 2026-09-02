@@ -12,7 +12,6 @@ import type {
   AppAdRequestReceipt,
   UserAppAdRequest,
   RegisterDeviceInput,
-  ReferralProgramResponse,
   SafeProfile,
   SafeUser,
 } from '../src/types/backend-api'
@@ -134,9 +133,6 @@ export interface BackendRepository {
     deviceId: string,
     now: string,
   ): Promise<DeviceResponse | null>
-  getReferralProgram(userId: string): Promise<ReferralProgramResponse>
-  reconcileReferralProgram(limit?: number): Promise<Record<string, unknown>>
-  finalizeReferralCampaigns(): Promise<Record<string, unknown>>
 }
 
 export interface AnnouncementRecord {
@@ -348,27 +344,6 @@ export interface AdminRepository {
     pageSize: number,
   ): Promise<{ users: AdminUserSummary[]; total: number }>
   getAdminUser(actorUserId: string, userId: string): Promise<AdminUserDetail | null>
-  getAdminReferrals(
-    actorUserId: string,
-    status: import('../src/types/admin-api').AdminReferralStatus | null,
-    query: string,
-    page: number,
-    pageSize: number,
-  ): Promise<{
-    referrals: import('../src/types/admin-api').AdminReferralLog[]
-    stats: import('../src/types/admin-api').AdminReferralStats
-    total: number
-  }>
-  adminApproveReferral(
-    actorUserId: string,
-    referralId: string,
-    reason: string,
-  ): Promise<import('../src/types/admin-api').AdminReferralLog>
-  adminRejectReferral(
-    actorUserId: string,
-    referralId: string,
-    reason: string,
-  ): Promise<import('../src/types/admin-api').AdminReferralLog>
   adminGrantProDays(actorUserId: string, targetUserId: string, days: number): Promise<void>
   adminSetPlan(
     actorUserId: string,

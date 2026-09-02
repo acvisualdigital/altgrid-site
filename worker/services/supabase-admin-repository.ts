@@ -23,10 +23,6 @@ import type {
   AdminProductUpdate,
   AdminPublisherRequest,
   AdminPublisherRequestStatus,
-  AdminReferral,
-  AdminReferralLog,
-  AdminReferralStats,
-  AdminReferralStatus,
   AdminUserDetail,
   AdminUserSummary,
 } from '../../src/types/admin-api'
@@ -35,8 +31,6 @@ import { ApiError } from '../lib/api-error'
 import type { AdminRepository } from '../types'
 
 const ADMIN_CONFIG_KEYS = [
-  'referral_referrer_days',
-  'referral_referred_days',
   'founder_max_sales',
   'maintenance',
   'minimum_version',
@@ -55,7 +49,6 @@ const ADMIN_PRODUCT_CODES = [
 type ProfileRow = {
   user_id: string
   display_name: string | null
-  referral_code: string
   created_at: string
 }
 
@@ -79,7 +72,6 @@ type SearchUsersRpcResult = {
     user_id: string
     email: string | null
     display_name: string | null
-    referral_code: string | null
     created_at: string
     plan_code: PlanCode
     license_status: string | null
@@ -101,16 +93,7 @@ type UserDetailRpcResult = {
   }
   licenses: Array<LicenseRow & { plan_code: PlanCode }>
   devices: AdminDevice[]
-  referrals: { as_referrer: AdminReferral[]; as_referred: AdminReferral[] }
   payments: AdminPayment[]
-}
-
-type ReferralListRpcResult = {
-  page: number
-  page_size: number
-  total: number
-  stats: AdminReferralStats
-  items: AdminReferralLog[]
 }
 
 function dataError(error: PostgrestError): never {
@@ -196,7 +179,6 @@ export class SupabaseAdminRepository implements AdminRepository {
         id: item.user_id,
         email: item.email,
         display_name: item.display_name,
-        referral_code: item.referral_code ?? '',
         created_at: item.created_at,
         plan: item.plan_code,
         license_status: item.license_status,
@@ -253,7 +235,6 @@ export class SupabaseAdminRepository implements AdminRepository {
       id: result.user.id,
       email: result.user.email,
       display_name: profile?.display_name ?? null,
-      referral_code: profile?.referral_code ?? '',
       created_at: result.user.created_at,
       plan: access.plan_code,
       license_status: access.license_status,
@@ -261,10 +242,6 @@ export class SupabaseAdminRepository implements AdminRepository {
       lifetime: access.lifetime,
       founder_number: access.founder_number,
       devices,
-      referrals: [
-        ...(result.referrals?.as_referrer ?? []),
-        ...(result.referrals?.as_referred ?? []),
-      ],
       payments: (result.payments ?? []).map((payment) => ({
         id: payment.id,
         provider: payment.provider,
@@ -279,53 +256,6 @@ export class SupabaseAdminRepository implements AdminRepository {
       licenses,
       chat_status: chatStatus as AdminUserDetail['chat_status'],
     }
-  }
-
-  async getAdminReferrals(
-    actorUserId: string,
-    status: AdminReferralStatus | null,
-    query: string,
-    page: number,
-    pageSize: number,
-  ): Promise<{ referrals: AdminReferralLog[]; stats: AdminReferralStats; total: number }> {
-    const { data, error } = await this.client.rpc('admin_list_referrals', {
-      p_actor_user_id: actorUserId,
-      p_status: status,
-      p_query: query,
-      p_page: page,
-      p_page_size: pageSize,
-    })
-    if (error) dataError(error)
-    const result = data as unknown as ReferralListRpcResult
-    return {
-      referrals: result.items ?? [],
-      stats: result.stats,
-      total: result.total,
-    }
-  }
-
-  adminApproveReferral(
-    actorUserId: string,
-    referralId: string,
-    reason: string,
-  ): Promise<AdminReferralLog> {
-    return this.adminRpcResult<AdminReferralLog>('admin_approve_referral', {
-      p_actor_user_id: actorUserId,
-      p_referral_id: referralId,
-      p_reason: reason,
-    })
-  }
-
-  adminRejectReferral(
-    actorUserId: string,
-    referralId: string,
-    reason: string,
-  ): Promise<AdminReferralLog> {
-    return this.adminRpcResult<AdminReferralLog>('admin_reject_referral', {
-      p_actor_user_id: actorUserId,
-      p_referral_id: referralId,
-      p_reason: reason,
-    })
   }
 
   private async adminRpc(name: string, parameters: Record<string, unknown>): Promise<void> {

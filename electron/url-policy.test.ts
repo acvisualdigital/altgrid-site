@@ -53,17 +53,15 @@ describe('desktop URL policies', () => {
     )).toBe(false)
   })
 
-  it('accepts only trusted auth callbacks or strictly formatted referral deep links', () => {
+  it('accepts only trusted auth callbacks', () => {
     const recovery = 'altgrid://app/?auth=recovery#access_token=opaque&type=recovery'
 
     expect(parseTrustedRecoveryDeepLink(recovery)).toBe(recovery)
     expect(parseTrustedRecoveryDeepLink('altgrid://app/admin')).toBeNull()
     expect(parseTrustedRecoveryDeepLink('altgrid://evil/?auth=recovery')).toBeNull()
     expect(parseTrustedRecoveryDeepLink('https://app/?auth=recovery')).toBeNull()
-    expect(parseTrustedRecoveryDeepLink('altgrid://app/?ref=hunt-abcdefgh'))
-      .toBe('altgrid://app/?ref=HUNT-ABCDEFGH')
-    expect(parseTrustedRecoveryDeepLink('altgrid://app/?ref=HUNT-ABCDEFGH&admin=true'))
-      .toBeNull()
+    expect(parseTrustedRecoveryDeepLink('altgrid://app/?ref=hunt-abcdefgh')).toBeNull()
+    expect(parseTrustedRecoveryDeepLink('altgrid://app/?ref=HUNT-ABCDEFGH&admin=true')).toBeNull()
     expect(findTrustedRecoveryDeepLink(['AltGrid.exe', '--flag', recovery]))
       .toBe(recovery)
     const oauth = 'altgrid://app/?auth=oauth#access_token=access&refresh_token=refresh&token_type=bearer'
@@ -86,7 +84,7 @@ describe('desktop URL policies', () => {
     expect(recoveryDeepLinkToShellUrl(
       'altgrid://app/?ref=HUNT-ABCDEFGH',
       'altgrid://app/',
-    )).toBe('altgrid://app/?ref=HUNT-ABCDEFGH')
+    )).toBeNull()
     expect(recoveryDeepLinkToShellUrl(
       'altgrid://app/?auth=oauth#access_token=access&refresh_token=refresh',
       'altgrid://app/',

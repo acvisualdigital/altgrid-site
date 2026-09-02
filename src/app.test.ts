@@ -12,6 +12,7 @@ import {
   compareVersions,
   extensionAccountLimitForPlan,
   googleAuthRedirectUrl,
+  localFounderOverrideEntitlementsForEmail,
   passwordRecoveryRedirectUrl,
   renderPlanBadge,
   resolveChatScrollTop,
@@ -40,7 +41,6 @@ import {
   type ChatChannel,
   type PublicGame,
   type PublicProduct,
-  type ReferralProgramResponse,
 } from './types/backend-api'
 
 const user = {
@@ -142,6 +142,62 @@ describe('plan badges', () => {
 
     expect(badge).toContain('aria-label="Plano Founder, número 0042"')
     expect(badge).toContain('class="plan-badge__number">#0042</small>')
+  })
+
+  it('shows the custom creator badge in red when the local override is enabled for the current user', () => {
+    const previousStorage = globalThis.localStorage
+    const storage = {
+      getItem: vi.fn((key: string) => key === 'altgrid.creator-tag.enabled' ? 'true' : key === 'altgrid.creator-tag.email' ? 'creator@example.com' : null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    }
+    Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true, writable: true })
+
+    try {
+      const badge = renderPlanBadge('FOUNDER', 42, 'creator@example.com')
+
+      expect(badge).toContain('plan-badge--creator')
+      expect(badge).toContain('CRIADOR')
+      expect(badge).toContain('aria-label="Plano Criador"')
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', {
+        value: previousStorage,
+        configurable: true,
+        writable: true,
+      })
+    }
+  })
+
+  it('applies founder benefits locally for the matching account email', () => {
+    const previousStorage = globalThis.localStorage
+    const storage = {
+      getItem: vi.fn((key: string) => key === 'altgrid.founder-benefits.enabled' ? 'true' : key === 'altgrid.founder-benefits.email' ? 'founder@example.com' : null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    }
+    Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true, writable: true })
+
+    try {
+      const entitlements = localFounderOverrideEntitlementsForEmail('founder@example.com', {
+        account_limit: 2,
+        expires_at: null,
+        features: {},
+        founder_number: null,
+        lifetime: false,
+        plan: 'FREE',
+      })
+
+      expect(entitlements.plan).toBe('FOUNDER')
+      expect(entitlements.account_limit).toBe(UNLIMITED_ACCOUNT_LIMIT)
+      expect(entitlements.features.account_proxy).toBe(true)
+      expect(entitlements.features.eco_mode).toBe(true)
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', {
+        value: previousStorage,
+        configurable: true,
+        writable: true,
+      })
+    }
   })
 })
 
@@ -1097,6 +1153,80 @@ describe('AuthApp session lifecycle', () => {
     app.destroy()
   })
 
+  it('switches accounts on Ctrl+digit and on the shortcut forwarded from a focused game view', async () => {
+    installBrowser('https://app.example.com/')
+
+    class AcceptanceKeyboardEvent {
+      defaultPrevented = false
+      readonly ctrlKey: boolean
+      readonly key: string
+
+      constructor(_type: string, init: { ctrlKey?: boolean; key?: string } = {}) {
+        this.ctrlKey = init.ctrlKey ?? false
+        this.key = init.key ?? ''
+      }
+
+      preventDefault(): void {
+        this.defaultPrevented = true
+      }
+    }
+
+    vi.stubGlobal('KeyboardEvent', AcceptanceKeyboardEvent)
+    vi.stubGlobal('CSS', { escape: (value: string) => value })
+    const root = createRoot()
+    const auth = createAuthServiceDouble()
+    auth.getSession.mockResolvedValue(session)
+    const accounts = new ConfiguredAccountService({
+      createId: (() => {
+        let nextId = 0
+        return () => `shortcut-account-${++nextId}`
+      })(),
+      storage: null,
+    })
+    const configured = ['Conta A', 'Conta B', 'Conta C'].map((displayName) =>
+      accounts.add(user.id, { displayName, gameSlug: 'huntera' }))
+    const permissions = new PermissionService()
+    let forwardShortcut: (digit: string) => void = () => undefined
+    const app = new AuthApp(root, auth.service, {
+      accountService: accounts,
+      permissionService: permissions,
+      sessionLauncher: {
+        registerAccountShortcutHandler(handler) {
+          forwardShortcut = handler
+          return () => {
+            forwardShortcut = () => undefined
+          }
+        },
+      },
+    })
+
+    await app.start()
+    ;(app as unknown as { render(): void }).render()
+    const harness = app as unknown as { handleKeyDown(event: KeyboardEvent): void }
+
+    const secondButton = { click: vi.fn() }
+    const thirdButton = { click: vi.fn() }
+    vi.mocked(root.querySelector).mockImplementation((selector) => (
+      selector === `[data-account-tab][data-account-id="${configured[1]!.id}"]`
+        ? secondButton
+        : selector === `[data-account-tab][data-account-id="${configured[2]!.id}"]`
+          ? thirdButton
+          : null
+    ) as unknown as Element)
+
+    const ctrlTwo = new KeyboardEvent('keydown', { ctrlKey: true, key: '2' })
+    harness.handleKeyDown(ctrlTwo)
+    expect(secondButton.click).toHaveBeenCalledOnce()
+    expect(ctrlTwo.defaultPrevented).toBe(true)
+
+    // Native keyboard focus inside a game view never reaches window-level
+    // listeners, so the shell must also react to the forwarded digit.
+    forwardShortcut('3')
+    expect(thirdButton.click).toHaveBeenCalledOnce()
+
+    app.destroy()
+  })
+
   it('preserves the receiver of a stateful desktop session launcher', async () => {
     installBrowser('https://app.example.com/')
     const root = createRoot()
@@ -1929,52 +2059,6 @@ describe('AuthApp session lifecycle', () => {
     expect(dialog).not.toContain('secret-value')
   })
 
-  it('renders the referral command center with ranking, rewards, and share actions', () => {
-    installBrowser('https://app.example.com/')
-    const app = new AuthApp(createRoot(), createAuthServiceDouble().service)
-    const harness = app as unknown as {
-      activeDialog: 'referrals'
-      referralProgram: ReferralProgramResponse
-      renderDialog(): string
-    }
-    harness.activeDialog = 'referrals'
-    harness.referralProgram = {
-      code: 'GRID-TESTE1234',
-      share_url: 'https://altgrid.com.br/?ref=GRID-TESTE1234',
-      campaign: {
-        id: 'campaign-1',
-        name: 'Campanha de lançamento',
-        starts_at: '2026-08-01T00:00:00.000Z',
-        ends_at: '2026-10-01T00:00:00.000Z',
-        status: 'active',
-      },
-      stats: { pending: 1, position: 2, pro_days: 3, rejected: 0, total: 4, valid: 3 },
-      leaderboard: [{
-        display_name: 'Caco',
-        is_current_user: true,
-        position: 2,
-        prize_plan: 'PRO_PLUS',
-        valid_referrals: 3,
-      }],
-      recent_referrals: [{
-        created_at: '2026-08-31T12:00:00.000Z',
-        display_name: 'Amigo',
-        rewarded_at: null,
-        status: 'pending',
-      }],
-    }
-
-    const dialog = harness.renderDialog()
-    expect(dialog).toContain('referral-command-center')
-    expect(dialog).toContain('GRID-TESTE1234')
-    expect(dialog).toContain('data-share-referral')
-    expect(dialog).toContain('data-copy-referral')
-    expect(dialog).toContain('Quem está no topo')
-    expect(dialog).toContain('Pódio da campanha')
-    expect(dialog).toContain('referral-variant--compact')
-    expect(dialog).toContain('Indicações são validadas após 24h')
-  })
-
   it('copies only the saved proxy into a selected existing account', async () => {
     installBrowser('https://app.example.com/')
     const permissions = new PermissionService({
@@ -2135,6 +2219,48 @@ describe('AuthApp session lifecycle', () => {
     expect(harness.renderWorkspaceUtilityBar()).toContain('1 descansando')
     expect(harness.renderWorkspaceUtilityBar()).toContain('12.5%')
     expect(harness.renderWorkspaceUtilityBar()).toContain('125 MB')
+  })
+
+  it('also offers the rest/descanso action to accounts running on the mobile launcher', async () => {
+    installBrowser('https://app.example.com/')
+    const auth = createAuthServiceDouble()
+    const permissions = new PermissionService()
+    const account: ConfiguredAccount = {
+      createdAt: new Date().toISOString(),
+      displayName: 'Conta móvel',
+      gameSlug: 'huntera',
+      id: 'mobile-rest-account',
+    }
+    await permissions.openSession(account.id, () => undefined)
+    const app = new AuthApp(createRoot(), auth.service, {
+      permissionService: permissions,
+      sessionLauncher: {
+        applyLayout: vi.fn(),
+        mobileNative: true,
+        open: vi.fn(),
+        reload: vi.fn(),
+      },
+    })
+    const harness = app as unknown as {
+      backgroundAccountIds: Set<string>
+      configuredAccounts: ConfiguredAccount[]
+      renderAccountTabs(): string
+      renderSessionCard(account: ConfiguredAccount): string
+    }
+    harness.configuredAccounts = [account]
+
+    const liveTabs = harness.renderAccountTabs()
+    expect(liveTabs).toContain('data-background-account')
+    const liveCard = harness.renderSessionCard(account)
+    expect(liveCard).toContain('data-background-account')
+
+    harness.backgroundAccountIds.add(account.id)
+    const restingTabs = harness.renderAccountTabs()
+    expect(restingTabs).toContain('data-restore-account')
+    expect(restingTabs).toContain('Em descanso')
+    const restingCard = harness.renderSessionCard(account)
+    expect(restingCard).toContain('session-rest-screen')
+    expect(restingCard).toContain('Continua conectada em segundo plano')
   })
 
   it('toggles a saved account proxy directly from its tab', async () => {

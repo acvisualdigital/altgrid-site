@@ -51,10 +51,6 @@ export function parseTrustedRecoveryDeepLink(candidate: unknown): string | null 
 
   const isRecovery = url?.searchParams.get('auth') === 'recovery'
   const isOAuth = url?.searchParams.get('auth') === 'oauth'
-  const referralCode = url?.searchParams.get('ref')?.trim().toUpperCase() ?? ''
-  const isReferral = /^HUNT-[A-HJ-NP-Z2-9]{8}$/.test(referralCode)
-    && url?.searchParams.size === 1
-    && url.hash === ''
 
   if (
     !url
@@ -63,7 +59,7 @@ export function parseTrustedRecoveryDeepLink(candidate: unknown): string | null 
     || url.protocol !== 'altgrid:'
     || url.host !== 'app'
     || (url.pathname !== '' && url.pathname !== '/')
-    || (!isRecovery && !isOAuth && !isReferral)
+    || (!isRecovery && !isOAuth)
   ) {
     return null
   }
@@ -83,10 +79,6 @@ export function parseTrustedRecoveryDeepLink(candidate: unknown): string | null 
     if ((!hasImplicitSession && !hasPkceCode) || hasUnexpectedQuery) {
       return null
     }
-  }
-
-  if (isReferral) {
-    url.searchParams.set('ref', referralCode)
   }
 
   return url.toString()

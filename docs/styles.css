@@ -262,16 +262,6 @@ h1, h2, h3, p { margin-top: 0; }
 .consent-banner__actions .button { min-height: 42px; padding-inline: 18px; }
 .consent-settings { position: fixed; right: 14px; bottom: 14px; z-index: 110; padding: 8px 11px; color: var(--muted); background: rgba(8, 15, 12, 0.9); border: 1px solid var(--line); border-radius: 9px; font-size: 0.68rem; cursor: pointer; }
 .consent-settings:hover { color: var(--green); border-color: rgba(76, 255, 143, 0.35); }
-.referral-invitation { position: fixed; right: 22px; bottom: 22px; z-index: 120; display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 14px; width: min(520px, calc(100vw - 30px)); padding: 20px; border: 1px solid rgba(76, 255, 143, 0.4); border-radius: 18px; color: var(--text); background: radial-gradient(circle at 10% 10%, rgba(37, 230, 111, 0.2), transparent 30%), linear-gradient(145deg, #102219, #111820); box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48); }
-.referral-invitation__close { position: absolute; top: 8px; right: 10px; width: 30px; height: 30px; color: var(--muted); background: transparent; font-size: 23px; cursor: pointer; }
-.referral-invitation__icon { display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid rgba(76, 255, 143, 0.4); border-radius: 13px; color: var(--green); background: rgba(37, 230, 111, 0.1); font-size: 22px; }
-.referral-invitation > div:nth-child(3) { display: grid; gap: 4px; padding-right: 20px; }
-.referral-invitation small { color: var(--green); font-family: "SFMono-Regular", Consolas, monospace; font-size: .62rem; font-weight: 800; letter-spacing: .1em; }
-.referral-invitation strong { font-family: "SFMono-Regular", Consolas, monospace; font-size: 1.35rem; letter-spacing: .07em; }
-.referral-invitation p { margin: 2px 0 0; color: var(--muted); font-size: .78rem; line-height: 1.45; }
-.referral-invitation__actions { display: flex; grid-column: 1 / -1; gap: 9px; }
-.referral-invitation__actions .button { flex: 1; min-height: 42px; padding: 0 14px; }
-
 .legal-page { min-height: 100vh; padding-top: 76px; }
 .legal-hero { padding: 82px 0 55px; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, rgba(37, 230, 111, 0.07), transparent); }
 .legal-hero h1 { max-width: 850px; margin-bottom: 18px; font-size: clamp(2.7rem, 6vw, 5.5rem); letter-spacing: -0.06em; }

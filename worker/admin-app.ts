@@ -18,8 +18,6 @@ import type {
   AdminPublisherRequestStatus,
   AdminProductsResponse,
   AdminPaymentLogsResponse,
-  AdminReferralResponse,
-  AdminReferralsResponse,
   AdminSessionResponse,
   AdminUserDetailResponse,
   AdminUsersResponse,
@@ -35,8 +33,6 @@ import {
   readAdminGameInput,
   readAdminGameUpdate,
   readAdminPagination,
-  readAdminReferralReason,
-  readAdminReferralSearch,
   readAdminProductUpdate,
   readAdminSearch,
   readGrantDays,
@@ -53,7 +49,6 @@ export function adminAllowedMethods(pathname: string): string[] | null {
   if (pathname === '/v1/admin/announcements') return ['GET', 'POST']
   if (pathname === '/v1/admin/chat/reports') return ['GET']
   if (pathname === '/v1/admin/chat/clear') return ['POST']
-  if (pathname === '/v1/admin/referrals') return ['GET']
   if (pathname === '/v1/admin/publisher-requests') return ['GET']
   if (pathname === '/v1/admin/app-ads') return ['GET']
 
@@ -76,7 +71,6 @@ export function adminAllowedMethods(pathname: string): string[] | null {
     || /^\/v1\/admin\/chat\/users\/[^/]+\/restriction(\/clear)?$/.test(pathname)
     || /^\/v1\/admin\/chat\/messages\/[^/]+\/delete$/.test(pathname)
     || /^\/v1\/admin\/payments\/[^/]+\/reconcile$/.test(pathname)
-    || /^\/v1\/admin\/referrals\/[^/]+\/(approve|reject)$/.test(pathname)
     || /^\/v1\/admin\/publisher-requests\/[^/]+\/review$/.test(pathname)
     || /^\/v1\/admin\/app-ads\/[^/]+\/review$/.test(pathname)
   ) return ['POST']
@@ -151,32 +145,6 @@ export async function handleAdminRequest(
       pagination: pagination(page, pageSize, result.total),
     }
     return jsonResponse(body)
-  }
-
-  if (pathname === '/v1/admin/referrals') {
-    const { status, query, page, pageSize } = readAdminReferralSearch(request.url)
-    const result = await repository.getAdminReferrals(
-      actorUserId,
-      status,
-      query,
-      page,
-      pageSize,
-    )
-    return jsonResponse({
-      referrals: result.referrals,
-      stats: result.stats,
-      pagination: pagination(page, pageSize, result.total),
-    } satisfies AdminReferralsResponse)
-  }
-
-  const referralActionMatch = /^\/v1\/admin\/referrals\/([^/]+)\/(approve|reject)$/.exec(pathname)
-  if (referralActionMatch) {
-    const referralId = routeId(referralActionMatch, 'referral id')
-    const reason = await readAdminReferralReason(request)
-    const referral = referralActionMatch[2] === 'approve'
-      ? await repository.adminApproveReferral(actorUserId, referralId, reason)
-      : await repository.adminRejectReferral(actorUserId, referralId, reason)
-    return jsonResponse({ referral } satisfies AdminReferralResponse)
   }
 
   const userDetailMatch = /^\/v1\/admin\/users\/([^/]+)$/.exec(pathname)

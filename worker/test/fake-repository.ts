@@ -3,7 +3,6 @@ import type {
   DeviceResponse,
   PublicGame,
   RegisterDeviceInput,
-  ReferralProgramResponse,
   SafeProfile,
 } from '../../src/types/backend-api'
 import type { Json } from '../../src/types/database'
@@ -25,7 +24,6 @@ export class FakeRepository implements BackendRepository {
   profile: SafeProfile | null = {
     id: '10000000-0000-4000-8000-000000000001',
     display_name: 'Hunter',
-    referral_code: 'HUNT-ABCDEFGH',
     created_at: '2026-08-25T10:00:00.000Z',
     updated_at: '2026-08-25T10:00:00.000Z',
   }
@@ -36,20 +34,6 @@ export class FakeRepository implements BackendRepository {
   games: PublicGame[] = []
   config: Record<string, Json> = Object.create(null) as Record<string, Json>
   devices: DeviceResponse[] = []
-  referralProgram: ReferralProgramResponse = {
-    code: 'HUNT-ABCDEFGH',
-    share_url: 'https://altgrid.com.br/?ref=HUNT-ABCDEFGH',
-    campaign: {
-      id: '30000000-0000-4000-8000-000000000001',
-      name: 'Corrida de Indicações — Lançamento',
-      starts_at: '2026-08-28T03:00:00.000Z',
-      ends_at: '2026-10-01T02:59:59.000Z',
-      status: 'active',
-    },
-    stats: { total: 0, valid: 0, pending: 0, rejected: 0, pro_days: 0, position: null },
-    leaderboard: [],
-    recent_referrals: [],
-  }
   lastRegister: {
     userId: string
     input: RegisterDeviceInput
@@ -67,18 +51,6 @@ export class FakeRepository implements BackendRepository {
 
   async getProfile(): Promise<SafeProfile | null> {
     return this.profile
-  }
-
-  async getReferralProgram(): Promise<ReferralProgramResponse> {
-    return this.referralProgram
-  }
-
-  async reconcileReferralProgram(): Promise<Record<string, unknown>> {
-    return { checked: 0, pending: 0, rewarded: 0 }
-  }
-
-  async finalizeReferralCampaigns(): Promise<Record<string, unknown>> {
-    return { awards: 0, finalized_campaigns: 0 }
   }
 
   async getPlans(): Promise<PlanRecord[]> {

@@ -30,7 +30,6 @@ import type {
   PublicGamesResponse,
   PublicProductsResponse,
   UserAppAdRequestsResponse,
-  ReferralProgramResponse,
   RegisterDeviceInput,
   ResolvedEntitlements,
   UpdateProfileInput,
@@ -64,9 +63,6 @@ import type {
   AdminPublisherRequestsResponse,
   AdminPublisherReviewInput,
   AdminPaymentLogsResponse,
-  AdminReferralResponse,
-  AdminReferralsResponse,
-  AdminReferralStatus,
   AdminSessionResponse,
   AdminPushDeviceInput,
   AdminPushDeviceResponse,
@@ -173,10 +169,6 @@ export class BackendApi {
 
   getMe(): Promise<MeResponse> {
     return this.privateRead<MeResponse>('/v1/me')
-  }
-
-  getReferralProgram(): Promise<ReferralProgramResponse> {
-    return this.privateRead<ReferralProgramResponse>('/v1/referrals')
   }
 
   updateProfile(input: UpdateProfileInput): Promise<{ profile: MeResponse['profile'] }> {
@@ -432,36 +424,6 @@ export class BackendApi {
   getAdminUser(userId: string): Promise<AdminUserDetailResponse> {
     return this.privateRead<AdminUserDetailResponse>(
       '/v1/admin/users/' + encodeURIComponent(userId),
-    )
-  }
-
-  getAdminReferrals(
-    status: AdminReferralStatus | null = null,
-    query = '',
-    page = 1,
-    pageSize = 50,
-  ): Promise<AdminReferralsResponse> {
-    const search = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
-    if (status) search.set('status', status)
-    if (query.trim()) search.set('q', query.trim())
-    return this.privateRead<AdminReferralsResponse>(
-      '/v1/admin/referrals?' + search.toString(),
-    )
-  }
-
-  approveAdminReferral(referralId: string, reason: string): Promise<AdminReferralResponse> {
-    return this.adminJsonMutation<AdminReferralResponse>(
-      `/v1/admin/referrals/${encodeURIComponent(referralId)}/approve`,
-      'POST',
-      { reason },
-    )
-  }
-
-  rejectAdminReferral(referralId: string, reason: string): Promise<AdminReferralResponse> {
-    return this.adminJsonMutation<AdminReferralResponse>(
-      `/v1/admin/referrals/${encodeURIComponent(referralId)}/reject`,
-      'POST',
-      { reason },
     )
   }
 

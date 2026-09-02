@@ -201,7 +201,7 @@ describe('Cloudflare Worker API', () => {
     expect(response.status).toBe(200)
     expect(payload).toMatchObject({
       user: { id: USER_ID, email: 'hunter@example.com' },
-      profile: { referral_code: 'HUNT-ABCDEFGH' },
+      profile: { id: '10000000-0000-4000-8000-000000000001' },
       plan: 'FREE',
       license: null,
       founder_number: null,
@@ -210,42 +210,6 @@ describe('Cloudflare Worker API', () => {
     })
     expect(payload).not.toHaveProperty('access_token')
     expect(response.headers.get('cache-control')).toBe('no-store')
-  })
-
-  it('GET /v1/referrals returns only the authenticated user referral dashboard', async () => {
-    repository.referralProgram.stats = {
-      total: 3,
-      valid: 2,
-      pending: 1,
-      rejected: 0,
-      pro_days: 2,
-      position: 1,
-    }
-    repository.referralProgram.leaderboard = [{
-      position: 1,
-      display_name: 'Hunter',
-      valid_referrals: 2,
-      prize_plan: 'FOUNDER',
-      is_current_user: true,
-    }]
-
-    const response = await api.fetch(jsonRequest('/v1/referrals'))
-
-    expect(response.status).toBe(200)
-    expect(await response.json()).toMatchObject({
-      code: 'HUNT-ABCDEFGH',
-      stats: { valid: 2, pro_days: 2, position: 1 },
-      leaderboard: [{ prize_plan: 'FOUNDER', is_current_user: true }],
-    })
-    expect(authenticate).toHaveBeenCalledOnce()
-  })
-
-  it('GET /v1/referrals rejects anonymous ranking access', async () => {
-    const response = await api.fetch(
-      new Request('https://api.example.com/v1/referrals'),
-    )
-
-    expect(response.status).toBe(401)
   })
 
   it('POST /v1/devices/register uses the token user and performs a safe upsert', async () => {

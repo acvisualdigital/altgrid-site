@@ -85,6 +85,7 @@ export type SessionEventType =
   | 'crashed'
   | 'load-failed'
   | 'popup-blocked'
+  | 'switch-account'
 
 export interface SessionEvent {
   accountId: string

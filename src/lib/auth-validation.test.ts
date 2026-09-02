@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  normalizeReferralCode,
   validateEmail,
   validatePassword,
   validatePasswordConfirmation,
-  validateReferralCode,
 } from './auth-validation'
 
 describe('auth validation', () => {
@@ -28,12 +26,4 @@ describe('auth validation', () => {
     )
   })
 
-  it('normalizes optional referral codes and rejects invalid ones', () => {
-    expect(normalizeReferralCode('  hunt-abcd2345 ')).toBe('HUNT-ABCD2345')
-    expect(validateReferralCode('')).toBeNull()
-    expect(validateReferralCode(' hunt-abcd2345 ')).toBeNull()
-    expect(validateReferralCode('HUNT-INVALID!')).toBe(
-      'Use um código no formato HUNT-XXXXXXXX.',
-    )
-  })
 })

@@ -64,11 +64,6 @@ function backendDouble(overrides: Partial<Record<keyof BackendApi, unknown>> = {
       pagination: { has_more: false, page: 1, page_size: 50, total: 0 },
       payments: [],
     }),
-    getAdminReferrals: vi.fn().mockResolvedValue({
-      pagination: { has_more: false, page: 1, page_size: 50, total: 0 },
-      referrals: [],
-      stats: { pending: 0, qualified: 0, rejected: 0, rewarded: 0, total: 0 },
-    }),
     getAdminSession: vi.fn().mockResolvedValue({
       admin: { role: 'admin', user_id: user.id },
     }),
@@ -93,7 +88,6 @@ function backendDouble(overrides: Partial<Record<keyof BackendApi, unknown>> = {
         license_status: 'active',
         lifetime: true,
         plan: 'PRO',
-        referral_code: 'HUNT-ABCD2345',
       }],
     }),
     setAdminChatRestriction: vi.fn(),
@@ -154,62 +148,9 @@ describe('AdminApp', () => {
     expect(root.innerHTML).toContain('Auditoria')
     expect(root.innerHTML).toContain('admin@altgrid.local')
     expect(root.innerHTML).toContain('Caco')
-    expect(root.innerHTML).toContain('HUNT-ABCD2345')
-    expect(root.innerHTML).toContain('E-mail, nick, user ID ou referral code')
+    expect(root.innerHTML).toContain('admin@altgrid.local')
+    expect(root.innerHTML).toContain('E-mail, nick ou user ID')
     expect(root.innerHTML).not.toContain('<canvas')
-    app.destroy()
-  })
-
-  it('renders referral code and referral details with status, IDs and dates', async () => {
-    const root = rootDouble()
-    const backend = backendDouble({
-      getAdminUser: vi.fn().mockResolvedValue({
-        user: {
-          chat_status: { banned: false, muted_until: null, reason: null },
-          created_at: user.created_at,
-          devices: [],
-          display_name: null,
-          email: user.email,
-          expires_at: null,
-          founder_number: null,
-          id: user.id,
-          license_status: 'active',
-          licenses: [],
-          lifetime: false,
-          payments: [],
-          plan: 'PRO',
-          referral_code: 'HUNT-ABCD2345',
-          referrals: [{
-            created_at: '2026-08-20T12:00:00.000Z',
-            id: 'referral-record-id',
-            qualification_reason: 'Pagamento confirmado',
-            qualified_at: '2026-08-21T12:00:00.000Z',
-            referred_user_id: 'referred-user-id',
-            referrer_user_id: user.id,
-            rewarded_at: '2026-08-22T12:00:00.000Z',
-            status: 'rewarded',
-          }],
-        },
-      }),
-    })
-    const app = new AdminApp(root, authDouble(), backend)
-    const loadUser = (userId: string): Promise<void> =>
-      (app as unknown as { loadUser(id: string): Promise<void> })
-        .loadUser(userId)
-
-    await app.start()
-    await loadUser(user.id)
-
-    expect(root.innerHTML).toContain('Referral code')
-    expect(root.innerHTML).toContain('HUNT-ABCD2345')
-    expect(root.innerHTML).toContain('Indicações')
-    expect(root.innerHTML).toContain('rewarded')
-    expect(root.innerHTML).toContain('referral-record-id')
-    expect(root.innerHTML).toContain('referred-user-id')
-    expect(root.innerHTML).toContain('Pagamento confirmado')
-    expect(root.innerHTML).toContain('Qualificada')
-    expect(root.innerHTML).toContain('Recompensada')
-    expect(root.innerHTML.match(/value="PRO_PLUS"/g)).toHaveLength(2)
     app.destroy()
   })
 
@@ -343,8 +284,6 @@ describe('AdminApp', () => {
     const backend = backendDouble({
       getAdminConfig: vi.fn().mockResolvedValue({
         config: [
-          { key: 'referral_referrer_days', updated_at: user.created_at, value: 7 },
-          { key: 'referral_referred_days', updated_at: user.created_at, value: 7 },
           { key: 'founder_max_sales', updated_at: user.created_at, value: 100 },
           { key: 'maintenance', updated_at: user.created_at, value: true },
           { key: 'minimum_version', updated_at: user.created_at, value: '0.9.0-beta.1' },
@@ -363,8 +302,6 @@ describe('AdminApp', () => {
     await loadTab('config')
 
     expect(root.innerHTML).toContain('founder_max_sales')
-    expect(root.innerHTML).toContain('referral_referrer_days')
-    expect(root.innerHTML).toContain('referral_referred_days')
     expect(root.innerHTML).toContain('name="maintenance"')
     expect(root.innerHTML).toContain('name="minimum_version"')
     expect(root.innerHTML).toContain('name="latest_version"')
@@ -424,8 +361,6 @@ describe('AdminApp', () => {
       latest_version: '0.9.0-beta.2',
       maintenance: 'on',
       minimum_version: '0.9.0-beta.1',
-      referral_referred_days: '5',
-      referral_referrer_days: '10',
       update_channel: 'beta',
     }
     class FormDataDouble {
@@ -442,8 +377,6 @@ describe('AdminApp', () => {
       }).saveConfig({} as HTMLFormElement)
 
       expect(updateAdminConfig.mock.calls).toEqual([
-        ['referral_referrer_days', 10],
-        ['referral_referred_days', 5],
         ['founder_max_sales', 250],
         ['minimum_version', '0.9.0-beta.1'],
         ['latest_version', '0.9.0-beta.2'],

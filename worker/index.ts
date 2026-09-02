@@ -93,12 +93,6 @@ export default {
         paymentService.reconcilePendingPayments(25).then((result) => {
           console.log('Mercado Pago reconciliation completed', result)
         }),
-        repository.reconcileReferralProgram(250).then((result) => {
-          console.log('Referral reconciliation completed', result)
-        }),
-        repository.finalizeReferralCampaigns().then((result) => {
-          console.log('Referral campaign finalization completed', result)
-        }),
       ]),
     )
   },

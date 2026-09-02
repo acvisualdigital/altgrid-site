@@ -293,6 +293,22 @@ describe('SessionManager', () => {
     expect(() => harness.manager.setEcoMode('true')).toThrow(TypeError)
   })
 
+  it('forwards the native switch-account shortcut with its digit to subscribers', async () => {
+    const harness = createHarness()
+    const events = vi.fn()
+    harness.manager.subscribe(events)
+    await harness.manager.createSession('account-1', 'https://game.example/')
+    const view = harness.views.get('account-1')!
+
+    view.emit({ type: 'switch-account', detail: '2' })
+
+    expect(events).toHaveBeenLastCalledWith(expect.objectContaining({
+      accountId: 'account-1',
+      detail: '2',
+      type: 'switch-account',
+    }))
+  })
+
   it('caps the focused session smoothly and applies the lower Eco budget to the others', async () => {
     const harness = createHarness()
     const events = vi.fn()

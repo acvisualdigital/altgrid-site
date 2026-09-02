@@ -294,6 +294,22 @@ export function createNativeSessionViewFactory(
       }
     })
     view.webContents.on('before-input-event', (event, input) => {
+      const switchAccountShortcut = input.type === 'keyDown'
+        && (input.control || input.meta)
+        && !input.alt
+        && !input.shift
+        && !input.isAutoRepeat
+        && /^[1-9]$/.test(input.key)
+
+      if (switchAccountShortcut) {
+        // Native keyboard focus inside the game never reaches the shell's
+        // window-level listeners, so Ctrl/Cmd+1-9 must be intercepted here and
+        // forwarded, otherwise account switching stops working after a click.
+        event.preventDefault()
+        onEvent({ type: 'switch-account', detail: input.key })
+        return
+      }
+
       const browserZoomShortcut = input.type === 'keyDown'
         && (input.control || input.meta)
         && !input.alt

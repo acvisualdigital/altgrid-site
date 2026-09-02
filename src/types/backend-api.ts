@@ -16,7 +16,6 @@ export interface SafeUser {
 export interface SafeProfile {
   id: string
   display_name: string | null
-  referral_code: string
   created_at: string
   updated_at: string
 }
@@ -74,45 +73,6 @@ export interface MeResponse extends ResolvedEntitlements {
   profile: SafeProfile
   license: SafeLicense | null
   founder_upgrade_eligible: boolean
-}
-
-export type ReferralStatus = 'pending' | 'qualified' | 'rewarded' | 'rejected'
-
-export interface ReferralCampaignSummary {
-  id: string
-  name: string
-  starts_at: string
-  ends_at: string
-  status: 'active' | 'finalized'
-}
-
-export interface ReferralLeaderboardEntry {
-  position: number
-  display_name: string
-  valid_referrals: number
-  prize_plan: Exclude<PlanCode, 'FREE'> | null
-  is_current_user: boolean
-}
-
-export interface ReferralProgramResponse {
-  code: string
-  share_url: string
-  campaign: ReferralCampaignSummary
-  stats: {
-    total: number
-    valid: number
-    pending: number
-    rejected: number
-    pro_days: number
-    position: number | null
-  }
-  leaderboard: ReferralLeaderboardEntry[]
-  recent_referrals: Array<{
-    display_name: string
-    status: ReferralStatus
-    created_at: string
-    rewarded_at: string | null
-  }>
 }
 
 export interface PublicGame {

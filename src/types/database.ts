@@ -14,8 +14,6 @@ export interface UserProfile {
   id: string
   user_id: string
   display_name: string | null
-  referral_code: string
-  referred_by: string | null
   created_at: string
   updated_at: string
 }
@@ -106,50 +104,6 @@ export interface AdminAuditLog {
   before_data: Json | null
   after_data: Json | null
   created_at: string
-}
-
-interface Referral {
-  id: string
-  referrer_user_id: string
-  referred_user_id: string
-  status: 'pending' | 'qualified' | 'rewarded' | 'rejected'
-  qualification_reason: string | null
-  campaign_id: string | null
-  qualification_device_hash: string | null
-  created_at: string
-  qualified_at: string | null
-  rewarded_at: string | null
-}
-
-interface ReferralCampaign {
-  id: string
-  name: string
-  starts_at: string
-  ends_at: string
-  status: 'active' | 'finalized'
-  finalized_at: string | null
-  created_at: string
-  updated_at: string
-}
-
-interface ReferralCampaignAward {
-  id: string
-  campaign_id: string
-  rank: number
-  user_id: string
-  plan_code: Exclude<PlanCode, 'FREE'>
-  license_id: string | null
-  created_at: string
-}
-
-interface ReferralReward {
-  id: string
-  referral_id: string
-  beneficiary_user_id: string
-  reward_type: string
-  reward_days: number
-  created_at: string
-  metadata: Json
 }
 
 interface Product {
@@ -248,34 +202,6 @@ export interface Database {
       games: TableDefinition<
         GamePreset,
         InsertRow<GamePreset, 'slug' | 'name' | 'launch_url'>
-      >
-      referrals: TableDefinition<
-        Referral,
-        InsertRow<
-          Referral,
-          'referrer_user_id' | 'referred_user_id' | 'status'
-        >
-      >
-      referral_rewards: TableDefinition<
-        ReferralReward,
-        InsertRow<
-          ReferralReward,
-          | 'referral_id'
-          | 'beneficiary_user_id'
-          | 'reward_type'
-          | 'reward_days'
-        >
-      >
-      referral_campaigns: TableDefinition<
-        ReferralCampaign,
-        InsertRow<ReferralCampaign, 'name' | 'starts_at' | 'ends_at'>
-      >
-      referral_campaign_awards: TableDefinition<
-        ReferralCampaignAward,
-        InsertRow<
-          ReferralCampaignAward,
-          'campaign_id' | 'rank' | 'user_id' | 'plan_code'
-        >
       >
       products: TableDefinition<
         Product,

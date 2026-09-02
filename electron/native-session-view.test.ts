@@ -372,6 +372,94 @@ describe('createNativeSessionViewFactory', () => {
     expect(view.webContents.setZoomFactor).toHaveBeenLastCalledWith(0.75)
   })
 
+  it('forwards Ctrl/Cmd+1-9 to the shell even while the game holds native keyboard focus', () => {
+    const { hostWindow } = createHostWindow()
+    const factory = createNativeSessionViewFactory(hostWindow, false)
+    const onEvent = vi.fn()
+    factory({
+      accountId: 'account-shortcut',
+      onEvent,
+      partition: 'persist:altgrid-account-account-shortcut',
+    })
+    const view = electronMocks.views[0]!
+    const controlEvent = { preventDefault: vi.fn() }
+    const metaEvent = { preventDefault: vi.fn() }
+
+    view.handlers.get('before-input-event')?.(controlEvent, {
+      alt: false,
+      control: true,
+      isAutoRepeat: false,
+      key: '2',
+      meta: false,
+      shift: false,
+      type: 'keyDown',
+    })
+
+    expect(controlEvent.preventDefault).toHaveBeenCalledOnce()
+    expect(onEvent).toHaveBeenCalledWith({ type: 'switch-account', detail: '2' })
+
+    view.handlers.get('before-input-event')?.(metaEvent, {
+      alt: false,
+      control: false,
+      isAutoRepeat: false,
+      key: '9',
+      meta: true,
+      shift: false,
+      type: 'keyDown',
+    })
+
+    expect(metaEvent.preventDefault).toHaveBeenCalledOnce()
+    expect(onEvent).toHaveBeenCalledWith({ type: 'switch-account', detail: '9' })
+  })
+
+  it('ignores Ctrl+digit while modified with Shift/Alt or auto-repeated', () => {
+    const { hostWindow } = createHostWindow()
+    const factory = createNativeSessionViewFactory(hostWindow, false)
+    const onEvent = vi.fn()
+    factory({
+      accountId: 'account-shortcut-ignored',
+      onEvent,
+      partition: 'persist:altgrid-account-account-shortcut-ignored',
+    })
+    const view = electronMocks.views[0]!
+    const shiftEvent = { preventDefault: vi.fn() }
+    const altEvent = { preventDefault: vi.fn() }
+    const repeatEvent = { preventDefault: vi.fn() }
+
+    view.handlers.get('before-input-event')?.(shiftEvent, {
+      alt: false,
+      control: true,
+      isAutoRepeat: false,
+      key: '1',
+      meta: false,
+      shift: true,
+      type: 'keyDown',
+    })
+    view.handlers.get('before-input-event')?.(altEvent, {
+      alt: true,
+      control: true,
+      isAutoRepeat: false,
+      key: '1',
+      meta: false,
+      shift: false,
+      type: 'keyDown',
+    })
+    view.handlers.get('before-input-event')?.(repeatEvent, {
+      alt: false,
+      control: true,
+      isAutoRepeat: true,
+      key: '1',
+      meta: false,
+      shift: false,
+      type: 'keyDown',
+    })
+
+    expect(shiftEvent.preventDefault).not.toHaveBeenCalled()
+    expect(altEvent.preventDefault).not.toHaveBeenCalled()
+    expect(repeatEvent.preventDefault).not.toHaveBeenCalled()
+    expect(onEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'switch-account' }))
+  })
+
   it('applies one proxy per partition and answers only proxy authentication', async () => {
     const { hostWindow } = createHostWindow()
     const factory = createNativeSessionViewFactory(hostWindow, false)

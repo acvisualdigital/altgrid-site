@@ -20,9 +20,6 @@ import type {
   AdminPaymentLog,
   AdminPublisherRequest,
   AdminPublisherRequestStatus,
-  AdminReferralLog,
-  AdminReferralStats,
-  AdminReferralStatus,
   AdminUserDetail,
   AdminUserSummary,
 } from './types/admin-api'
@@ -38,7 +35,6 @@ type AdminTab =
   | 'products'
   | 'payments'
   | 'publishers'
-  | 'referrals'
   | 'users'
 type AdminView = 'checking' | 'denied' | 'error' | 'ready' | 'signed-out'
 
@@ -63,7 +59,7 @@ const ADMIN_TAB_META: Record<AdminTab, {
     label: 'Jogos',
   },
   config: {
-    description: 'Versões, indicações, limites e estado dos serviços.',
+    description: 'Versões, limites e estado dos serviços.',
     icon: '⌁',
     label: 'Configuração',
   },
@@ -81,11 +77,6 @@ const ADMIN_TAB_META: Record<AdminTab, {
     description: 'Cadastros, reivindicações e campanhas enviadas pelo site.',
     icon: '◆',
     label: 'Divulgação',
-  },
-  referrals: {
-    description: 'Validação, recompensas e integridade das indicações.',
-    icon: '✦',
-    label: 'Indicações',
   },
   announcements: {
     description: 'Comunicados e alertas publicados dentro do AltGrid.',
@@ -122,14 +113,11 @@ type AdminBackend = Pick<
   | 'getAdminProducts'
   | 'getAdminPaymentLogs'
   | 'getAdminPublisherRequests'
-  | 'getAdminReferrals'
   | 'getAdminSession'
   | 'getAdminUser'
   | 'grantAdminProDays'
   | 'resetAdminDevice'
   | 'reconcileAdminPayment'
-  | 'approveAdminReferral'
-  | 'rejectAdminReferral'
   | 'reviewAdminPublisherRequest'
   | 'reviewAdminAppAdRequest'
   | 'reviewAdminChatReport'
@@ -145,8 +133,6 @@ type AdminBackend = Pick<
 >
 
 const INTEGER_CONFIG_FIELDS = [
-  { key: 'referral_referrer_days', maximum: 3_650, minimum: 0 },
-  { key: 'referral_referred_days', maximum: 3_650, minimum: 0 },
   { key: 'founder_max_sales', maximum: 1_000_000, minimum: 1 },
 ] as const
 
@@ -250,15 +236,6 @@ export class AdminApp {
   private publisherStatus: AdminPublisherRequestStatus | null = null
   private appAdRequests: AdminAppAdRequest[] = []
   private appAdStatus: AdminAppAdStatus | null = null
-  private referrals: AdminReferralLog[] = []
-  private referralStats: AdminReferralStats = {
-    total: 0, pending: 0, qualified: 0, rewarded: 0, rejected: 0,
-  }
-  private referralStatus: AdminReferralStatus | null = null
-  private referralQuery = ''
-  private referralPage = 1
-  private referralHasMore = false
-  private referralTotal = 0
   private announcements: AdminAnnouncement[] = []
   private editingAnnouncementId: string | null = null
   private chatReports: AdminChatReport[] = []
@@ -376,13 +353,6 @@ export class AdminApp {
     this.publisherStatus = null
     this.appAdRequests = []
     this.appAdStatus = null
-    this.referrals = []
-    this.referralStats = { total: 0, pending: 0, qualified: 0, rewarded: 0, rejected: 0 }
-    this.referralStatus = null
-    this.referralQuery = ''
-    this.referralPage = 1
-    this.referralHasMore = false
-    this.referralTotal = 0
     this.announcements = []
     this.editingAnnouncementId = null
     this.chatReports = []
@@ -395,10 +365,9 @@ export class AdminApp {
   }
 
   private async loadOverview(expectedRevision = this.revision): Promise<void> {
-    const [games, payments, referrals, announcements, chat, publishers, appAds] = await Promise.allSettled([
+    const [games, payments, announcements, chat, publishers, appAds] = await Promise.allSettled([
       this.backend.getAdminGames(),
       this.backend.getAdminPaymentLogs(1, 50),
-      this.backend.getAdminReferrals(null, '', 1, 50),
       this.backend.getAdminAnnouncements(),
       this.backend.getAdminChatReports('pending', 1, 50),
       typeof this.backend.getAdminPublisherRequests === 'function'
@@ -416,11 +385,6 @@ export class AdminApp {
       this.paymentLogs = payments.value.payments
       this.paymentTotal = payments.value.pagination.total
     }
-    if (referrals.status === 'fulfilled') {
-      this.referrals = referrals.value.referrals
-      this.referralStats = referrals.value.stats
-      this.referralTotal = referrals.value.pagination.total
-    }
     if (announcements.status === 'fulfilled') {
       this.announcements = announcements.value.announcements
     }
@@ -429,7 +393,6 @@ export class AdminApp {
     if (appAds.status === 'fulfilled') this.appAdRequests = appAds.value.requests
 
     this.overviewReady = payments.status === 'fulfilled'
-      && referrals.status === 'fulfilled'
     this.render()
   }
 
@@ -483,20 +446,6 @@ export class AdminApp {
           this.paymentPage = response.pagination.page
           this.paymentHasMore = response.pagination.has_more
           this.paymentTotal = response.pagination.total
-        }
-      } else if (tab === 'referrals') {
-        const response = await this.backend.getAdminReferrals(
-          this.referralStatus,
-          this.referralQuery,
-          this.referralPage,
-          50,
-        )
-        if (expectedRevision === this.revision) {
-          this.referrals = response.referrals
-          this.referralStats = response.stats
-          this.referralPage = response.pagination.page
-          this.referralHasMore = response.pagination.has_more
-          this.referralTotal = response.pagination.total
         }
       } else if (tab === 'announcements') {
         const response = await this.backend.getAdminAnnouncements()
@@ -594,7 +543,6 @@ export class AdminApp {
                   ${this.renderTab('app-ads')}
                   ${this.renderTab('products')}
                   ${this.renderTab('payments')}
-                  ${this.renderTab('referrals')}
                   <span class="admin-nav-group">Comunicação e sistema</span>
                   ${this.renderTab('announcements')}
                   ${this.renderTab('chat')}
@@ -685,15 +633,13 @@ export class AdminApp {
   private renderTab(tab: AdminTab): string {
     const active = tab === this.activeTab
     const meta = ADMIN_TAB_META[tab]
-    const badge = tab === 'referrals'
-      ? this.referralStats.pending + this.referralStats.qualified
-      : tab === 'chat'
-        ? this.chatReports.filter((report) => report.status === 'pending').length
-        : tab === 'publishers'
-          ? this.publisherRequests.filter((entry) => ['pending', 'reviewing'].includes(entry.status)).length
-        : tab === 'app-ads'
-          ? this.appAdRequests.filter((entry) => ['pending', 'reviewing'].includes(entry.status)).length
-        : 0
+    const badge = tab === 'chat'
+      ? this.chatReports.filter((report) => report.status === 'pending').length
+      : tab === 'publishers'
+        ? this.publisherRequests.filter((entry) => ['pending', 'reviewing'].includes(entry.status)).length
+      : tab === 'app-ads'
+        ? this.appAdRequests.filter((entry) => ['pending', 'reviewing'].includes(entry.status)).length
+      : 0
     return `
       <button
         class="admin-tab ${active ? 'is-active' : ''}"
@@ -706,7 +652,6 @@ export class AdminApp {
   }
 
   private renderOverviewCards(): string {
-    const pendingReferrals = this.referralStats.pending + this.referralStats.qualified
     const cards: Array<{
       detail: string
       label: string
@@ -715,8 +660,6 @@ export class AdminApp {
     }> = [
       { detail: 'contas cadastradas', label: 'Usuários', tab: 'users', value: this.usersTotal },
       { detail: 'registros financeiros', label: 'Pagamentos', tab: 'payments', value: this.overviewReady ? this.paymentTotal : '—' },
-      { detail: 'indicações registradas', label: 'Indicações', tab: 'referrals', value: this.overviewReady ? this.referralStats.total : '—' },
-      { detail: 'aguardando análise', label: 'Pendências', tab: 'referrals', value: this.overviewReady ? pendingReferrals : '—' },
     ]
 
     return `
@@ -754,9 +697,6 @@ export class AdminApp {
     if (this.activeTab === 'payments') {
       return this.renderPaymentLogs()
     }
-    if (this.activeTab === 'referrals') {
-      return this.renderReferrals()
-    }
     if (this.activeTab === 'announcements') {
       return this.renderAnnouncements()
     }
@@ -774,7 +714,7 @@ export class AdminApp {
           id="admin-search-query"
           name="query"
           value="${escapeHtml(this.searchQuery)}"
-          placeholder="E-mail, nick, user ID ou referral code"
+          placeholder="E-mail, nick ou user ID"
         />
         <button class="button button--secondary button--compact" type="submit">Buscar</button>
       </form>
@@ -808,7 +748,6 @@ export class AdminApp {
           <strong>${escapeHtml(user.display_name ?? 'Sem nick')}</strong>
           <small>${escapeHtml(user.email ?? 'Sem e-mail')}</small>
           <small>${escapeHtml(user.id)}</small>
-          <small>Referral code: ${escapeHtml(user.referral_code)}</small>
         </td>
         <td><span class="admin-plan">${escapeHtml(user.plan)}</span></td>
         <td>${escapeHtml(user.license_status ?? 'FREE')}</td>
@@ -840,7 +779,6 @@ export class AdminApp {
           <div><dt>Lifetime</dt><dd>${user.lifetime ? 'Sim' : 'Não'}</dd></div>
           <div><dt>Founder</dt><dd>${escapeHtml(user.founder_number ?? '—')}</dd></div>
           <div><dt>Cadastro</dt><dd>${escapeHtml(formatDate(user.created_at))}</dd></div>
-          <div><dt>Referral code</dt><dd>${escapeHtml(user.referral_code)}</dd></div>
         </dl>
         <div class="admin-action-grid">
           <form data-user-action="grant-days" data-user-id="${escapeHtml(user.id)}">
@@ -884,29 +822,6 @@ export class AdminApp {
                 </div>
               `).join('')
             : '<p class="admin-empty">Nenhum device.</p>'}
-        </section>
-        <section class="admin-detail-section">
-          <h3>Indicações</h3>
-          ${user.referrals.length > 0
-            ? user.referrals.map((referral) => `
-                <article class="admin-referral-record">
-                  <div class="admin-referral-record__heading">
-                    <strong>${escapeHtml(referral.status)}</strong>
-                    <small>ID ${escapeHtml(referral.id)}</small>
-                  </div>
-                  <dl class="admin-referral-facts">
-                    <div><dt>Quem indicou</dt><dd>${escapeHtml(referral.referrer_user_id)}</dd></div>
-                    <div><dt>Usuário indicado</dt><dd>${escapeHtml(referral.referred_user_id)}</dd></div>
-                    <div><dt>Criada</dt><dd>${escapeHtml(formatDate(referral.created_at))}</dd></div>
-                    <div><dt>Qualificada</dt><dd>${escapeHtml(formatDate(referral.qualified_at))}</dd></div>
-                    <div><dt>Recompensada</dt><dd>${escapeHtml(formatDate(referral.rewarded_at))}</dd></div>
-                    ${referral.qualification_reason
-                      ? `<div><dt>Motivo</dt><dd>${escapeHtml(referral.qualification_reason)}</dd></div>`
-                      : ''}
-                  </dl>
-                </article>
-              `).join('')
-            : '<p class="admin-empty">Nenhuma indicação encontrada.</p>'}
         </section>
         <section class="admin-detail-section">
           <h3>Moderação do chat</h3>
@@ -1151,8 +1066,6 @@ export class AdminApp {
           </div>
         </div>
         <div class="admin-form-grid admin-config-grid">
-          ${this.renderAdminField('referral_referrer_days', 'Dias para quem indicou', valueFor('referral_referrer_days'), true, 'number')}
-          ${this.renderAdminField('referral_referred_days', 'Dias para o usuário indicado', valueFor('referral_referred_days'), true, 'number')}
           ${this.renderAdminField('founder_max_sales', 'Máximo de vendas Founder', valueFor('founder_max_sales'), false, 'number')}
           ${this.renderAdminField('minimum_version', 'Versão mínima', valueFor('minimum_version'), true)}
           ${this.renderAdminField('latest_version', 'Versão mais recente', valueFor('latest_version'), true)}
@@ -1393,86 +1306,6 @@ export class AdminApp {
     `
   }
 
-  private renderReferrals(): string {
-    const cards: Array<[string, number, AdminReferralStatus | null]> = [
-      ['Total', this.referralStats.total, null],
-      ['Pendentes', this.referralStats.pending, 'pending'],
-      ['Aprovadas', this.referralStats.rewarded, 'rewarded'],
-      ['Rejeitadas', this.referralStats.rejected, 'rejected'],
-    ]
-    return `
-      <div class="admin-referral-stats">
-        ${cards.map(([label, value, status]) => `
-          <button class="admin-stat-card ${this.referralStatus === status ? 'is-active' : ''}" data-referral-status-shortcut="${status ?? ''}" type="button">
-            <span>${escapeHtml(label)}</span><strong>${value}</strong>
-          </button>
-        `).join('')}
-      </div>
-      <div class="admin-content__toolbar">
-        <div><strong>Log de indicações</strong><small>Novos cadastros, validação e recompensa. Toda decisão manual fica na auditoria.</small></div>
-        <button class="button button--secondary button--compact" data-refresh-referrals type="button">Atualizar agora</button>
-      </div>
-      <form class="admin-search admin-search--referrals" id="admin-referral-filter">
-        <label>Buscar
-          <input name="query" value="${escapeHtml(this.referralQuery)}" placeholder="E-mail, nick, código ou ID" />
-        </label>
-        <label>Status
-          <select name="status">
-            ${this.renderReferralStatusOption(null, 'Todos')}
-            ${this.renderReferralStatusOption('pending', 'Pendentes')}
-            ${this.renderReferralStatusOption('qualified', 'Qualificadas')}
-            ${this.renderReferralStatusOption('rewarded', 'Aprovadas/recompensadas')}
-            ${this.renderReferralStatusOption('rejected', 'Rejeitadas')}
-          </select>
-        </label>
-        <button class="button button--secondary button--compact" type="submit">Filtrar</button>
-      </form>
-      <div class="admin-referral-list">
-        ${this.referrals.length > 0
-          ? this.referrals.map((referral) => this.renderReferral(referral)).join('')
-          : '<p class="admin-empty">Nenhuma indicação encontrada.</p>'}
-      </div>
-      ${this.renderPagination('referrals', this.referralPage, this.referralHasMore, this.referralTotal)}
-    `
-  }
-
-  private renderReferralStatusOption(status: AdminReferralStatus | null, label: string): string {
-    return `<option value="${status ?? ''}" ${this.referralStatus === status ? 'selected' : ''}>${escapeHtml(label)}</option>`
-  }
-
-  private referralStatusLabel(status: AdminReferralStatus): string {
-    return ({ pending: 'Pendente', qualified: 'Qualificada', rewarded: 'Aprovada', rejected: 'Rejeitada' })[status]
-  }
-
-  private renderReferral(referral: AdminReferralLog): string {
-    const status = referral.status as AdminReferralStatus
-    return `
-      <article class="admin-referral-card">
-        <div class="admin-referral-card__heading">
-          <div>
-            <span class="admin-referral-status admin-referral-status--${escapeHtml(status)}">${escapeHtml(this.referralStatusLabel(status))}</span>
-            <strong>${escapeHtml(referral.referrer_display_name ?? referral.referrer_email ?? 'Indicador')}</strong>
-            <span aria-hidden="true">→</span>
-            <strong>${escapeHtml(referral.referred_display_name ?? referral.referred_email ?? 'Indicado')}</strong>
-          </div>
-          <time>${escapeHtml(formatDate(referral.created_at))}</time>
-        </div>
-        <dl class="admin-facts admin-facts--referral">
-          <div><dt>Indicador</dt><dd>${escapeHtml(referral.referrer_email ?? 'Sem e-mail')}<small>${escapeHtml(referral.referrer_code ?? referral.referrer_user_id)}</small></dd></div>
-          <div><dt>Indicado</dt><dd>${escapeHtml(referral.referred_email ?? 'Sem e-mail')}<small>${escapeHtml(referral.referred_user_id)}</small></dd></div>
-          <div><dt>Validação</dt><dd>${escapeHtml(referral.qualification_reason ?? 'Ainda não avaliada')}<small>Device: ${escapeHtml(referral.device_hint ?? 'não registrado')}</small></dd></div>
-          <div><dt>Recompensa</dt><dd>${referral.reward_days} dia(s) PRO<small>${escapeHtml(referral.campaign_name ?? 'Sem campanha')}</small></dd></div>
-        </dl>
-        <form class="admin-referral-actions" data-referral-action-form="${escapeHtml(referral.id)}">
-          <label class="visually-hidden" for="referral-reason-${escapeHtml(referral.id)}">Motivo da decisão</label>
-          <input id="referral-reason-${escapeHtml(referral.id)}" name="reason" minlength="3" maxlength="500" placeholder="Motivo obrigatório para o log" required />
-          ${status !== 'rewarded' ? '<button class="button button--primary button--compact" name="action" value="approve" type="submit">Aprovar manualmente</button>' : ''}
-          ${status !== 'rejected' ? '<button class="button button--secondary button--compact admin-danger" name="action" value="reject" type="submit">Rejeitar e remover recompensa</button>' : ''}
-        </form>
-      </article>
-    `
-  }
-
   private renderAudit(): string {
     return `
       <div class="admin-list-column">
@@ -1502,14 +1335,14 @@ export class AdminApp {
   }
 
   private renderPagination(
-    scope: 'audit' | 'payments' | 'referrals' | 'users',
+    scope: 'audit' | 'payments' | 'users',
     page: number,
     hasMore: boolean,
     total: number,
   ): string {
     return `
       <div class="admin-pagination" aria-label="Paginação">
-        <span>Página ${page} · ${total} ${scope === 'users' ? 'usuários' : scope === 'payments' ? 'pagamentos' : scope === 'referrals' ? 'indicações' : 'registros'}</span>
+        <span>Página ${page} · ${total} ${scope === 'users' ? 'usuários' : scope === 'payments' ? 'pagamentos' : 'registros'}</span>
         <div>
           <button class="text-button" data-admin-page="${scope}-previous" type="button" ${page <= 1 ? 'disabled' : ''}>Anterior</button>
           <button class="text-button" data-admin-page="${scope}-next" type="button" ${hasMore ? '' : 'disabled'}>Próxima</button>
@@ -1576,31 +1409,6 @@ export class AdminApp {
         void this.loadTab('users')
       })
 
-    this.root.querySelector<HTMLFormElement>('#admin-referral-filter')
-      ?.addEventListener('submit', (event) => {
-        event.preventDefault()
-        const data = new FormData(event.currentTarget as HTMLFormElement)
-        const status = String(data.get('status') ?? '')
-        this.referralStatus = status ? status as AdminReferralStatus : null
-        this.referralQuery = String(data.get('query') ?? '').trim()
-        this.referralPage = 1
-        void this.loadTab('referrals')
-      })
-    this.root.querySelectorAll<HTMLButtonElement>('[data-referral-status-shortcut]')
-      .forEach((button) => button.addEventListener('click', () => {
-        const status = button.dataset.referralStatusShortcut ?? ''
-        this.referralStatus = status ? status as AdminReferralStatus : null
-        this.referralPage = 1
-        void this.loadTab('referrals')
-      }))
-    this.root.querySelector<HTMLButtonElement>('[data-refresh-referrals]')
-      ?.addEventListener('click', () => void this.loadTab('referrals'))
-    this.root.querySelectorAll<HTMLFormElement>('[data-referral-action-form]')
-      .forEach((form) => form.addEventListener('submit', (event) => {
-        event.preventDefault()
-        void this.performReferralAction(form, event as SubmitEvent)
-      }))
-
     this.root.querySelectorAll<HTMLButtonElement>('[data-admin-page]')
       .forEach((button) => {
         button.addEventListener('click', () => {
@@ -1623,12 +1431,6 @@ export class AdminApp {
           } else if (action === 'payments-next' && this.paymentHasMore) {
             this.paymentPage += 1
             void this.loadTab('payments')
-          } else if (action === 'referrals-previous' && this.referralPage > 1) {
-            this.referralPage -= 1
-            void this.loadTab('referrals')
-          } else if (action === 'referrals-next' && this.referralHasMore) {
-            this.referralPage += 1
-            void this.loadTab('referrals')
           }
         })
       })
@@ -1851,31 +1653,6 @@ export class AdminApp {
 
   private confirmAction(message: string): boolean {
     return typeof globalThis.confirm !== 'function' || globalThis.confirm(message)
-  }
-
-  private async performReferralAction(form: HTMLFormElement, event: SubmitEvent): Promise<void> {
-    const referralId = form.dataset.referralActionForm
-    const action = (event.submitter as HTMLButtonElement | null)?.value
-    const reason = String(new FormData(form).get('reason') ?? '').trim()
-    if (!referralId || !['approve', 'reject'].includes(action ?? '') || reason.length < 3) return
-    if (action === 'reject' && !this.confirmAction(
-      'Rejeitar esta indicação, removê-la do ranking e retirar a recompensa concedida?',
-    )) return
-
-    form.querySelectorAll<HTMLButtonElement>('button').forEach((button) => { button.disabled = true })
-    try {
-      if (action === 'approve') {
-        await this.backend.approveAdminReferral(referralId, reason)
-        this.notice = 'Indicação aprovada manualmente e recompensa aplicada.'
-      } else {
-        await this.backend.rejectAdminReferral(referralId, reason)
-        this.notice = 'Indicação rejeitada, removida do ranking e recompensa retirada.'
-      }
-      await this.loadTab('referrals')
-    } catch (error) {
-      this.error = adminErrorMessage(error)
-      this.render()
-    }
   }
 
   private bindMutationButtons(

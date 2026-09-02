@@ -15,7 +15,6 @@ import type {
   AppAdRequestReceipt,
   UserAppAdRequest,
   RegisterDeviceInput,
-  ReferralProgramResponse,
   SafeProfile,
 } from '../../src/types/backend-api'
 import type { Database, Json } from '../../src/types/database'
@@ -179,7 +178,7 @@ export class SupabaseRepository implements
   async getProfile(userId: string): Promise<SafeProfile | null> {
     const { data, error } = await this.client
       .from('profiles')
-      .select('id,display_name,referral_code,created_at,updated_at')
+      .select('id,display_name,created_at,updated_at')
       .eq('user_id', userId)
       .maybeSingle()
 
@@ -188,35 +187,6 @@ export class SupabaseRepository implements
     }
 
     return data
-  }
-
-  async getReferralProgram(userId: string): Promise<ReferralProgramResponse> {
-    const { data, error } = await this.client.rpc('referral_program_dashboard', {
-      p_user_id: userId,
-    })
-
-    if (error) throwDataError(error)
-    return data as ReferralProgramResponse
-  }
-
-  async reconcileReferralProgram(limit = 250): Promise<Record<string, unknown>> {
-    const { data, error } = await this.client.rpc('reconcile_referral_program', {
-      p_limit: limit,
-      p_now: new Date().toISOString(),
-      p_referrer_user_id: null,
-    })
-
-    if (error) throwDataError(error)
-    return data as Record<string, unknown>
-  }
-
-  async finalizeReferralCampaigns(): Promise<Record<string, unknown>> {
-    const { data, error } = await this.client.rpc('finalize_referral_campaigns', {
-      p_now: new Date().toISOString(),
-    })
-
-    if (error) throwDataError(error)
-    return data as Record<string, unknown>
   }
 
   async hasProLifetimeUpgradeEligibility(userId: string): Promise<boolean> {
@@ -234,7 +204,7 @@ export class SupabaseRepository implements
       .from('profiles')
       .update({ display_name: displayName, updated_at: new Date().toISOString() })
       .eq('user_id', userId)
-      .select('id,display_name,referral_code,created_at,updated_at')
+      .select('id,display_name,created_at,updated_at')
       .single()
 
     if (error) throwDataError(error)
