@@ -58,12 +58,12 @@ protocol.registerSchemesAsPrivileged([{
   scheme: LOCAL_SHELL_SCHEME,
 }])
 
-// Each account owns an isolated Chromium renderer. Keep those renderers lean
-// without disabling GPU acceleration or suspending the game/network loop.
-// A bounded V8 heap encourages earlier collection on idle games, while the
-// back/forward cache is unnecessary for the single-page game sessions and can
-// otherwise retain complete, hidden page trees after navigation.
-app.commandLine.appendSwitch('js-flags', '--max-old-space-size=320 --expose-gc')
+// Each account owns an isolated Chromium renderer. Do not force a small V8
+// heap: long-running games gradually approach that ceiling and V8 then spends
+// increasing amounts of CPU in repeated major collections. Chromium's normal
+// adaptive heap policy is a better fit for persistent game sessions. Expose GC
+// only for the staggered, infrequent cleanup of views that are actually parked.
+app.commandLine.appendSwitch('js-flags', '--expose-gc')
 app.commandLine.appendSwitch('disable-features', 'BackForwardCache')
 // Chromium still keeps WebGL accelerated, but evicts discardable textures and
 // raster resources before the shared GPU process grows without a useful bound
