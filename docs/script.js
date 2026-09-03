@@ -44,6 +44,17 @@ document.querySelectorAll('.download-windows, .download-android, .download-macos
   })
 })
 
+document.querySelectorAll('.referral-cta').forEach((link) => {
+  link.addEventListener('click', () => {
+    if (typeof window.gtag !== 'function') return
+    window.gtag('event', 'select_affiliate', {
+      platform: link.dataset.referralPlatform ?? 'unknown',
+      link_url: link.href,
+      transport_type: 'beacon',
+    })
+  })
+})
+
 document.querySelectorAll('.faq-item button').forEach((button) => {
   button.addEventListener('click', () => {
     const item = button.closest('.faq-item')
