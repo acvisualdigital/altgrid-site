@@ -183,12 +183,12 @@ const HOUSE_APP_AD: PublicAppAd = {
   id: HOUSE_APP_AD_ID,
   category: 'site',
   game_slug: null,
-  advertiser_name: 'AltGrid para anunciantes',
-  title: 'Seu jogo pode aparecer aqui',
-  description: 'Divulgue seu jogo idle, produto ou site para uma comunidade que já joga em múltiplas contas.',
-  destination_url: 'https://altgrid.com.br/games.html#anunciar',
+  advertiser_name: 'Hub.xyz · indicação AltGrid',
+  title: 'Contribua para treinar inteligência artificial',
+  description: 'Conheça tarefas de imagem, áudio e vídeo no Hub.xyz. Oportunidades e recompensas dependem da disponibilidade da plataforma.',
+  destination_url: 'https://ai.hub.xyz/r/6QNQS152',
   image_url: null,
-  cta_label: 'Anuncie no AltGrid',
+  cta_label: 'Conhecer o Hub.xyz',
   placement: 'sidebar_popup',
   popup_enabled: true,
   starts_at: '2026-01-01T00:00:00.000Z',
@@ -2258,9 +2258,11 @@ export class AuthApp {
           ? appAdsResult.value.ads
           : localAppAdPreviewEnabled()
             ? [LOCAL_APP_AD_PREVIEW]
-            : []
+            : [HOUSE_APP_AD]
       } else if (localAppAdPreviewEnabled()) {
         this.appAds = [LOCAL_APP_AD_PREVIEW]
+      } else {
+        this.appAds = [HOUSE_APP_AD]
       }
 
       if (appAdPlansResult.status === 'fulfilled') {
@@ -4985,7 +4987,7 @@ export class AuthApp {
                 : `<button class="button button--primary" data-sponsored-link="${escapeHtml(ad.id)}" data-sponsored-placement="popup" type="button">${escapeHtml(ad.cta_label)} ↗</button>`}
               <button class="button button--secondary" data-close-dialog type="button">Agora não</button>
             </div>
-            <small class="sponsored-modal__notice">${ad.id === HOUSE_APP_AD_ID ? 'Este espaço fica disponível quando não há uma campanha ativa.' : 'Anúncios ajudam a manter o plano FREE disponível.'}</small>
+            <small class="sponsored-modal__notice">${ad.id === HOUSE_APP_AD_ID ? 'Link de indicação do AltGrid · participação e recompensas dependem do Hub.xyz. Seu jogo pode aparecer aqui.' : 'Anúncios ajudam a manter o plano FREE disponível.'}</small>
           </div>
         </dialog>
       `
