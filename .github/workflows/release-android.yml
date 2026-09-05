@@ -10,6 +10,11 @@ on:
         description: "Versão SemVer do Android (ex.: 1.0.2)"
         required: true
         type: string
+      publish:
+        description: "Enviar o APK para a release pública depois dos testes"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -127,15 +132,29 @@ jobs:
           .\gradlew.bat testReleaseUnitTest lintRelease assembleRelease
           Pop-Location
 
-      - name: Publish Android release
+      - name: Prepare Android package
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.ALTGRID_RELEASES_TOKEN }}
         run: |
           $artifact = "release/AltGrid-Android-$($env:ANDROID_VERSION_NAME).apk"
           New-Item -ItemType Directory -Force -Path "release" | Out-Null
           Copy-Item -LiteralPath "android/app/build/outputs/apk/release/app-release.apk" -Destination $artifact
 
+      - name: Keep Android package for private review
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: AltGrid-Android-${{ env.ANDROID_VERSION_NAME }}
+          path: release/AltGrid-Android-${{ env.ANDROID_VERSION_NAME }}.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish Android release
+        if: ${{ github.event_name == 'push' || inputs.publish }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.ALTGRID_RELEASES_TOKEN }}
+        run: |
+          $artifact = "release/AltGrid-Android-$($env:ANDROID_VERSION_NAME).apk"
           $releaseRepo = "acvisualdigital/altgrid-releases"
           $releaseArgs = @(
             $env:RELEASE_TAG,
