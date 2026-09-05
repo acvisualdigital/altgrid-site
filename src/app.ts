@@ -4,6 +4,7 @@ import planFounderBadgeUrl from './assets/plans/plan-founder.png'
 import planFreeBadgeUrl from './assets/plans/plan-free.png'
 import planProBadgeUrl from './assets/plans/plan-pro.png'
 import planProPlusBadgeUrl from './assets/plans/plan-pro-plus.png'
+import hubReferralBannerUrl from './assets/ads/hub-referral-banner.png'
 import { getBundledGameIconUrl } from './game-icon-assets'
 
 import {
@@ -37,6 +38,7 @@ import {
   SessionCancellationCleanupError,
 } from './services/permission-service'
 import { UNLIMITED_ACCOUNT_LIMIT } from './types/backend-api'
+import { OwnerToolsService, type OwnerTool } from './services/owner-tools-service'
 import {
   GRID_MODES,
   GridLayoutService,
@@ -184,11 +186,11 @@ const HOUSE_APP_AD: PublicAppAd = {
   category: 'site',
   game_slug: null,
   advertiser_name: 'Hub.xyz · indicação AltGrid',
-  title: 'Contribua para treinar inteligência artificial',
-  description: 'Conheça tarefas de imagem, áudio e vídeo no Hub.xyz. Oportunidades e recompensas dependem da disponibilidade da plataforma.',
+  title: 'Conheça o Hub e ganhe dinheiro de casa',
+  description: 'Participe de tarefas de treinamento de IA com imagem, áudio e vídeo. Escaneie o QR ou abra o link para conhecer.',
   destination_url: 'https://ai.hub.xyz/r/6QNQS152',
-  image_url: null,
-  cta_label: 'Conhecer o Hub.xyz',
+  image_url: hubReferralBannerUrl,
+  cta_label: 'Conheça o Hub',
   placement: 'sidebar_popup',
   popup_enabled: true,
   starts_at: '2026-01-01T00:00:00.000Z',
@@ -371,6 +373,7 @@ export interface AccountSessionLauncher {
   ): Promise<SessionProxySummary | null>
   focus(account: ConfiguredAccount): Promise<void> | void
   getExtension?(account: ConfiguredAccount): Promise<SessionExtensionSummary | null>
+  installHunteraDps?(account: ConfiguredAccount): Promise<SessionExtensionSummary>
   getProxy?(account: ConfiguredAccount): Promise<SessionProxySummary | null>
   getResourceUsage?(): Promise<SessionResourceUsage[]>
   open(
@@ -472,7 +475,7 @@ const UTILITY_BAR_COLLAPSED_STORAGE_KEY = 'altgrid.preference.utility-bar-collap
 const GRID_MODE_STORAGE_KEY = 'altgrid.preference.grid-mode.v1'
 const RESOURCE_USAGE_REFRESH_INTERVAL_MS = 12_000
 
-export type EcoBackgroundFps = 10 | 20 | 30
+export type EcoBackgroundFps = 2 | 5 | 10 | 20 | 30
 
 type UiIconName =
   | 'add'
@@ -691,79 +694,16 @@ const PLAN_BADGE_PRESENTATION: Record<PlanCode, {
   },
 }
 
-function creatorBadgeOverrideEnabledForEmail(email: string | null | undefined): boolean {
-  if (typeof globalThis === 'undefined' || typeof globalThis.localStorage === 'undefined') {
-    return false
-  }
-
-  try {
-    const enabled = globalThis.localStorage.getItem('altgrid.creator-tag.enabled') === 'true'
-    const storedEmail = globalThis.localStorage.getItem('altgrid.creator-tag.email')?.trim().toLowerCase() ?? ''
-    const normalizedEmail = email?.trim().toLowerCase() ?? ''
-    return enabled && Boolean(storedEmail) && Boolean(normalizedEmail) && storedEmail === normalizedEmail
-  } catch {
-    return false
-  }
-}
-
-export function founderBenefitsOverrideEnabledForEmail(email: string | null | undefined): boolean {
-  if (typeof globalThis === 'undefined' || typeof globalThis.localStorage === 'undefined') {
-    return false
-  }
-
-  try {
-    const enabled = globalThis.localStorage.getItem('altgrid.founder-benefits.enabled') === 'true'
-    const storedEmail = globalThis.localStorage.getItem('altgrid.founder-benefits.email')?.trim().toLowerCase() ?? ''
-    const normalizedEmail = email?.trim().toLowerCase() ?? ''
-    return enabled && Boolean(storedEmail) && Boolean(normalizedEmail) && storedEmail === normalizedEmail
-  } catch {
-    return false
-  }
-}
-
-export function localFounderOverrideEntitlementsForEmail(
-  email: string | null | undefined,
-  base: ResolvedEntitlements,
-): ResolvedEntitlements {
-  if (!founderBenefitsOverrideEnabledForEmail(email)) {
-    return base
-  }
-
-  return {
-    ...base,
-    account_limit: UNLIMITED_ACCOUNT_LIMIT,
-    expires_at: null,
-    features: {
-      ...base.features,
-      account_proxy: true,
-      advanced_grids: true,
-      eco_mode: true,
-      extended_screens: true,
-    },
-    founder_number: base.founder_number ?? 1,
-    lifetime: true,
-    plan: 'FOUNDER',
-  }
-}
-
 function renderCreatorBadge(): string {
   return `<span class="plan-badge plan-badge--creator" aria-label="Plano Criador"><img class="plan-badge__icon" src="${escapeHtml(planFounderBadgeUrl)}" alt="" aria-hidden="true" /><span class="plan-badge__text">CRIADOR</span></span>`
-}
-
-function currentAccountDisplayPlanName(plan: PlanCode, email: string | null | undefined): string {
-  if (creatorBadgeOverrideEnabledForEmail(email)) {
-    return 'Criador'
-  }
-
-  return PLAN_PRESENTATION[plan].displayName
 }
 
 export function renderPlanBadge(
   plan: PlanCode,
   founderNumber: number | null = null,
-  userEmail: string | null = null,
+  creatorBadgeEnabled = false,
 ): string {
-  if (creatorBadgeOverrideEnabledForEmail(userEmail)) {
+  if (creatorBadgeEnabled) {
     return renderCreatorBadge()
   }
 
@@ -955,6 +895,8 @@ export class AuthApp {
   private backendStateRevision = 0
   private backendUserId: string | null = null
   private adminAccess = false
+  private readonly ownerTools = new OwnerToolsService()
+  private baseEntitlements: ResolvedEntitlements = SAFE_FREE_ENTITLEMENTS
   private adminPaymentAlertTimer: ReturnType<typeof setInterval> | null = null
   private readonly adminPaymentStates = new Map<string, string>()
   private readonly adminAdRequestStates = new Map<string, string>()
@@ -1122,6 +1064,9 @@ export class AuthApp {
       focus: (account) => sessionLauncher?.focus?.(account),
       getExtension: sessionLauncher?.getExtension
         ? (account) => sessionLauncher.getExtension!(account)
+        : undefined,
+      installHunteraDps: sessionLauncher?.installHunteraDps
+        ? (account) => sessionLauncher.installHunteraDps!(account)
         : undefined,
       getProxy: sessionLauncher?.getProxy
         ? (account) => sessionLauncher.getProxy!(account)
@@ -1699,6 +1644,18 @@ export class AuthApp {
   }
 
   private prepareAuthenticatedSession(session: Session): void {
+    if (this.session?.user.id !== session.user.id || this.session?.user.email !== session.user.email) {
+      this.ownerTools.revoke()
+      this.permissionService.updateEntitlements(this.baseEntitlements)
+      // Discard an in-flight owner check when the same user changes email.
+      if (this.backendUserId === session.user.id) {
+        this.backendStateRevision += 1
+        this.backendLoadInFlight = null
+        this.backendLoadStatus = 'idle'
+        this.adminAccess = false
+        this.me = null
+      }
+    }
     if (this.backendUserId !== session.user.id) {
       this.backendStateRevision += 1
       void this.releaseTrackedSessions()
@@ -1751,7 +1708,8 @@ export class AuthApp {
       this.extensionStateLoadingAccountIds.clear()
       this.extensionStatesReady = false
       this.extensionStateRefreshInFlight = null
-      this.permissionService.updateEntitlements(SAFE_FREE_ENTITLEMENTS)
+      this.baseEntitlements = SAFE_FREE_ENTITLEMENTS
+      this.permissionService.updateEntitlements(this.baseEntitlements)
       this.ecoModeEffective = false
       void this.syncEcoMode()
       this.configuredAccounts = this.accountService.list(session.user.id)
@@ -1766,6 +1724,8 @@ export class AuthApp {
   }
 
   private clearAuthenticatedState(): void {
+    this.ownerTools.revoke()
+    this.baseEntitlements = SAFE_FREE_ENTITLEMENTS
     this.stopPresenceTracking()
     this.stopPaymentPolling()
     this.stopResourceMonitoring()
@@ -2125,6 +2085,8 @@ export class AuthApp {
     }
 
     const revision = this.backendStateRevision
+    this.ownerTools.revoke()
+    this.permissionService.updateEntitlements(this.baseEntitlements)
     this.backendLoadStatus = 'loading'
     this.backendLoadError = null
     if (backendApi.getHealth) {
@@ -2209,23 +2171,28 @@ export class AuthApp {
         this.me = meResult.value
       }
 
+      const verifiedAdmin = adminResult.status === 'fulfilled' ? adminResult.value : null
+      this.adminAccess = verifiedAdmin?.admin?.role === 'admin'
+        && verifiedAdmin.admin.user_id === session.user.id
+      this.ownerTools.authorize(
+        session.user,
+        meResult.status === 'fulfilled' ? meResult.value?.user : null,
+        verifiedAdmin,
+      )
+
       if (
         entitlementsResult.status === 'fulfilled'
         && entitlementsResult.value
       ) {
-        const entitlements = localFounderOverrideEntitlementsForEmail(
-          this.session?.user.email ?? null,
-          entitlementsResult.value.entitlements,
-        )
-        this.permissionService.updateEntitlements(entitlements)
+        this.baseEntitlements = entitlementsResult.value.entitlements
         this.offlineLicenseSource = entitlementsResult.value.source
       } else if (meResult.status === 'fulfilled' && meResult.value) {
-        const entitlements = localFounderOverrideEntitlementsForEmail(
-          this.session?.user.email ?? null,
-          entitlementsFromMe(meResult.value),
-        )
-        this.permissionService.updateEntitlements(entitlements)
+        this.baseEntitlements = entitlementsFromMe(meResult.value)
       }
+      // Never reuse the already-elevated plan as the base when a check fails.
+      this.permissionService.updateEntitlements(
+        this.ownerTools.resolveEntitlements(session.user, this.baseEntitlements),
+      )
 
       if (gamesResult.status === 'fulfilled') {
         this.games = gamesResult.value
@@ -2270,9 +2237,6 @@ export class AuthApp {
           ? appAdPlansResult.value.plans
           : [...DEFAULT_APP_AD_PLANS]
       }
-
-      this.adminAccess = adminResult.status === 'fulfilled'
-        && adminResult.value !== null
 
       if (this.adminAccess) {
         this.startAdminPaymentAlerts()
@@ -2773,9 +2737,8 @@ export class AuthApp {
 
   private renderPlanName(): string {
     const plan = this.permissionService.getCurrentPlan()
-    const email = this.session?.user.email ?? this.me?.user.email ?? null
 
-    if (creatorBadgeOverrideEnabledForEmail(email)) {
+    if (this.ownerTools.isEnabled(this.session?.user, 'creator-tag')) {
       return 'Criador'
     }
 
@@ -2820,12 +2783,6 @@ export class AuthApp {
             const proxyState = this.accountProxyStates.get(account.id)
             const proxyEnabled = proxyState?.enabled === true
             const proxyLoading = this.proxyStateLoadingAccountIds.has(account.id)
-            const extensionState = this.accountExtensionStates.get(account.id)
-            const extensionWithinLimit = extensionState
-              ? this.isAccountExtensionWithinLimit(account.id)
-              : true
-            const extensionEnabled = extensionState?.enabled === true && extensionWithinLimit
-            const extensionLoading = this.extensionStateLoadingAccountIds.has(account.id)
             const selected = this.workspaceMode === 'account'
               && active
               && !resting
@@ -2852,8 +2809,7 @@ export class AuthApp {
                       <button class="account-tab__action account-tab__action--close" data-close-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Fechar sessão ${escapeHtml(account.displayName)}" title="Fechar sessão">${uiIcon('close')}</button>
                     </div>`
                     : `<div class="account-tab__actions">
-                      ${this.extensionControlAvailable() ? `<button class="account-tab__action account-tab__action--extension ${extensionEnabled ? 'is-active' : ''}" data-extension-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Extensão de ${escapeHtml(account.displayName)}" title="${extensionState && !extensionWithinLimit ? 'Extensão preservada · fora do limite atual' : extensionEnabled ? `${escapeHtml(extensionState?.name ?? 'Extensão')} ativa` : extensionState ? 'Extensão configurada, mas desativada' : 'Configurar extensão por conta'}" ${extensionLoading ? 'disabled' : ''}>${extensionLoading ? '…' : 'E'}</button>` : ''}
-                      ${this.proxyControlAvailable() ? `<button class="account-tab__action account-tab__action--proxy ${proxyEnabled ? 'is-active' : ''}" data-toggle-account-proxy data-account-id="${escapeHtml(account.id)}" type="button" aria-label="${proxyEnabled ? 'Desativar' : proxyState ? 'Ativar' : 'Configurar'} proxy de ${escapeHtml(account.displayName)}" title="${proxyEnabled ? 'Proxy ativo · clique para desativar' : proxyState ? 'Proxy salvo · clique para ativar' : 'Configurar proxy'}" ${proxyLoading ? 'disabled' : ''}>${proxyLoading ? '…' : 'P'}</button>` : ''}
+                      ${this.proxyControlAvailable() ? `<button class="account-tab__action account-tab__action--proxy ${proxyEnabled ? 'is-active' : ''}" data-proxy-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="${proxyState ? 'Editar' : 'Configurar'} proxy de ${escapeHtml(account.displayName)}" title="${proxyEnabled ? 'Proxy ativo · clique para editar ou desativar' : proxyState ? 'Proxy salvo · clique para editar ou ativar' : 'Configurar proxy'}" ${proxyLoading ? 'disabled' : ''}>${proxyLoading ? '…' : 'P'}</button>` : ''}
                       <button class="account-tab__action account-tab__action--rest ${resting ? 'is-active' : ''}" ${resting ? 'data-restore-account' : 'data-background-account'} data-account-id="${escapeHtml(account.id)}" type="button" aria-label="${resting ? 'Restaurar' : 'Colocar em descanso'} ${escapeHtml(account.displayName)}" title="${resting ? 'Em descanso · clique para restaurar' : 'Descansar tela mantendo o jogo ativo'}">${resting ? '<span class="account-tab__play" aria-hidden="true">▶</span>' : uiIcon('moon')}</button>
                       <button class="account-tab__action account-tab__action--close" data-close-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Fechar sessão ${escapeHtml(account.displayName)}" title="Fechar sessão">${uiIcon('close')}</button>
                     </div>`
@@ -3191,17 +3147,16 @@ export class AuthApp {
         ?? (localAppAdPreviewEnabled() && game.slug === LOCAL_APP_AD_PREVIEW.game_slug ? 128 : 0)
       return Number.isFinite(value) ? Math.max(0, value) : 0
     }
-    const visibleGames = [...this.games]
+    const sidebarGames = [...this.games]
       .sort((left, right) =>
         onlinePlayersFor(right) - onlinePlayersFor(left)
         || Number(featuredGameSlugs.has(right.slug)) - Number(featuredGameSlugs.has(left.slug))
         || (left.sort_order ?? 0) - (right.sort_order ?? 0)
         || left.name.localeCompare(right.name, 'pt-BR'))
-      .slice(0, 6)
     const activeSessions = this.permissionService.getActiveSessionCount()
     const currentPlan = this.permissionService.getCurrentPlan()
-    const currentUserEmail = this.session?.user.email ?? this.me?.user.email ?? null
-    const profilePlanBadge = renderPlanBadge(currentPlan, this.me?.founder_number ?? null, currentUserEmail)
+    const profilePlanBadge = renderPlanBadge(currentPlan, this.me?.founder_number ?? null,
+      this.ownerTools.isEnabled(this.session?.user, 'creator-tag'))
 
     return `
       <aside class="game-sidebar" data-sidebar-region aria-label="Navegação principal">
@@ -3216,9 +3171,9 @@ export class AuthApp {
             </div>
             <button class="sidebar-collapse-button" data-toggle-sidebar type="button" aria-label="Ocultar painel lateral" title="Ocultar painel lateral">‹</button>
           </div>
-          <nav class="game-list" aria-label="Jogos suportados">
-            ${visibleGames.length > 0
-              ? visibleGames.map((game) => {
+          <nav class="game-list" aria-label="Todos os jogos suportados">
+            ${sidebarGames.length > 0
+              ? sidebarGames.map((game) => {
                 const featured = featuredGameSlugs.has(game.slug)
                 const hasOnlineMetric = Object.prototype.hasOwnProperty.call(this.appMetrics?.games ?? {}, game.slug)
                   || (localAppAdPreviewEnabled() && game.slug === LOCAL_APP_AD_PREVIEW.game_slug)
@@ -3232,7 +3187,6 @@ export class AuthApp {
               `}).join('')
               : '<p class="sidebar-empty">O catálogo será carregado quando os serviços estiverem disponíveis.</p>'}
           </nav>
-          <button class="sidebar-more" data-open-dialog="more-games" type="button"><span aria-hidden="true">▦</span> Ver mais jogos</button>
         </div>
 
         ${this.renderSidebarAdvertising()}
@@ -3290,6 +3244,7 @@ export class AuthApp {
     const profilePlanBadge = renderPlanBadge(
       this.permissionService.getCurrentPlan(),
       this.me?.founder_number ?? null,
+      this.ownerTools.isEnabled(this.session?.user, 'creator-tag'),
     )
 
     return `
@@ -3599,7 +3554,7 @@ export class AuthApp {
   private readEcoBackgroundFpsPreference(): EcoBackgroundFps {
     try {
       const value = Number(localStorage.getItem(ECO_BACKGROUND_FPS_STORAGE_KEY))
-      return value === 10 || value === 30 ? value : 20
+      return value === 2 || value === 5 || value === 10 || value === 30 ? value : 20
     } catch {
       return 20
     }
@@ -4001,7 +3956,8 @@ export class AuthApp {
     channel: ChatState['channels'][number] | undefined,
   ): string {
     const own = message.user_id === this.session?.user.id
-    const badge = renderPlanBadge(message.plan, message.founder_number, own ? (this.session?.user.email ?? null) : null)
+    const badge = renderPlanBadge(message.plan, message.founder_number,
+      own && this.ownerTools.isEnabled(this.session?.user, 'creator-tag'))
 
     return `
       <article class="chat-message ${own ? 'is-own' : ''}" data-chat-message-channel="${escapeHtml(message.channel_id)}">
@@ -4409,7 +4365,7 @@ export class AuthApp {
             <button data-toggle-eco-mode type="button" role="switch" aria-label="${this.ecoModeEffective ? 'Desligar Eco Mode' : 'Ligar Eco Mode'}" aria-checked="${this.ecoModeEffective}" ${ecoAvailable ? '' : 'disabled'}>
               ${uiIcon('leaf')}<span><small>Eco Mode</small><strong>${this.ecoModeEffective ? 'Ligado' : 'Desligado'}</strong></span><i aria-hidden="true"></i>
             </button>
-            <label title="Limite adaptativo atual: ${adaptiveEcoFps} FPS nas contas secundárias"><span class="visually-hidden">FPS em segundo plano</span><select data-eco-background-fps ${ecoAvailable ? '' : 'disabled'} aria-label="FPS máximo em segundo plano"><option value="10" ${this.ecoBackgroundFps === 10 ? 'selected' : ''}>Até 10 FPS</option><option value="20" ${this.ecoBackgroundFps === 20 ? 'selected' : ''}>Até 20 FPS</option><option value="30" ${this.ecoBackgroundFps === 30 ? 'selected' : ''}>Até 30 FPS</option></select></label>
+            <label title="Limite adaptativo atual: ${adaptiveEcoFps} FPS nas contas secundárias"><span class="visually-hidden">FPS em segundo plano</span><select data-eco-background-fps ${ecoAvailable ? '' : 'disabled'} aria-label="FPS máximo em segundo plano"><option value="2" ${this.ecoBackgroundFps === 2 ? 'selected' : ''}>Até 2 FPS</option><option value="5" ${this.ecoBackgroundFps === 5 ? 'selected' : ''}>Até 5 FPS</option><option value="10" ${this.ecoBackgroundFps === 10 ? 'selected' : ''}>Até 10 FPS</option><option value="20" ${this.ecoBackgroundFps === 20 ? 'selected' : ''}>Até 20 FPS</option><option value="30" ${this.ecoBackgroundFps === 30 ? 'selected' : ''}>Até 30 FPS</option></select></label>
           </div>
           <button class="utility-collapse-button" data-toggle-utility-bar type="button" aria-label="Ocultar barra de utilitários" title="Ocultar barra de utilitários">⌄</button>
         </div>
@@ -5096,6 +5052,19 @@ export class AuthApp {
                 <p>${escapeHtml(this.extensionLimitMessage())}</p>
               </div>
             ` : ''}
+            ${account.gameSlug === 'huntera' && this.sessionLauncher.installHunteraDps ? `
+              <section class="extension-featured ${config?.name === 'AltGrid DPS Meter para Huntera' ? 'is-installed' : ''}">
+                <div class="extension-featured__icon" aria-hidden="true">DPS</div>
+                <div class="extension-featured__copy">
+                  <span>EXTENSÃO OFICIAL ALTGRID</span>
+                  <strong>DPS Meter para Huntera</strong>
+                  <small>Mede dano, participação e DPS do grupo em tempo real. O painel pode ser arrastado e lembra sua posição.</small>
+                </div>
+                <button class="extension-featured__button" data-install-huntera-dps type="button" ${this.extensionSaving || !canChooseExtension ? 'disabled' : ''}>
+                  ${this.extensionSaving ? 'Instalando…' : config?.name === 'AltGrid DPS Meter para Huntera' ? 'Reinstalar' : 'Instalar e ativar'}
+                </button>
+              </section>
+            ` : ''}
             ${config ? `
               <section class="extension-card ${config.enabled && extensionWithinLimit ? 'is-active' : ''}">
                 <span class="extension-card__mark" aria-hidden="true">E</span>
@@ -5110,7 +5079,7 @@ export class AuthApp {
             ` : '<div class="extension-empty"><span aria-hidden="true">▧</span><strong>Nenhuma extensão configurada</strong><small>Selecione a pasta descompactada que contém o arquivo manifest.json.</small></div>'}
             <div class="extension-security"><strong>Importante</strong><p>Extensões podem ler e alterar páginas permitidas no próprio manifest. Adicione somente arquivos de uma fonte em que você confia.</p></div>
             <div class="modal__actions">
-              <button class="button button--primary" data-choose-extension type="button" ${this.extensionSaving || !canChooseExtension ? 'disabled' : ''}>${config ? 'Trocar pasta' : 'Selecionar pasta'}</button>
+              <button class="button button--secondary" data-choose-extension type="button" ${this.extensionSaving || !canChooseExtension ? 'disabled' : ''}>${config ? 'Usar outra extensão' : 'Instalar por pasta'}</button>
               ${config ? '<button class="text-button text-button--danger" data-remove-extension type="button">Remover extensão</button>' : ''}
               ${!canChooseExtension && this.permissionService.getCurrentPlan() !== 'FOUNDER' ? '<button class="button button--secondary" data-show-plans type="button">Ver planos</button>' : ''}
               <button class="button button--secondary" data-close-dialog type="button">Fechar</button>
@@ -5563,14 +5532,9 @@ export class AuthApp {
       const restore = localStorage.getItem('altgrid.preference.restore-session') !== 'false'
       const confirmClose = localStorage.getItem('altgrid.preference.confirm-close') !== 'false'
       const notifications = localStorage.getItem('altgrid.preference.notifications') !== 'false'
-      const creatorTagEmail = this.session?.user.email ?? localStorage.getItem('altgrid.creator-tag.email') ?? ''
-      const creatorTagEnabled = this.session?.user.email
-        ? creatorBadgeOverrideEnabledForEmail(this.session.user.email)
-        : localStorage.getItem('altgrid.creator-tag.enabled') === 'true'
-      const founderBenefitsEmail = this.session?.user.email ?? localStorage.getItem('altgrid.founder-benefits.email') ?? ''
-      const founderBenefitsEnabled = this.session?.user.email
-        ? founderBenefitsOverrideEnabledForEmail(this.session.user.email)
-        : localStorage.getItem('altgrid.founder-benefits.enabled') === 'true'
+      const ownerToolsSettings = this.ownerTools.isAuthorized(this.session?.user)
+        ? `<label class="setting-toggle"><span><strong>Tag Criador</strong><small>Identificação local exclusiva da sua conta administrativa.</small></span><input data-preference="creator-tag" type="checkbox" ${this.ownerTools.isEnabled(this.session?.user, 'creator-tag') ? 'checked' : ''} /></label><label class="setting-toggle"><span><strong>Benefícios Founder</strong><small>Teste local da sua conta administrativa. Ao desligar, o plano real é restaurado.</small></span><input data-preference="founder-benefits" type="checkbox" ${this.ownerTools.isEnabled(this.session?.user, 'founder-benefits') ? 'checked' : ''} /></label>`
+        : ''
       const ecoModeAvailable = this.ecoModeSupported
         && this.permissionService.canUseFeature('eco_mode')
       const ecoModeNote = !this.permissionService.canUseFeature('eco_mode')
@@ -5599,7 +5563,14 @@ export class AuthApp {
               <button class="is-active" data-settings-tab="general" type="button">Geral</button><button data-settings-tab="accounts" type="button">Contas</button><button data-settings-tab="visual" type="button">Visual</button><button data-settings-tab="updates" type="button">Atualizações</button><button data-settings-tab="notifications" type="button">Notificações</button><button data-settings-tab="about" type="button">Sobre</button>
             </nav>
             <div class="settings-content">
-              <section data-settings-panel="general"><h3>Geral</h3><label class="setting-toggle"><span><strong>Eco Mode adaptativo</strong><small>${ecoModeNote}</small></span><input data-preference="eco-mode" type="checkbox" ${this.ecoModeRequested ? 'checked' : ''} ${ecoModeAvailable ? '' : 'disabled'} /></label><label class="setting-toggle"><span><strong>Tag Criador</strong><small>Mostra uma badge vermelha exclusiva para sua conta para testar o visual premium localmente.</small></span><input data-preference="creator-tag" type="checkbox" ${creatorTagEnabled ? 'checked' : ''} ${creatorTagEmail ? '' : 'disabled'} /></label><label class="setting-toggle"><span><strong>Benefícios Founder</strong><small>Ativa o plano máximo localmente para testar limites, proxy e recursos exclusivos sem mudar a conta real.</small></span><input data-preference="founder-benefits" type="checkbox" ${founderBenefitsEnabled ? 'checked' : ''} ${founderBenefitsEmail ? '' : 'disabled'} /></label><label class="setting-select"><span><strong>Máximo em segundo plano</strong><small>A conta em uso fica limitada a 30 FPS. Com 4 ou 8 contas, o AltGrid reduz automaticamente as secundárias para 10 ou 5 FPS.</small></span><select data-eco-background-fps ${ecoModeAvailable ? '' : 'disabled'}><option value="10" ${this.ecoBackgroundFps === 10 ? 'selected' : ''}>Até 10 FPS</option><option value="20" ${this.ecoBackgroundFps === 20 ? 'selected' : ''}>Até 20 FPS</option><option value="30" ${this.ecoBackgroundFps === 30 ? 'selected' : ''}>Até 30 FPS</option></select></label><label class="setting-toggle"><span><strong>Restaurar última sessão</strong><small>Reabre as contas usadas na inicialização anterior.</small></span><input data-preference="restore-session" type="checkbox" ${restore ? 'checked' : ''} /></label><label class="setting-toggle"><span><strong>Confirmar antes de fechar</strong><small>Evita encerrar sessões por acidente.</small></span><input data-preference="confirm-close" type="checkbox" ${confirmClose ? 'checked' : ''} /></label></section>
+              <section data-settings-panel="general">
+                <h3>Geral</h3>
+                <label class="setting-toggle"><span><strong>Eco Mode adaptativo</strong><small>${ecoModeNote}</small></span><input data-preference="eco-mode" type="checkbox" ${this.ecoModeRequested ? 'checked' : ''} ${ecoModeAvailable ? '' : 'disabled'} /></label>
+                ${ownerToolsSettings}
+                <label class="setting-select"><span><strong>Máximo em segundo plano</strong><small>Escolha entre 2, 5, 10, 20 ou 30 FPS para as contas secundárias. A conta em uso continua limitada separadamente a 30 FPS.</small></span><select data-eco-background-fps ${ecoModeAvailable ? '' : 'disabled'}><option value="2" ${this.ecoBackgroundFps === 2 ? 'selected' : ''}>Até 2 FPS</option><option value="5" ${this.ecoBackgroundFps === 5 ? 'selected' : ''}>Até 5 FPS</option><option value="10" ${this.ecoBackgroundFps === 10 ? 'selected' : ''}>Até 10 FPS</option><option value="20" ${this.ecoBackgroundFps === 20 ? 'selected' : ''}>Até 20 FPS</option><option value="30" ${this.ecoBackgroundFps === 30 ? 'selected' : ''}>Até 30 FPS</option></select></label>
+                <label class="setting-toggle"><span><strong>Restaurar última sessão</strong><small>Reabre as contas usadas na inicialização anterior.</small></span><input data-preference="restore-session" type="checkbox" ${restore ? 'checked' : ''} /></label>
+                <label class="setting-toggle"><span><strong>Confirmar antes de fechar</strong><small>Evita encerrar sessões por acidente.</small></span><input data-preference="confirm-close" type="checkbox" ${confirmClose ? 'checked' : ''} /></label>
+              </section>
               <section data-settings-panel="accounts" hidden><h3>Contas e desempenho</h3><p>Cookies, sessões e proxies ficam somente neste dispositivo, isolados por conta.</p><div class="resource-summary"><span><small>Uso das sessões</small><strong>${escapeHtml(formatMemoryKb(totalPrivateKb))} · ${totalCpu.toFixed(1)}% CPU</strong></span><button class="button button--secondary" data-refresh-resource-usage type="button" ${this.resourceUsageLoading ? 'disabled' : ''}>${this.resourceUsageLoading ? 'Medindo…' : 'Medir agora'}</button></div>${usageRows ? `<div class="resource-list">${usageRows}</div>` : '<p class="modal__note">Abra suas contas e clique em “Medir agora” para ver o consumo por sessão.</p>'}<p class="modal__note">O perfil de 10 FPS reduz trabalho de CPU/GPU das contas em segundo plano. Como cada jogo mantém um navegador isolado e ativo, a RAM só é totalmente liberada ao fechar a conta.</p></section>
               <section data-settings-panel="visual" hidden><h3>Visual</h3><p>O tema escuro premium acompanha automaticamente o AltGrid.</p></section>
               <section data-settings-panel="updates" hidden><h3>Atualizações</h3><p>Canal atual: <strong>${updateChannel}</strong> · instalada ${APP_VERSION}${this.configText('latest_version') ? ` · disponível ${escapeHtml(this.configText('latest_version')!)}` : ''}</p><button class="button button--secondary" data-check-update type="button">Verificar atualização</button></section>
@@ -7469,6 +7440,21 @@ export class AuthApp {
     this.render()
   }
 
+  private updateOwnerToolPreference(tool: OwnerTool, input: HTMLInputElement): void {
+    // Recheck at the action boundary as well as when rendering the controls.
+    const saved = this.ownerTools.setEnabled(this.session?.user, tool, input.checked)
+    input.checked = this.ownerTools.isEnabled(this.session?.user, tool)
+    if (tool === 'founder-benefits') {
+      this.permissionService.updateEntitlements(
+        this.ownerTools.resolveEntitlements(this.session?.user, this.baseEntitlements),
+      )
+    }
+    this.render()
+    if (saved && tool === 'founder-benefits') {
+      void this.syncEcoMode().catch(() => undefined)
+    }
+  }
+
   private bindDialogActions(): void {
     this.root
       .querySelectorAll<HTMLButtonElement>('[data-close-dialog]')
@@ -7554,6 +7540,11 @@ export class AuthApp {
 
     const chooseExtension = this.root.querySelector<HTMLButtonElement>('[data-choose-extension]')
     if (chooseExtension) this.bindButtonOnce(chooseExtension, () => { void this.chooseAccountExtension() })
+
+    const installHunteraDps = this.root.querySelector<HTMLButtonElement>('[data-install-huntera-dps]')
+    if (installHunteraDps) {
+      this.bindButtonOnce(installHunteraDps, () => { void this.installHunteraDpsExtension() })
+    }
 
     const extensionEnabled = this.root.querySelector<HTMLInputElement>('[data-extension-enabled]')
     if (extensionEnabled && extensionEnabled.dataset.actionBound !== 'true') {
@@ -7756,48 +7747,8 @@ export class AuthApp {
             void this.updateEcoModePreference(input.checked, input)
             return
           }
-          if (key === 'creator-tag') {
-            const email = this.session?.user.email ?? localStorage.getItem('altgrid.creator-tag.email') ?? ''
-            if (email) {
-              localStorage.setItem('altgrid.creator-tag.email', email)
-            }
-            localStorage.setItem('altgrid.creator-tag.enabled', String(input.checked))
-            this.render()
-            return
-          }
-          if (key === 'founder-benefits') {
-            const email = this.session?.user.email ?? localStorage.getItem('altgrid.founder-benefits.email') ?? ''
-            if (email) {
-              localStorage.setItem('altgrid.founder-benefits.email', email)
-            }
-            localStorage.setItem('altgrid.founder-benefits.enabled', String(input.checked))
-            this.render()
-            if (this.session?.user.email) {
-              this.permissionService.updateEntitlements(
-                localFounderOverrideEntitlementsForEmail(this.session.user.email, this.permissionService.getCurrentPlan() === 'FOUNDER'
-                  ? {
-                      account_limit: UNLIMITED_ACCOUNT_LIMIT,
-                      expires_at: null,
-                      features: {
-                        account_proxy: true,
-                        advanced_grids: true,
-                        eco_mode: true,
-                        extended_screens: true,
-                      },
-                      founder_number: 1,
-                      lifetime: true,
-                      plan: 'FOUNDER',
-                    }
-                  : {
-                      account_limit: this.permissionService.getAccountLimit(),
-                      expires_at: null,
-                      features: {},
-                      founder_number: null,
-                      lifetime: false,
-                      plan: this.permissionService.getCurrentPlan(),
-                    }),
-              )
-            }
+          if (key === 'creator-tag' || key === 'founder-benefits') {
+            this.updateOwnerToolPreference(key, input)
             return
           }
           if (key) {
@@ -7813,7 +7764,7 @@ export class AuthApp {
       ecoBackgroundFps.dataset.actionBound = 'true'
       ecoBackgroundFps.addEventListener('change', () => {
         const fps = Number(ecoBackgroundFps.value)
-        if (fps === 10 || fps === 20 || fps === 30) {
+        if (fps === 2 || fps === 5 || fps === 10 || fps === 20 || fps === 30) {
           void this.updateEcoBackgroundFpsPreference(fps, ecoBackgroundFps)
         }
       })
@@ -8387,6 +8338,33 @@ export class AuthApp {
       this.dialogError = error instanceof Error
         ? error.message
         : 'A extensão não é compatível com o AltGrid.'
+    } finally {
+      this.extensionSaving = false
+      if (this.activeDialog === 'extension') this.render()
+    }
+  }
+
+  private async installHunteraDpsExtension(): Promise<void> {
+    const account = this.configuredAccounts.find((candidate) => candidate.id === this.dialogAccountId)
+    if (!account || account.gameSlug !== 'huntera' || !this.sessionLauncher.installHunteraDps || this.extensionSaving) return
+    await this.ensureAccountExtensionStates()
+    if (!this.canAssignAccountExtension(account.id)) {
+      this.dialogError = this.extensionLimitMessage()
+      this.render()
+      return
+    }
+    this.extensionSaving = true
+    this.dialogError = null
+    this.render()
+    try {
+      const installed = await this.sessionLauncher.installHunteraDps(account)
+      this.extensionConfig = installed
+      this.accountExtensionStates.set(account.id, installed)
+      this.showSessionAlert(`DPS Meter do AltGrid instalado e ativado em ${account.displayName}.`)
+    } catch (error) {
+      this.dialogError = error instanceof Error
+        ? error.message
+        : 'Não foi possível instalar o DPS Meter do AltGrid.'
     } finally {
       this.extensionSaving = false
       if (this.activeDialog === 'extension') this.render()

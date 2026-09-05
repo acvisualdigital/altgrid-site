@@ -1,6 +1,6 @@
 {
   "name": "altgrid",
-  "version": "1.5.6",
+  "version": "1.5.7",
   "description": "Gerenciador desktop multissessão para jogos e sites suportados.",
   "author": "AltGrid",
   "private": true,
@@ -90,6 +90,13 @@
       "!node_modules/velopack/lib/native/velopack_nodeffi_win_arm64_msvc.node",
       "!node_modules/velopack/lib/native/velopack_nodeffi_win_x86_msvc.node",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "extensions",
+        "to": "extensions",
+        "filter": ["**/*"]
+      }
     ],
     "win": {
       "icon": "electron/assets/icon.ico",

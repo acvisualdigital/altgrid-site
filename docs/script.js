@@ -94,7 +94,7 @@ const ANDROID_DOWNLOAD_URL = 'https://altgrid-api.altgrid.workers.dev/v1/downloa
 const METRICS_API = 'https://altgrid-api.altgrid.workers.dev/v1/app/metrics'
 const GAMES_API = 'https://altgrid-api.altgrid.workers.dev/v1/games'
 const METRICS_REFRESH_INTERVAL_MS = 60_000
-const PAGE_RELEASE_VERSION = '1.5.6'
+const PAGE_RELEASE_VERSION = '1.5.7'
 
 const findAsset = (assets, pattern) => assets.find((asset) => pattern.test(asset.name))
 const versionParts = (version) => version.split('.').map((part) => Number.parseInt(part, 10) || 0)

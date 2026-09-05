@@ -46,6 +46,14 @@ function createSessionApi() {
     getExtension: vi.fn(async (): Promise<SessionExtensionSummary | null> => null),
     getResourceUsage: vi.fn(async () => []),
     hideSession: vi.fn(async (accountId: string) => snapshot(accountId, false)),
+    installHunteraDps: vi.fn(async (): Promise<SessionExtensionSummary> => ({
+      enabled: true,
+      folderName: 'huntera-dps-altgrid',
+      manifestVersion: 3,
+      name: 'AltGrid DPS Meter para Huntera',
+      permissions: [],
+      version: '1.0.0',
+    })),
     muteSession: vi.fn(async (accountId: string) => snapshot(accountId, true)),
     navigateSession: vi.fn(async (accountId: string) => snapshot(accountId, true)),
     onEvent: vi.fn((listener: (event: SessionEvent) => void) => {
@@ -97,6 +105,15 @@ function createSessionApi() {
 }
 
 describe('ElectronSessionLauncher', () => {
+  it('installs the bundled Huntera DPS Meter for the selected account', async () => {
+    const harness = createSessionApi()
+    const launcher = new ElectronSessionLauncher(harness.api)
+
+    await launcher.installHunteraDps!({ id: 'huntera-account' })
+
+    expect(harness.api.installHunteraDps).toHaveBeenCalledWith('huntera-account')
+  })
+
   it('copies a stored proxy between isolated account ids', async () => {
     const harness = createSessionApi()
     const summary: SessionProxySummary = {

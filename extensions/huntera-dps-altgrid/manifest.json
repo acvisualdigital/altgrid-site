@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "AltGrid DPS Meter para Huntera",
+  "version": "1.0.0",
+  "description": "Medidor local de dano, participação e DPS para grupos no Huntera.",
+  "content_scripts": [
+    {
+      "matches": ["https://huntera.com.br/*", "https://*.huntera.com.br/*"],
+      "js": ["inject.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": ["https://huntera.com.br/*", "https://*.huntera.com.br/*"],
+      "js": ["content.js"],
+      "css": ["panel.css"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

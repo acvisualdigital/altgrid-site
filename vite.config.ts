@@ -39,7 +39,11 @@ export default defineConfig(({ mode }) => {
       port: 3000,
       strictPort: true,
       watch: {
-        ignored: ['**/.altgrid-dev-profile/**'],
+        ignored: [
+          '**/.altgrid-dev-profile/**',
+          '**/release/**',
+          '**/.wrangler/**',
+        ],
       },
     },
     test: {

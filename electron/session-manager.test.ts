@@ -340,7 +340,7 @@ describe('SessionManager', () => {
     harness.manager.setEcoMode(true, 30)
     expect(first.setFrameRateLimit).toHaveBeenLastCalledWith(30)
     expect(second.setFrameRateLimit).toHaveBeenLastCalledWith(30)
-    expect(() => harness.manager.setEcoMode(true, 9)).toThrow(RangeError)
+    expect(() => harness.manager.setEcoMode(true, 1)).toThrow(RangeError)
     expect(() => harness.manager.setEcoMode(true, 31)).toThrow(RangeError)
   })
 

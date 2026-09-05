@@ -1714,6 +1714,97 @@ form {
   line-height: 1.5;
 }
 
+.extension-featured {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 13px;
+  margin-bottom: 14px;
+  padding: 15px;
+  border: 1px solid rgba(35, 201, 91, 0.4);
+  border-radius: 13px;
+  background:
+    radial-gradient(circle at 8% 20%, rgba(35, 201, 91, 0.17), transparent 38%),
+    linear-gradient(135deg, rgba(17, 55, 35, 0.72), rgba(14, 23, 30, 0.94));
+  box-shadow: inset 0 1px 0 rgba(153, 255, 184, 0.06);
+}
+
+.extension-featured.is-installed {
+  border-color: rgba(87, 239, 135, 0.62);
+}
+
+.extension-featured__icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border: 1px solid rgba(80, 239, 131, 0.5);
+  border-radius: 13px;
+  color: #07140c;
+  background: linear-gradient(145deg, #58ef8e, #19bd59);
+  box-shadow: 0 8px 20px rgba(20, 189, 84, 0.2);
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.extension-featured__copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.extension-featured__copy > span {
+  color: #55ed8b;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .1em;
+}
+
+.extension-featured__copy > strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.extension-featured__copy > small {
+  color: var(--text-muted-readable);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.extension-featured__button {
+  min-width: 118px;
+  padding: 10px 13px;
+  border: 1px solid rgba(92, 255, 143, 0.5);
+  border-radius: 9px;
+  color: #06120a;
+  background: linear-gradient(180deg, #4feb85, #20c65b);
+  box-shadow: 0 8px 22px rgba(24, 190, 80, 0.2);
+  font-size: 10px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.extension-featured__button:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.extension-featured__button:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+@media (max-width: 620px) {
+  .extension-featured {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .extension-featured__button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
+
 .extension-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -5311,13 +5402,6 @@ form {
   border-color: rgba(59, 235, 112, 0.72);
   color: #72f79a;
   box-shadow: 0 0 10px rgba(35, 201, 91, 0.2);
-}
-
-.account-tab__action--extension.is-active {
-  border-color: rgba(155, 111, 247, 0.72);
-  color: #c4a7ff;
-  background: rgba(111, 67, 207, 0.22);
-  box-shadow: 0 0 10px rgba(111, 67, 207, 0.18);
 }
 
 .account-tab__action--rest.is-active {
@@ -11053,6 +11137,7 @@ form {
 /* Advertising marketplace and sponsored placements */
 .sidebar-advertising {
   display: grid;
+  flex: 0 0 auto;
   gap: 7px;
   margin: 12px 3px 8px;
   padding: 11px;
@@ -11310,7 +11395,7 @@ form {
 .advertise-order.is-payment_pending { border-color: rgba(55, 218, 107, .4); background: rgba(20, 74, 39, .22); }
 .advertise-order.is-payment_pending .advertise-order__status, .advertise-order.is-approved .advertise-order__status { color: #55e483; background: rgba(28, 111, 54, .38); }
 
-@media (max-height: 960px) and (min-width: 841px) {
+@media (max-height: 960px), (max-width: 840px) {
   .sidebar-advertising { grid-template-columns: 1fr auto; min-height: 0; padding: 8px 9px; }
   .sidebar-advertising > img,
   .sidebar-advertising__art,
@@ -11320,13 +11405,17 @@ form {
   .sidebar-advertising__label,
   .sidebar-advertising__copy { grid-column: 1; }
   .sidebar-advertising > button:not(.sidebar-advertising__sell) { grid-column: 2; grid-row: 1 / 3; align-self: stretch; }
-  .sidebar-advertising--empty { display: none; }
+  .sidebar-advertising--empty { grid-template-columns: minmax(0, 1fr); }
+  .sidebar-advertising--empty > p { display: none; }
+  .sidebar-advertising--empty > button:not(.sidebar-advertising__sell) {
+    grid-column: 1;
+    grid-row: auto;
+  }
   .modal--advertise { max-height: calc(100vh - 20px); }
   .advertise-plan > span { min-height: 118px; padding: 10px; }
 }
 
 @media (max-width: 840px) {
-  .sidebar-advertising { display: none; }
   .modal--advertise { width: min(700px, calc(100vw - 20px)); }
   .advertise-plans { grid-template-columns: 1fr; }
   .advertise-plan > span { min-height: 0; }

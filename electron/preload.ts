@@ -30,6 +30,9 @@ const api: AltgridDesktopApi = Object.freeze({
     chooseExtension: (accountId: string) => (
       invoke<SessionExtensionSummary | null>(IPC_CHANNELS.sessions.chooseExtension, accountId)
     ),
+    installHunteraDps: (accountId: string) => (
+      invoke<SessionExtensionSummary>(IPC_CHANNELS.sessions.installHunteraDps, accountId)
+    ),
     clearData: (accountId: string) => (
       invoke<boolean>(IPC_CHANNELS.sessions.clearData, accountId)
     ),

@@ -22,7 +22,7 @@ const MAX_INTERFACE_ZOOM = 1
 const MAX_FRAME_RATE = 240
 const ECO_FOCUSED_FRAME_RATE = 30
 const DEFAULT_ECO_SECONDARY_FRAME_RATE = 20
-const MIN_ECO_SECONDARY_FRAME_RATE = 10
+const MIN_ECO_SECONDARY_FRAME_RATE = 2
 const MAX_ECO_SECONDARY_FRAME_RATE = 30
 
 function computeAutoFitZoom(width: number): number {
@@ -65,7 +65,7 @@ function normalizeEcoSecondaryFrameRate(input: unknown): number {
     input < MIN_ECO_SECONDARY_FRAME_RATE
     || input > MAX_ECO_SECONDARY_FRAME_RATE
   ) {
-    throw new RangeError('O FPS secundário do Eco Mode deve ficar entre 10 e 30.')
+    throw new RangeError('O FPS secundário do Eco Mode deve ficar entre 2 e 30.')
   }
   return input
 }

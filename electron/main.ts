@@ -92,6 +92,12 @@ let shellEntryUrl: string | null = null
 let pendingRecoveryDeepLink = findTrustedRecoveryDeepLink(process.argv)
 let forcedExitTimer: NodeJS.Timeout | null = null
 
+function bundledHunteraDpsPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'extensions', 'huntera-dps-altgrid')
+    : join(app.getAppPath(), 'extensions', 'huntera-dps-altgrid')
+}
+
 function armForcedExitFallback(): void {
   if (forcedExitTimer) {
     return
@@ -273,6 +279,26 @@ function registerIpcHandlers(): void {
         await manager.setSessionExtension(accountId, current?.enabled ? current.path : null)
       }
       return chosen
+    } catch (error) {
+      if (previous) {
+        store.setFromDirectory(accountId, previous.path)
+        store.setEnabled(accountId, previous.enabled)
+      } else {
+        store.remove(accountId)
+      }
+      throw error
+    }
+  })
+  ipcMain.handle(IPC_CHANNELS.sessions.installHunteraDps, async (event, accountId) => {
+    const manager = requireSessionManager(event)
+    const store = requireExtensionStore(event)
+    const previous = store.get(accountId)
+    const installed = store.setFromDirectory(accountId, bundledHunteraDpsPath())
+    try {
+      if (manager.getSessions().some((candidate) => candidate.accountId === accountId)) {
+        await manager.setSessionExtension(accountId, bundledHunteraDpsPath())
+      }
+      return installed
     } catch (error) {
       if (previous) {
         store.setFromDirectory(accountId, previous.path)

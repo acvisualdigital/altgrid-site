@@ -12,7 +12,6 @@ import {
   compareVersions,
   extensionAccountLimitForPlan,
   googleAuthRedirectUrl,
-  localFounderOverrideEntitlementsForEmail,
   passwordRecoveryRedirectUrl,
   renderPlanBadge,
   resolveChatScrollTop,
@@ -32,6 +31,7 @@ import {
 } from './services/configured-account-service'
 import type { GridLayout } from './services/grid-layout-service'
 import { PermissionService } from './services/permission-service'
+import { OwnerToolsService } from './services/owner-tools-service'
 import {
   SessionSurfaceManager,
   type SessionSurfaceElementFactory,
@@ -144,60 +144,11 @@ describe('plan badges', () => {
     expect(badge).toContain('class="plan-badge__number">#0042</small>')
   })
 
-  it('shows the custom creator badge in red when the local override is enabled for the current user', () => {
-    const previousStorage = globalThis.localStorage
-    const storage = {
-      getItem: vi.fn((key: string) => key === 'altgrid.creator-tag.enabled' ? 'true' : key === 'altgrid.creator-tag.email' ? 'creator@example.com' : null),
-      setItem: vi.fn(),
-      removeItem: vi.fn(),
-    }
-    Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true, writable: true })
-
-    try {
-      const badge = renderPlanBadge('FOUNDER', 42, 'creator@example.com')
-
-      expect(badge).toContain('plan-badge--creator')
-      expect(badge).toContain('CRIADOR')
-      expect(badge).toContain('aria-label="Plano Criador"')
-    } finally {
-      Object.defineProperty(globalThis, 'localStorage', {
-        value: previousStorage,
-        configurable: true,
-        writable: true,
-      })
-    }
-  })
-
-  it('applies founder benefits locally for the matching account email', () => {
-    const previousStorage = globalThis.localStorage
-    const storage = {
-      getItem: vi.fn((key: string) => key === 'altgrid.founder-benefits.enabled' ? 'true' : key === 'altgrid.founder-benefits.email' ? 'founder@example.com' : null),
-      setItem: vi.fn(),
-      removeItem: vi.fn(),
-    }
-    Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true, writable: true })
-
-    try {
-      const entitlements = localFounderOverrideEntitlementsForEmail('founder@example.com', {
-        account_limit: 2,
-        expires_at: null,
-        features: {},
-        founder_number: null,
-        lifetime: false,
-        plan: 'FREE',
-      })
-
-      expect(entitlements.plan).toBe('FOUNDER')
-      expect(entitlements.account_limit).toBe(UNLIMITED_ACCOUNT_LIMIT)
-      expect(entitlements.features.account_proxy).toBe(true)
-      expect(entitlements.features.eco_mode).toBe(true)
-    } finally {
-      Object.defineProperty(globalThis, 'localStorage', {
-        value: previousStorage,
-        configurable: true,
-        writable: true,
-      })
-    }
+  it('renders the creator badge only when explicitly enabled by the owner policy', () => {
+    const badge = renderPlanBadge('FOUNDER', 42, true)
+    expect(badge).toContain('plan-badge--creator')
+    expect(badge).toContain('aria-label="Plano Criador"')
+    expect(renderPlanBadge('FOUNDER', 42)).not.toContain('CRIADOR')
   })
 })
 
@@ -688,6 +639,62 @@ afterEach(() => {
 })
 
 describe('AuthApp session lifecycle', () => {
+  it('hides owner settings and rejects a forced toggle for another administrator', () => {
+    installBrowser('https://app.example.com/')
+    installLocalStorage()
+    const permissions = new PermissionService()
+    const app = new AuthApp(createRoot(), createAuthServiceDouble().service, { permissionService: permissions })
+    const state = app as unknown as {
+      session: Session
+      ownerTools: OwnerToolsService
+      activeDialog: string
+      renderDialog(): string
+      updateOwnerToolPreference(tool: 'founder-benefits', input: HTMLInputElement): void
+    }
+    state.session = session
+    state.activeDialog = 'settings'
+    state.ownerTools.authorize(user, user, { admin: { user_id: user.id, role: 'admin' } })
+    expect(state.renderDialog()).not.toContain('data-preference="creator-tag"')
+    expect(state.renderDialog()).not.toContain('data-preference="founder-benefits"')
+    const input = { checked: true } as HTMLInputElement
+    state.updateOwnerToolPreference('founder-benefits', input)
+    expect(input.checked).toBe(false)
+    expect(permissions.getCurrentPlan()).toBe('FREE')
+    app.destroy()
+  })
+
+  it('shows owner settings only after verification and restores the real plan on disable or account change', () => {
+    installBrowser('https://app.example.com/')
+    installLocalStorage()
+    const permissions = new PermissionService()
+    const app = new AuthApp(createRoot(), createAuthServiceDouble().service, { permissionService: permissions })
+    const owner = { ...user, email: 'yacaciio@gmail.com' }
+    const state = app as unknown as {
+      session: Session
+      ownerTools: OwnerToolsService
+      activeDialog: string
+      renderDialog(): string
+      prepareAuthenticatedSession(session: Session): void
+      updateOwnerToolPreference(tool: 'founder-benefits', input: HTMLInputElement): void
+    }
+    state.session = { ...session, user: owner }
+    state.activeDialog = 'settings'
+    expect(state.renderDialog()).not.toContain('data-preference="founder-benefits"')
+    state.ownerTools.authorize(owner, owner, { admin: { user_id: owner.id, role: 'admin' } })
+    expect(state.renderDialog()).toContain('data-preference="creator-tag"')
+    expect(state.renderDialog()).toContain('data-preference="founder-benefits"')
+    state.updateOwnerToolPreference('founder-benefits', { checked: true } as HTMLInputElement)
+    expect(permissions.getCurrentPlan()).toBe('FOUNDER')
+    state.updateOwnerToolPreference('founder-benefits', { checked: false } as HTMLInputElement)
+    expect(permissions.getCurrentPlan()).toBe('FREE')
+    expect(permissions.getAccountLimit()).toBe(2)
+    state.updateOwnerToolPreference('founder-benefits', { checked: true } as HTMLInputElement)
+    state.prepareAuthenticatedSession(session)
+    expect(permissions.getCurrentPlan()).toBe('FREE')
+    expect(state.ownerTools.isAuthorized(owner)).toBe(false)
+    app.destroy()
+  })
+
   it('keeps the sidebar profile open while live metrics refresh the sidebar', () => {
     installBrowser('https://app.example.com/')
     const profileMenu = { setAttribute: vi.fn() }
@@ -1357,7 +1364,7 @@ describe('AuthApp session lifecycle', () => {
         input: HTMLButtonElement,
       ): Promise<void>
       updateEcoBackgroundFpsPreference(
-        fps: 10 | 20 | 30,
+        fps: 2 | 5 | 10 | 20 | 30,
         input: HTMLSelectElement,
       ): Promise<void>
     }
@@ -2205,7 +2212,8 @@ describe('AuthApp session lifecycle', () => {
     expect(card).toContain('data-copy-proxy-account')
     expect(card).not.toContain('data-duplicate-account')
     const liveTabs = harness.renderAccountTabs()
-    expect(liveTabs).toContain('data-toggle-account-proxy')
+    expect(liveTabs).toContain('data-proxy-account')
+    expect(liveTabs).not.toContain('data-toggle-account-proxy')
     expect(liveTabs).toContain('data-background-account')
 
     harness.backgroundAccountIds.add(account.id)
@@ -2474,6 +2482,66 @@ describe('AuthApp session lifecycle', () => {
       plan: 'FOUNDER',
     })
     expect(harness.canAssignAccountExtension(configured[9]!.id)).toBe(true)
+    app.destroy()
+  })
+
+  it('installs the bundled AltGrid DPS Meter directly on a Huntera account', async () => {
+    installBrowser('https://app.example.com/')
+    const permissions = new PermissionService({
+      account_limit: 6,
+      expires_at: null,
+      features: {},
+      founder_number: null,
+      lifetime: true,
+      plan: 'PRO',
+    })
+    const account: ConfiguredAccount = {
+      createdAt: '2026-09-05T08:00:00.000Z',
+      displayName: 'Huntera DPS',
+      gameSlug: 'huntera',
+      id: 'huntera-dps-account',
+    }
+    const installed: SessionExtensionSummary = {
+      enabled: true,
+      folderName: 'huntera-dps-altgrid',
+      manifestVersion: 3,
+      name: 'AltGrid DPS Meter para Huntera',
+      permissions: [],
+      version: '1.0.0',
+    }
+    const installHunteraDps = vi.fn(async () => installed)
+    const app = new AuthApp(createRoot(), createAuthServiceDouble().service, {
+      permissionService: permissions,
+      sessionLauncher: {
+        chooseExtension: vi.fn(async () => null),
+        getExtension: vi.fn(async () => null),
+        installHunteraDps,
+      },
+    })
+    const harness = app as unknown as {
+      accountExtensionStates: Map<string, SessionExtensionSummary | null>
+      activeDialog: 'extension'
+      configuredAccounts: ConfiguredAccount[]
+      dialogAccountId: string
+      extensionConfig: SessionExtensionSummary | null
+      extensionStatesReady: boolean
+      installHunteraDpsExtension(): Promise<void>
+      renderDialog(): string
+    }
+    harness.configuredAccounts = [account]
+    harness.dialogAccountId = account.id
+    harness.activeDialog = 'extension'
+    harness.extensionStatesReady = true
+    harness.extensionConfig = null
+
+    expect(harness.renderDialog()).toContain('data-install-huntera-dps')
+    expect(harness.renderDialog()).toContain('Instalar e ativar')
+    expect(harness.renderDialog()).toContain('O painel pode ser arrastado')
+    await harness.installHunteraDpsExtension()
+
+    expect(installHunteraDps).toHaveBeenCalledWith(account)
+    expect(harness.extensionConfig).toEqual(installed)
+    expect(harness.accountExtensionStates.get(account.id)).toEqual(installed)
     app.destroy()
   })
 

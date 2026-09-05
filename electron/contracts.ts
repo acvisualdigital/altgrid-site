@@ -120,6 +120,7 @@ export interface AltgridDesktopApi {
   }
   sessions: {
     chooseExtension(accountId: string): Promise<SessionExtensionSummary | null>
+    installHunteraDps?(accountId: string): Promise<SessionExtensionSummary>
     clearData(accountId: string): Promise<boolean>
     closeSession(accountId: string): Promise<boolean>
     copyProxy(sourceAccountId: string, targetAccountId: string): Promise<SessionProxySummary | null>
@@ -175,6 +176,7 @@ export const IPC_CHANNELS = Object.freeze({
   }),
   sessions: Object.freeze({
     chooseExtension: 'altgrid:sessions:choose-extension',
+    installHunteraDps: 'altgrid:sessions:install-huntera-dps',
     clearData: 'altgrid:sessions:clear-data',
     close: 'altgrid:sessions:close',
     copyProxy: 'altgrid:sessions:copy-proxy',

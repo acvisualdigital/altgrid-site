@@ -71,8 +71,14 @@ export class ElectronSessionLauncher {
   private readonly statusHandlers = new Set<(event: DesktopSessionStatusEvent) => void>()
   private readonly unavailableSessionIds = new Set<string>()
   private readonly unsubscribeFromEvents: () => void
+  readonly installHunteraDps?: (
+    account: DesktopAccountReference,
+  ) => Promise<SessionExtensionSummary>
 
   constructor(private readonly api: AltgridDesktopApi['sessions']) {
+    this.installHunteraDps = typeof api.installHunteraDps === 'function'
+      ? (account) => api.installHunteraDps!(account.id)
+      : undefined
     this.unsubscribeFromEvents = api.onEvent((event) => {
       if (event.type === 'escape') {
         for (const handler of this.escapeHandlers) {
