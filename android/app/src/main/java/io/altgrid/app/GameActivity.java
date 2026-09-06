@@ -560,18 +560,27 @@ public class GameActivity extends BridgeActivity {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             return;
         }
-        // Every open account is a live game even when its surface is temporarily
-        // hidden by navigation or pagination. BOUND allowed Android to reclaim
-        // those renderers after a few minutes, which looked like an account
-        // restart. Keep all live sessions IMPORTANT and never waive priority.
-        int priority = WebView.RENDERER_PRIORITY_IMPORTANT;
+        // Marking every renderer IMPORTANT can force Android to terminate the
+        // entire host app when a third memory-heavy game opens. The visible game
+        // remains IMPORTANT; hidden live sessions stay BOUND and are never
+        // waived, preserving their state without starving the host process.
+        int priority = visible
+            ? WebView.RENDERER_PRIORITY_IMPORTANT
+            : WebView.RENDERER_PRIORITY_BOUND;
         if (session.lastRendererPriority == priority) {
             return;
         }
-        session.lastRendererPriority = priority;
-        session.webView.setRendererPriorityPolicy(priority, false);
-        for (WebView popup : session.popupViews) {
-            popup.setRendererPriorityPolicy(priority, false);
+        try {
+            session.webView.setRendererPriorityPolicy(priority, false);
+            for (WebView popup : session.popupViews) {
+                popup.setRendererPriorityPolicy(priority, false);
+            }
+            session.lastRendererPriority = priority;
+        } catch (RuntimeException error) {
+            // A renderer can disappear between the visibility update and this
+            // call. Keep the cached value invalid so recovery retries the policy.
+            session.lastRendererPriority = -1;
+            Log.w(TAG, "Unable to update Android renderer priority.", error);
         }
     }
 
@@ -755,6 +764,7 @@ public class GameActivity extends BridgeActivity {
             WebView replacement = new WebView(this);
             assignIsolatedProfile(replacement, session.accountId);
             session.webView = replacement;
+            session.lastRendererPriority = -1;
             configureWebView(replacement, session, false);
             session.documentStartViewportInstalled = installMobileViewportPolicy(replacement);
             session.container.addView(replacement, 0, matchParentLayout());

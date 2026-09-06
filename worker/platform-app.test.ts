@@ -318,7 +318,7 @@ describe('platform Worker endpoints', () => {
     expect(response.headers.get('Content-Disposition')).toContain('AltGrid-Android-latest.apk')
     await expect(response.text()).resolves.toBe('apk-bytes')
     expect(fetcher).toHaveBeenCalledWith(
-      'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.5.10/AltGrid-Android-1.5.10.apk',
+      'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.5.11/AltGrid-Android-1.5.11.apk',
       { headers: expect.any(Headers) },
     )
     expect(receivedHeaders).not.toBeNull()

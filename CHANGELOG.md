@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.11 — Android
+
+### Terceira conta e memória
+
+- Corrige o encerramento do aplicativo ao abrir a terceira conta em aparelhos com menos memória disponível.
+- Mantém prioridade máxima somente na conta visível e preserva as contas ocultas com prioridade equilibrada.
+- Evita que os processos dos jogos disputem memória com o processo principal do AltGrid.
+- Corrige a reaplicação da prioridade quando uma sessão é recuperada automaticamente pelo Android.
+
 ## 1.5.10 — Android
 
 ### Planos em telas pequenas
