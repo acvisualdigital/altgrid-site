@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.10 — Android
+
+### Planos em telas pequenas
+
+- Troca a rolagem interna dos cards por uma rolagem vertical única e natural da janela inteira.
+- Exibe FREE, PRO, PLUS e FOUNDER em sequência, inclusive em celulares de baixa altura.
+- Mantém a ação de fechar acessível ao final da tela sem cobrir preços ou botões de pagamento.
+- Aplica a mesma correção à tela **Meu plano** e à comparação de planos.
+
 ## 1.5.9 — Android
 
 ### Estabilidade das sessões
