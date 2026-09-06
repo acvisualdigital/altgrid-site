@@ -615,6 +615,14 @@ async function createMainWindow(): Promise<void> {
     clearPartitionData: clearNativeSessionPartition,
     createView: createNativeSessionViewFactory(browserWindow, !app.isPackaged),
   })
+  const windowSessionManager = sessionManager
+  const syncBackgroundPerformance = (): void => {
+    if (!browserWindow.isDestroyed()) {
+      windowSessionManager.setAppBackgrounded(
+        browserWindow.isMinimized() || !browserWindow.isVisible(),
+      )
+    }
+  }
   updaterService = new UpdaterService(browserWindow)
 
   let shellCanReceiveSessionEvents = false
@@ -630,6 +638,10 @@ async function createMainWindow(): Promise<void> {
   })
 
   browserWindow.once('ready-to-show', () => browserWindow.show())
+  browserWindow.on('hide', syncBackgroundPerformance)
+  browserWindow.on('minimize', syncBackgroundPerformance)
+  browserWindow.on('restore', syncBackgroundPerformance)
+  browserWindow.on('show', syncBackgroundPerformance)
   browserWindow.on('close', prepareForApplicationExit)
   browserWindow.on('closed', () => {
     shellCanReceiveSessionEvents = false

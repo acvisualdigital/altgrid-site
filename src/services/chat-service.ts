@@ -7,6 +7,7 @@ import type { BackendApi } from './backend-api'
 
 export const CHAT_MESSAGE_MAX_LENGTH = 500
 const SEND_COOLDOWN_MS = 1_000
+const CHANNEL_REFRESH_MIN_INTERVAL_MS = 90_000
 const BLOCKED_USERS_KEY = 'altgrid.chat.blocked-users.v1'
 
 type ChatApi = Pick<
@@ -100,6 +101,7 @@ export class ChatService {
   private lastSentAt = 0
   private refreshInFlight: Promise<void> | null = null
   private channelRefreshInFlight: Promise<void> | null = null
+  private lastChannelRefreshAt: number | null = null
 
   constructor(
     private readonly api: ChatApi,
@@ -163,6 +165,7 @@ export class ChatService {
         Math.max(0, channel.unread ?? this.state.unread[channel.id] ?? 0),
       ])),
     })
+    this.lastChannelRefreshAt = this.now()
 
     if (this.state.open && selected) {
       await this.selectChannel(selected.id)
@@ -175,12 +178,21 @@ export class ChatService {
   }
 
   close(): void {
+    this.stopRealtime()
     this.patch({ loading: false, loadingMore: false, open: false, sending: false })
   }
 
   refreshUnread(): Promise<void> {
-    if (this.channelRefreshInFlight) {
+    if (this.state.loading || this.channelRefreshInFlight) {
       return this.channelRefreshInFlight
+        ?? Promise.resolve()
+    }
+
+    if (
+      this.lastChannelRefreshAt !== null
+      && this.now() - this.lastChannelRefreshAt < CHANNEL_REFRESH_MIN_INTERVAL_MS
+    ) {
+      return Promise.resolve()
     }
 
     const revision = this.revision
@@ -200,6 +212,7 @@ export class ChatService {
               : Math.max(0, channel.unread ?? this.state.unread[channel.id] ?? 0),
           ])),
         })
+        this.lastChannelRefreshAt = this.now()
       })
       .catch(() => undefined)
       .finally(() => {
@@ -215,6 +228,7 @@ export class ChatService {
   reset(): void {
     this.revision += 1
     this.stopRealtime()
+    this.lastChannelRefreshAt = null
     this.state = {
       banned: false,
       channels: [],

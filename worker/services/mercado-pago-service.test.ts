@@ -62,6 +62,46 @@ class FakePaymentRepository implements PaymentRepository {
     return this.current
   }
 
+  async createPendingMercadoPagoCardPayment(
+    _userId: string,
+    _productCode: string,
+    _requestKey: string,
+    processingFeePercent: number,
+  ): Promise<PaymentRecord> {
+    const baseAmount = Number(this.current.amount)
+    const fee = Number((baseAmount * processingFeePercent / 100).toFixed(2))
+    this.current = payment({
+      amount: baseAmount + fee,
+      metadata: {
+        product_name: 'AltGrid PRO',
+        payment_method: 'card',
+        base_amount: baseAmount,
+        processing_fee: fee,
+        processing_fee_percent: processingFeePercent,
+      },
+    })
+    return this.current
+  }
+
+  async attachMercadoPagoCheckout(
+    _userId: string,
+    _paymentId: string,
+    preferenceId: string,
+    expiresAt: string,
+    checkoutUrl: string,
+  ): Promise<PaymentRecord> {
+    this.current = payment({
+      ...this.current,
+      raw_status: 'preference_created',
+      provider_expires_at: expiresAt,
+      metadata: {
+        ...(this.current.metadata as Record<string, Json>),
+        checkout: { checkout_url: checkoutUrl, preference_id: preferenceId },
+      },
+    })
+    return this.current
+  }
+
   async attachMercadoPagoPayment(
     _userId: string,
     _paymentId: string,
@@ -245,6 +285,59 @@ describe('MercadoPagoPaymentService', () => {
     })
   })
 
+  it('creates a card-only Mercado Pago checkout with the server-side 20% fee', async () => {
+    const checkoutUrl = 'https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=altgrid'
+    const fetchImplementation = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe('https://api.mercadopago.com/checkout/preferences')
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      expect(body).toMatchObject({
+        external_reference: PAYMENT_ID,
+        payer: { email: user.email },
+        items: [{ unit_price: 155.88, currency_id: 'BRL', quantity: 1 }],
+        payment_methods: { installments: 12 },
+        statement_descriptor: 'ALTGRID',
+      })
+      expect(JSON.stringify(body)).toContain('bank_transfer')
+      expect(JSON.stringify(body)).not.toContain('account_money')
+      expect(init?.headers).toMatchObject({ 'X-Idempotency-Key': PAYMENT_ID })
+      return Response.json({ id: '123456789-altgrid', init_point: checkoutUrl })
+    }) as unknown as typeof fetch
+    const service = new MercadoPagoPaymentService(repository, {
+      accessToken: 'TEST-ACCESS-TOKEN',
+      webhookUrl: 'https://api.example.com/v1/webhooks/mercadopago',
+      cardProcessingFeePercent: '20',
+      fetchImplementation,
+    })
+
+    await expect(service.createCardCheckout(user, 'PRO_LIFETIME', 'card-request-1'))
+      .resolves.toMatchObject({
+        payment: {
+          amount: 155.88,
+          base_amount: 129.9,
+          processing_fee: 25.98,
+          processing_fee_percent: 20,
+          payment_method: 'card',
+          checkout_url: checkoutUrl,
+        },
+      })
+    expect(fetchImplementation).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a checkout URL outside Mercado Pago', async () => {
+    const fetchImplementation = vi.fn(async () => Response.json({
+      id: '123456789-altgrid',
+      init_point: 'https://malicious.example/checkout',
+    })) as unknown as typeof fetch
+    const service = new MercadoPagoPaymentService(repository, {
+      accessToken: 'TEST-ACCESS-TOKEN',
+      fetchImplementation,
+    })
+
+    await expect(service.createCardCheckout(user, 'PRO_LIFETIME', 'card-request-1'))
+      .rejects.toMatchObject({ status: 502, code: 'payment_provider_error' })
+    expect(repository.failed).toBe(true)
+  })
+
   it('rejects unavailable product codes before contacting Mercado Pago', async () => {
     const fetchImplementation = vi.fn() as unknown as typeof fetch
     const service = new MercadoPagoPaymentService(repository, {
@@ -253,6 +346,18 @@ describe('MercadoPagoPaymentService', () => {
     })
 
     await expect(service.createPixPayment(user, 'CUSTOM_PRICE', 'request-1'))
+      .rejects.toMatchObject({ status: 404, code: 'product_unavailable' })
+    expect(fetchImplementation).not.toHaveBeenCalled()
+  })
+
+  it('keeps the R$1 PRO test product exclusive to the owner account', async () => {
+    const fetchImplementation = vi.fn() as unknown as typeof fetch
+    const service = new MercadoPagoPaymentService(repository, {
+      accessToken: 'TEST-ACCESS-TOKEN',
+      fetchImplementation,
+    })
+
+    await expect(service.createCardCheckout(user, 'PRO_TEST_R1', 'card-test-1'))
       .rejects.toMatchObject({ status: 404, code: 'product_unavailable' })
     expect(fetchImplementation).not.toHaveBeenCalled()
   })

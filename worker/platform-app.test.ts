@@ -167,6 +167,18 @@ describe('platform Worker endpoints', () => {
           updated_at: '2026-09-01T12:00:00.000Z',
         },
       })),
+      createCardCheckout: vi.fn(async () => ({
+        payment: {
+          id: PAYMENT_ID,
+          provider: 'mercadopago',
+          product_code: 'PRO_LIFETIME',
+          amount: 155.88,
+          currency: 'BRL',
+          status: 'pending',
+          payment_method: 'card',
+          checkout_url: 'https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=altgrid',
+        },
+      })),
       getPayment: vi.fn(async () => ({
         payment: { id: PAYMENT_ID, status: 'approved' },
       })),
@@ -416,6 +428,27 @@ describe('platform Worker endpoints', () => {
       amount: 0.01,
     }))
     expect(tampered.status).toBe(400)
+  })
+
+  it('creates a separate Mercado Pago card checkout with its own rate-limit key', async () => {
+    const response = await api.fetch(request('/v1/payments/mercadopago/checkout', 'POST', {
+      product_code: 'pro_lifetime',
+    }, { 'Idempotency-Key': 'card-checkout-001' }))
+
+    expect(response.status).toBe(201)
+    expect(paymentService.createCardCheckout).toHaveBeenCalledWith(
+      user,
+      'PRO_LIFETIME',
+      'card-checkout-001',
+    )
+    expect(paymentLimit.limit).toHaveBeenCalledWith({ key: `${USER_ID}:payment-card-create` })
+    await expect(response.json()).resolves.toMatchObject({
+      payment: {
+        provider: 'mercadopago',
+        payment_method: 'card',
+        amount: 155.88,
+      },
+    })
   })
 
   it('accepts the provider webhook without user auth and exposes signed snapshots only with auth', async () => {

@@ -112,7 +112,7 @@ describe('Cloudflare Worker API', () => {
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual(repository.metrics)
     expect(response.headers.get('cache-control')).toBe(
-      'public, max-age=30, s-maxage=30',
+      'public, max-age=90, s-maxage=90',
     )
     expect(authenticate).not.toHaveBeenCalled()
   })

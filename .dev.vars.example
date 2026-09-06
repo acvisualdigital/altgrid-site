@@ -4,6 +4,7 @@ PRIVATE_LICENSE_KEY=your-private-license-key
 MERCADOPAGO_ACCESS_TOKEN=your-mercado-pago-token
 MERCADOPAGO_WEBHOOK_SECRET=your-mercado-pago-webhook-secret
 MERCADOPAGO_WEBHOOK_URL=https://api.your-domain.example/v1/webhooks/mercadopago
+MERCADOPAGO_CARD_FEE_PERCENT=20
 
 # WhatsApp Cloud API — alertas somente para a conta administrativa.
 WHATSAPP_ACCESS_TOKEN=your-permanent-system-user-token

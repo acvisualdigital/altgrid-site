@@ -314,6 +314,12 @@ export interface PixPayment {
   expires_at?: string | null
   paid_at?: string | null
   fulfilled_at?: string | null
+  provider?: 'mercadopago' | 'stripe'
+  checkout_url?: string | null
+  base_amount?: number | null
+  processing_fee?: number | null
+  processing_fee_percent?: number | null
+  payment_method?: 'pix' | 'card' | null
 }
 
 export interface PixPaymentResponse {

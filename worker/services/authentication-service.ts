@@ -5,6 +5,38 @@ import type { Database } from '../../src/types/database'
 import { ApiError } from '../lib/api-error'
 import type { AuthenticationService } from '../types'
 
+const AUTH_CACHE_TTL_MS = 60_000
+const AUTH_CACHE_MAX_ENTRIES = 2_000
+
+interface CachedAuthentication {
+  expiresAt: number
+  user: SafeUser
+}
+
+const authenticationCache = new Map<string, CachedAuthentication>()
+const authenticationRequests = new Map<string, Promise<SafeUser>>()
+
+async function tokenCacheKey(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(token),
+  )
+  return [...new Uint8Array(digest)]
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+function pruneAuthenticationCache(now: number): void {
+  for (const [key, entry] of authenticationCache) {
+    if (entry.expiresAt <= now) authenticationCache.delete(key)
+  }
+  while (authenticationCache.size >= AUTH_CACHE_MAX_ENTRIES) {
+    const oldestKey = authenticationCache.keys().next().value as string | undefined
+    if (!oldestKey) break
+    authenticationCache.delete(oldestKey)
+  }
+}
+
 function bearerToken(request: Request): string {
   const authorization = request.headers.get('authorization')
 
@@ -30,6 +62,33 @@ export class SupabaseAuthenticationService implements AuthenticationService {
 
   async authenticate(request: Request): Promise<SafeUser> {
     const token = bearerToken(request)
+    const cacheKey = await tokenCacheKey(token)
+    const now = Date.now()
+    const cached = authenticationCache.get(cacheKey)
+    if (cached && cached.expiresAt > now) {
+      return cached.user
+    }
+
+    const pending = authenticationRequests.get(cacheKey)
+    if (pending) return pending
+
+    const authentication = this.validateToken(token).then((user) => {
+      pruneAuthenticationCache(Date.now())
+      authenticationCache.set(cacheKey, {
+        expiresAt: Date.now() + AUTH_CACHE_TTL_MS,
+        user,
+      })
+      return user
+    }).finally(() => {
+      if (authenticationRequests.get(cacheKey) === authentication) {
+        authenticationRequests.delete(cacheKey)
+      }
+    })
+    authenticationRequests.set(cacheKey, authentication)
+    return authentication
+  }
+
+  private async validateToken(token: string): Promise<SafeUser> {
     const { data, error } = await this.client.auth.getUser(token)
 
     if (error || !data.user) {

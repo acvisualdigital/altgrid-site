@@ -15,6 +15,8 @@
       "SUPABASE_URL",
       "SUPABASE_SERVICE_ROLE_KEY",
       "PRIVATE_LICENSE_KEY",
+      "STRIPE_SECRET_KEY",
+      "STRIPE_WEBHOOK_SECRET",
       "MERCADOPAGO_ACCESS_TOKEN",
       "MERCADOPAGO_WEBHOOK_SECRET",
       "MERCADOPAGO_WEBHOOK_URL"
@@ -24,6 +26,9 @@
     "ALLOWED_ORIGINS": "altgrid://app,https://localhost,http://localhost,capacitor://localhost,http://127.0.0.1:3000,http://localhost:3000,http://127.0.0.1:4173,https://acvisualdigital.github.io,https://altgrid.com.br,https://www.altgrid.com.br",
     "FIREBASE_PROJECT_ID": "altgrid-d0504",
     "LICENSE_KEY_ID": "altgrid-license-v1",
+    "MERCADOPAGO_CARD_FEE_PERCENT": "20",
+    "STRIPE_TEST_MODE": "true",
+    "STRIPE_PROCESSING_FEE_PERCENT": "20",
     "WHATSAPP_GRAPH_API_VERSION": "v23.0",
     "WHATSAPP_TEMPLATE_NAME": "altgrid_admin_alert",
     "WHATSAPP_TEMPLATE_LANGUAGE": "pt_BR"

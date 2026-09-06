@@ -20,6 +20,10 @@ const AUTO_FIT_MIN_ZOOM = 0.67
 const MIN_INTERFACE_ZOOM = 0.5
 const MAX_INTERFACE_ZOOM = 1
 const MAX_FRAME_RATE = 240
+// The shell is not visible while minimized, so rendering game frames above a
+// very small budget only burns CPU/GPU. Network traffic and page timers remain
+// active because this limit affects requestAnimationFrame only.
+const BACKGROUNDED_FRAME_RATE = 2
 const ECO_FOCUSED_FRAME_RATE = 30
 const DEFAULT_ECO_SECONDARY_FRAME_RATE = 20
 const MIN_ECO_SECONDARY_FRAME_RATE = 2
@@ -223,6 +227,7 @@ export class SessionManager {
   private readonly listeners = new Set<(event: SessionEvent) => void>()
   private readonly loadTimeoutMs: number
   private readonly records = new Map<string, SessionRecord>()
+  private appBackgrounded = false
   private ecoModeEnabled = false
   private ecoSecondaryFrameRate = DEFAULT_ECO_SECONDARY_FRAME_RATE
   private focusedAccountId: string | null = null
@@ -240,6 +245,15 @@ export class SessionManager {
   subscribe(listener: (event: SessionEvent) => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  setAppBackgrounded(backgrounded: boolean): void {
+    if (this.appBackgrounded === backgrounded) {
+      return
+    }
+
+    this.appBackgrounded = backgrounded
+    this.refreshFrameRateBudgets()
   }
 
   async createSession(
@@ -684,6 +698,12 @@ export class SessionManager {
     ecoModeEnabled = this.ecoModeEnabled,
     ecoSecondaryFrameRate = this.ecoSecondaryFrameRate,
   ): number {
+    if (this.appBackgrounded) {
+      return desiredFrameRate === 0
+        ? BACKGROUNDED_FRAME_RATE
+        : Math.min(desiredFrameRate, BACKGROUNDED_FRAME_RATE)
+    }
+
     if (!ecoModeEnabled) {
       return desiredFrameRate
     }
@@ -710,7 +730,7 @@ export class SessionManager {
   }
 
   private refreshFrameRateBudgets(): void {
-    if (!this.ecoModeEnabled) {
+    if (!this.ecoModeEnabled && !this.appBackgrounded) {
       return
     }
     for (const record of this.records.values()) {

@@ -55,6 +55,16 @@ import { parseProxyLine } from './services/proxy-line-parser'
 import { ChatService, type ChatState } from './services/chat-service'
 import { NotificationCenterService } from './services/notification-center-service'
 import {
+  APP_LOCALES,
+  localizeDom,
+  localeTag,
+  normalizeAppLocale,
+  readPreferredLocale,
+  storePreferredLocale,
+  translateUiText,
+  type AppLocale,
+} from './services/localization-service'
+import {
   ADMIN_PUSH_EVENT,
   type AdminPushEventDetail,
 } from './services/admin-push-notification-service'
@@ -124,6 +134,7 @@ type ActiveDialog =
   | null
 type BackendLoadStatus = 'error' | 'idle' | 'loading' | 'ready'
 type ServiceStatus = 'checking' | 'offline' | 'online' | 'unknown'
+type SettingsTab = 'about' | 'accounts' | 'general' | 'notifications' | 'updates' | 'visual'
 type WorkspaceMode = 'account' | 'grid'
 
 interface PlanPresentation {
@@ -332,6 +343,8 @@ type ApplicationBackend = Pick<BackendApi, 'getEntitlements' | 'getGames' | 'get
     | 'createAppAdRequest'
     | 'createAppAdPixPayment'
     | 'createPixPayment'
+    | 'createMercadoPagoCardCheckout'
+    | 'createStripeCheckout'
     | 'getAppConfig'
     | 'getAppMetrics'
     | 'getAnnouncements'
@@ -473,7 +486,10 @@ const SESSION_INTERFACE_SCALE_STORAGE_KEY = 'altgrid.preference.session-interfac
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'altgrid.preference.sidebar-collapsed.v1'
 const UTILITY_BAR_COLLAPSED_STORAGE_KEY = 'altgrid.preference.utility-bar-collapsed.v1'
 const GRID_MODE_STORAGE_KEY = 'altgrid.preference.grid-mode.v1'
-const RESOURCE_USAGE_REFRESH_INTERVAL_MS = 12_000
+// Process-tree sampling is useful telemetry, but doing it too frequently adds
+// measurable work with several Chromium sessions. The display remains fresh
+// without competing with the games every few seconds.
+const RESOURCE_USAGE_REFRESH_INTERVAL_MS = 30_000
 
 export type EcoBackgroundFps = 2 | 5 | 10 | 20 | 30
 
@@ -569,9 +585,9 @@ export function passwordRecoveryRedirectUrl(
   return `${location.origin}/?auth=${RECOVERY_QUERY_VALUE}`
 }
 
-function formatCurrency(amount: number, currency: string): string {
+function formatCurrency(amount: number, currency: string, locale = 'pt-BR'): string {
   try {
-    return new Intl.NumberFormat('pt-BR', {
+    return new Intl.NumberFormat(locale, {
       currency,
       style: 'currency',
     }).format(amount)
@@ -580,15 +596,15 @@ function formatCurrency(amount: number, currency: string): string {
   }
 }
 
-function formatDate(value: string | null): string {
+function formatDate(value: string | null, locale = 'pt-BR'): string {
   if (!value) {
-    return 'Vitalício'
+    return locale === 'en-US' ? 'Lifetime' : locale === 'es-ES' ? 'De por vida' : 'Vitalício'
   }
 
   const parsed = new Date(value)
   return Number.isNaN(parsed.getTime())
     ? value
-    : new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium' }).format(parsed)
+    : new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(parsed)
 }
 
 export function googleAuthRedirectUrl(
@@ -755,6 +771,18 @@ function openExternalBrowserUrl(url: string): void {
   }
 }
 
+function isMercadoPagoCheckoutUrl(value: string | null | undefined): value is string {
+  if (!value) return false
+  try {
+    const parsed = new URL(value)
+    const hostname = parsed.hostname.toLowerCase()
+    return parsed.protocol === 'https:'
+      && (hostname === 'mercadopago.com.br' || hostname.endsWith('.mercadopago.com.br'))
+  } catch {
+    return false
+  }
+}
+
 function entitlementsFromMe(me: MeResponse): ResolvedEntitlements {
   return {
     account_limit: me.account_limit,
@@ -853,8 +881,30 @@ export function compareVersions(left: string, right: string): number | null {
   return 0
 }
 
+function hasSameVisibleMetrics(
+  previous: AppMetricsResponse | null,
+  next: AppMetricsResponse,
+): boolean {
+  if (
+    !previous
+    || previous.users.active !== next.users.active
+    || previous.users.total !== next.users.total
+  ) {
+    return false
+  }
+
+  const previousGames = previous.games ?? {}
+  const nextGames = next.games ?? {}
+  const previousEntries = Object.entries(previousGames)
+  const nextEntries = Object.entries(nextGames)
+  return previousEntries.length === nextEntries.length
+    && previousEntries.every(([slug, count]) => nextGames[slug] === count)
+}
+
 export class AuthApp {
   private currentView: AuthView = 'checking'
+  private locale: AppLocale = readPreferredLocale()
+  private renderedLocale: AppLocale | null = null
   private session: Session | null = null
   private unsubscribeFromAuth: (() => void) | null = null
   private unsubscribeFromSessionEscape: (() => void) | null = null
@@ -885,6 +935,7 @@ export class AuthApp {
   private readonly updater: AppUpdater | null
   private readonly gridLayoutService: GridLayoutService
   private activeDialog: ActiveDialog = null
+  private activeSettingsTab: SettingsTab = 'general'
   private dialogError: string | null = null
   private backendLoadStatus: BackendLoadStatus = 'idle'
   private backendLoadError: string | null = null
@@ -932,7 +983,9 @@ export class AuthApp {
   private confirmationResendMessage = ''
   private presenceHeartbeatTimer: ReturnType<typeof setInterval> | null = null
   private presenceUserId: string | null = null
+  private presenceRefreshPending = false
   private pixPayment: PixPayment | null = null
+  private paymentMethod: 'pix' | 'mercadopago-card' | 'stripe' | null = null
   private paymentLoading = false
   private paymentError: string | null = null
   private paymentPollTimer: ReturnType<typeof setTimeout> | null = null
@@ -1131,6 +1184,10 @@ export class AuthApp {
     )
     window.addEventListener('online', this.handleConnectivityChange)
     window.addEventListener('offline', this.handleConnectivityChange)
+    this.root.ownerDocument?.addEventListener(
+      'visibilitychange',
+      this.handleDocumentVisibilityChange,
+    )
     window.addEventListener('resize', this.handleWorkspaceResize)
     window.addEventListener('keydown', this.handleKeyDown)
     window.addEventListener('pointerdown', this.handleGlobalPointerDown)
@@ -1257,6 +1314,10 @@ export class AuthApp {
     this.unsubscribeFromUpdater = null
     window.removeEventListener('online', this.handleConnectivityChange)
     window.removeEventListener('offline', this.handleConnectivityChange)
+    this.root.ownerDocument?.removeEventListener(
+      'visibilitychange',
+      this.handleDocumentVisibilityChange,
+    )
     window.removeEventListener('resize', this.handleWorkspaceResize)
     window.removeEventListener('keydown', this.handleKeyDown)
     window.removeEventListener('pointerdown', this.handleGlobalPointerDown)
@@ -1376,6 +1437,21 @@ export class AuthApp {
 
   private readonly handleWorkspaceResize = (): void => {
     this.scheduleWorkspaceLayout()
+  }
+
+  private readonly handleDocumentVisibilityChange = (): void => {
+    if (
+      this.root.ownerDocument?.hidden
+      || this.currentView !== 'authenticated'
+      || !this.session
+    ) {
+      return
+    }
+
+    // Refresh once when the user returns instead of polling expensive metrics
+    // while the window cannot display them.
+    void this.refreshPresenceAndMetrics(this.session.user.id)
+    void this.refreshResourceUsage()
   }
 
   private readonly handleAdminPush = (event: Event): void => {
@@ -1644,6 +1720,7 @@ export class AuthApp {
   }
 
   private prepareAuthenticatedSession(session: Session): void {
+    this.locale = readPreferredLocale(session.user.id)
     if (this.session?.user.id !== session.user.id || this.session?.user.email !== session.user.email) {
       this.ownerTools.revoke()
       this.permissionService.updateEntitlements(this.baseEntitlements)
@@ -1688,6 +1765,7 @@ export class AuthApp {
       this.appMetrics = null
       this.notificationCenter.setAnnouncements([])
       this.pixPayment = null
+      this.paymentMethod = null
       this.paymentError = null
       this.activeDialog = null
       this.dialogAccountId = null
@@ -1758,6 +1836,7 @@ export class AuthApp {
     this.appMetrics = null
     this.notificationCenter.setAnnouncements([])
     this.pixPayment = null
+    this.paymentMethod = null
     this.paymentError = null
     this.paymentLoading = false
     this.gameCatalogError = null
@@ -1850,7 +1929,7 @@ export class AuthApp {
     void this.refreshPresenceAndMetrics(userId)
     this.presenceHeartbeatTimer = setInterval(() => {
       void this.refreshPresenceAndMetrics(userId)
-    }, 60_000)
+    }, 120_000)
   }
 
   private stopPresenceTracking(): void {
@@ -1859,6 +1938,7 @@ export class AuthApp {
       this.presenceHeartbeatTimer = null
     }
     this.presenceUserId = null
+    this.presenceRefreshPending = false
   }
 
   private async refreshPresenceAndMetrics(userId: string): Promise<void> {
@@ -1867,31 +1947,47 @@ export class AuthApp {
       this.destroyed
       || this.session?.user.id !== userId
       || !navigator.onLine
+      || this.presenceRefreshPending
     ) {
       return
     }
 
-    void this.chatService?.refreshUnread()
-    if (!backendApi?.sendPresenceHeartbeat || !backendApi.getAppMetrics) {
-      return
-    }
-
-    const [, metricsResult] = await Promise.allSettled([
-      backendApi.sendPresenceHeartbeat([
-        ...new Set(this.getActiveAccounts().map((account) => account.gameSlug)),
-      ]),
-      backendApi.getAppMetrics(),
-    ])
-
-    if (
-      metricsResult.status === 'fulfilled'
-      && !this.destroyed
-      && this.session?.user.id === userId
-    ) {
-      this.appMetrics = metricsResult.value
-      if (this.currentView === 'authenticated') {
-        this.render()
+    this.presenceRefreshPending = true
+    try {
+      const shouldRefreshVisibleData = !this.root.ownerDocument?.hidden
+      if (shouldRefreshVisibleData) {
+        void this.chatService?.refreshUnread()
       }
+      if (!backendApi?.sendPresenceHeartbeat || !backendApi.getAppMetrics) {
+        return
+      }
+
+      const [, metricsResult] = await Promise.allSettled([
+        backendApi.sendPresenceHeartbeat([
+          ...new Set(this.getActiveAccounts().map((account) => account.gameSlug)),
+        ]),
+        shouldRefreshVisibleData
+          ? backendApi.getAppMetrics()
+          : Promise.resolve(null),
+      ])
+
+      if (
+        metricsResult.status === 'fulfilled'
+        && metricsResult.value
+        && !this.destroyed
+        && this.session?.user.id === userId
+      ) {
+        const metricsChanged = !hasSameVisibleMetrics(
+          this.appMetrics,
+          metricsResult.value,
+        )
+        this.appMetrics = metricsResult.value
+        if (metricsChanged && this.currentView === 'authenticated') {
+          this.render()
+        }
+      }
+    } finally {
+      this.presenceRefreshPending = false
     }
   }
 
@@ -2364,6 +2460,7 @@ export class AuthApp {
     if (
       this.currentView === 'authenticated'
       && this.session
+      && this.renderedLocale === this.locale
       && this.updateAuthenticatedShell(restoreSidebarProfile)
     ) {
       return
@@ -2432,6 +2529,8 @@ export class AuthApp {
       </div>
     `
 
+    localizeDom(this.root, this.locale)
+    this.renderedLocale = this.locale
     this.bindViewActions()
     this.restoreSidebarProfileMenu(restoreSidebarProfile)
     this.updateConnectivityBanner()
@@ -2553,6 +2652,7 @@ export class AuthApp {
 
     this.ensureSessionSurfaceManager()
     this.reconcileSessionCards(shell)
+    localizeDom(this.root, this.locale)
     this.bindViewActions()
     this.bindDialogActions()
     this.updateConnectivityBanner()
@@ -2680,6 +2780,7 @@ export class AuthApp {
       this.dialogAccountId,
       this.dialogError,
       dependency,
+      this.locale,
     ])
   }
 
@@ -2820,8 +2921,8 @@ export class AuthApp {
         </div>
         <button class="account-tabs__nav account-tabs__nav--next" data-scroll-accounts="next" type="button" aria-label="Próximas contas" aria-controls="account-tabs-scroll" hidden>›</button>
         <button class="account-tab account-tab--add" data-add-account type="button">
-          ${uiIcon('add')}
-          <span class="account-tab__copy"><strong>Adicionar</strong><small>Nova conta</small></span>
+          <span class="account-tab--add__icon" aria-hidden="true">${uiIcon('add')}</span>
+          <span class="account-tab__copy"><strong>Nova conta</strong><small>Adicionar sessão</small></span>
         </button>
       </div>
     `
@@ -2847,7 +2948,7 @@ export class AuthApp {
               ? notifications.map((notification) => `
                 <button class="notification-item ${notification.read ? '' : 'is-unread'}" data-read-notification="${escapeHtml(notification.id)}" type="button">
                   <span class="notification-item__dot notification-item__dot--${notification.severity}" aria-hidden="true"></span>
-                  <span><strong>${escapeHtml(notification.title)}</strong><small>${escapeHtml(notification.summary)}</small><time>${escapeHtml(formatDate(notification.occurredAt))}</time></span>
+                  <span data-user-content><strong>${escapeHtml(notification.title)}</strong><small>${escapeHtml(notification.summary)}</small><time>${escapeHtml(formatDate(notification.occurredAt, localeTag(this.locale)))}</time></span>
                 </button>
               `).join('')
               : '<p class="notification-empty">Tudo tranquilo por aqui.</p>'}
@@ -2994,6 +3095,7 @@ export class AuthApp {
         ${this.renderAlertSlot()}
 
         <form id="signup-form" novalidate>
+          ${this.renderLanguageField()}
           ${this.renderEmailField('signup-email')}
           ${this.renderPasswordField('signup-password', 'Senha', 'new-password')}
           ${this.renderPasswordField(
@@ -3152,7 +3254,7 @@ export class AuthApp {
         onlinePlayersFor(right) - onlinePlayersFor(left)
         || Number(featuredGameSlugs.has(right.slug)) - Number(featuredGameSlugs.has(left.slug))
         || (left.sort_order ?? 0) - (right.sort_order ?? 0)
-        || left.name.localeCompare(right.name, 'pt-BR'))
+        || left.name.localeCompare(right.name, localeTag(this.locale)))
     const activeSessions = this.permissionService.getActiveSessionCount()
     const currentPlan = this.permissionService.getCurrentPlan()
     const profilePlanBadge = renderPlanBadge(currentPlan, this.me?.founder_number ?? null,
@@ -3181,7 +3283,7 @@ export class AuthApp {
                 return `
                 <button class="game-list__item ${game.slug === selectedSlug ? 'is-selected' : ''} ${featured ? 'is-sponsored' : ''}" data-select-game="${escapeHtml(game.slug)}" type="button">
                   <span class="game-list__icon">${this.renderGameIcon(game)}</span>
-                  <span class="game-list__copy"><span>${escapeHtml(game.name)}${featured ? '<em>Destaque</em>' : ''}</span>${typeof onlinePlayers === 'number' ? `<small title="Usuários ativos neste jogo pelo AltGrid"><b aria-hidden="true"></b>${onlinePlayers.toLocaleString('pt-BR')} online</small>` : ''}</span>
+                  <span class="game-list__copy"><span>${escapeHtml(game.name)}${featured ? '<em>Destaque</em>' : ''}</span>${typeof onlinePlayers === 'number' ? `<small title="Usuários ativos neste jogo pelo AltGrid"><b aria-hidden="true"></b>${onlinePlayers.toLocaleString(localeTag(this.locale))} online</small>` : ''}</span>
                   <i aria-label="${game.slug === selectedSlug ? 'Selecionado' : 'Disponível'}"></i>
                 </button>
               `}).join('')
@@ -3396,7 +3498,7 @@ export class AuthApp {
       <div class="advertise-orders__list">${this.myAppAdRequests.map((request) => `
         <article class="advertise-order is-${escapeHtml(request.status)}">
           <div><span class="advertise-order__status">${escapeHtml(labels[request.status])}</span><strong>${escapeHtml(request.title)}</strong><small>${escapeHtml(request.advertiser_name)} · ${request.requested_days} dias</small></div>
-          <strong>${escapeHtml(formatCurrency(request.quoted_amount, request.currency))}</strong>
+          <strong>${escapeHtml(formatCurrency(request.quoted_amount, request.currency, localeTag(this.locale)))}</strong>
           ${request.admin_notes ? `<p>${escapeHtml(request.admin_notes)}</p>` : ''}
           ${request.status === 'payment_pending'
             ? `<button class="button button--primary" data-pay-app-ad="${escapeHtml(request.id)}" type="button">Gerar PIX e pagar</button>`
@@ -3966,7 +4068,7 @@ export class AuthApp {
           <header>
             <strong>${escapeHtml(message.display_name || 'Jogador')}</strong>
             ${badge}
-            <time>${escapeHtml(new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(new Date(message.created_at)))}</time>
+            <time>${escapeHtml(new Intl.DateTimeFormat(localeTag(this.locale), { hour: '2-digit', minute: '2-digit' }).format(new Date(message.created_at)))}</time>
             ${own ? '' : `<details class="chat-message__menu">
               <summary aria-label="Opções da mensagem">•••</summary>
               <div>
@@ -3977,7 +4079,7 @@ export class AuthApp {
               </div>
             </details>`}
           </header>
-          <p>${escapeHtml(message.message)}</p>
+          <p data-user-content>${escapeHtml(message.message)}</p>
         </div>
       </article>
     `
@@ -4000,7 +4102,7 @@ export class AuthApp {
     }
 
     const communityStats = currentChannel?.type === 'global' && this.appMetrics
-      ? `<div class="chat-community-stats" title="Ativos nos últimos ${Math.round(this.appMetrics.active_window_seconds / 60)} minutos"><span class="chat-community-stat chat-community-stat--online"><i aria-hidden="true"></i><strong>${this.appMetrics.users.active.toLocaleString('pt-BR')}</strong><small>online</small></span><span class="chat-community-stat"><strong>${this.appMetrics.users.total.toLocaleString('pt-BR')}</strong><small>usuários</small></span></div>`
+      ? `<div class="chat-community-stats" title="Ativos nos últimos ${Math.round(this.appMetrics.active_window_seconds / 60)} minutos"><span class="chat-community-stat chat-community-stat--online"><i aria-hidden="true"></i><strong>${this.appMetrics.users.active.toLocaleString(localeTag(this.locale))}</strong><small>online</small></span><span class="chat-community-stat"><strong>${this.appMetrics.users.total.toLocaleString(localeTag(this.locale))}</strong><small>usuários</small></span></div>`
       : ''
 
     return `
@@ -4048,7 +4150,7 @@ export class AuthApp {
               : `<p class="chat-empty">${currentChannel?.type === 'direct' ? `Envie uma mensagem privada para ${escapeHtml(currentChannel.name)}.` : 'Seja a primeira pessoa a conversar por aqui.'}</p>`}
         </div>
         ${state.banned || state.mutedUntil
-          ? `<p class="chat-moderation">${state.banned ? 'Seu acesso ao chat está bloqueado.' : `Silenciado até ${escapeHtml(formatDate(state.mutedUntil))}.`} ${escapeHtml(state.moderationReason ?? '')}</p>`
+          ? `<p class="chat-moderation">${state.banned ? 'Seu acesso ao chat está bloqueado.' : `Silenciado até ${escapeHtml(formatDate(state.mutedUntil, localeTag(this.locale)))}.`} <span data-user-content>${escapeHtml(state.moderationReason ?? '')}</span></p>`
           : ''}
         ${state.error ? `<p class="chat-error" role="alert">${escapeHtml(state.error)}</p>` : ''}
         <form class="chat-composer" id="chat-form">
@@ -4967,7 +5069,7 @@ export class AuthApp {
                 ${this.appAdPlans.length > 0 ? this.appAdPlans.map((plan, index) => `
                   <label class="advertise-plan">
                     <input type="radio" name="plan_code" value="${escapeHtml(plan.code)}" data-ad-plan data-price-per-day="${plan.price_per_day}" data-min-days="${plan.min_days}" data-max-days="${plan.max_days}" ${index === 0 ? 'checked' : ''} required />
-                    <span><small>${plan.popup_enabled ? 'LATERAL + POP-UP FREE' : 'LATERAL'}</small><strong>${escapeHtml(plan.name)}</strong><p>${escapeHtml(plan.description)}</p><b>${escapeHtml(formatCurrency(plan.price_per_day, plan.currency))}/dia</b></span>
+                    <span><small>${plan.popup_enabled ? 'LATERAL + POP-UP FREE' : 'LATERAL'}</small><strong>${escapeHtml(plan.name)}</strong><p>${escapeHtml(plan.description)}</p><b>${escapeHtml(formatCurrency(plan.price_per_day, plan.currency, localeTag(this.locale)))}/dia</b></span>
                   </label>
                 `).join('') : '<p class="advertise-unavailable">Os planos de anúncio estão sendo atualizados. Tente novamente em instantes.</p>'}
               </fieldset></section>
@@ -4989,7 +5091,7 @@ export class AuthApp {
                 <label>Dias<input name="requested_days" type="number" min="${defaultPlan?.min_days ?? 7}" max="${defaultPlan?.max_days ?? 90}" value="${defaultPlan?.min_days ?? 7}" required data-ad-days /></label>
               </div></section>
               <section class="advertise-step advertise-step--review"><header><span>03</span><div><h3>Revise e envie</h3><p>Nenhum pagamento é criado nesta etapa.</p></div></header>
-              <div class="advertise-quote" aria-live="polite"><span>Estimativa</span><strong data-ad-quote>${defaultPlan ? escapeHtml(formatCurrency(defaultPlan.price_per_day * defaultPlan.min_days, defaultPlan.currency)) : '—'}</strong><small>Valor final calculado e confirmado pelo servidor.</small></div>
+              <div class="advertise-quote" aria-live="polite"><span>Estimativa</span><strong data-ad-quote>${defaultPlan ? escapeHtml(formatCurrency(defaultPlan.price_per_day * defaultPlan.min_days, defaultPlan.currency, localeTag(this.locale))) : '—'}</strong><small>Valor final calculado e confirmado pelo servidor.</small></div>
               <label class="advertise-consent"><input name="accept_review" type="checkbox" required /><span>Confirmo que tenho autorização para usar os textos, a marca e a imagem enviados.</span></label>
               <div class="modal__actions">
                 <button class="button button--primary" type="submit" ${this.appAdSubmitting || this.appAdPlans.length === 0 ? 'disabled' : ''}>${this.appAdSubmitting ? 'Enviando…' : 'Enviar para análise'}</button>
@@ -5422,6 +5524,17 @@ export class AuthApp {
       && this.me?.founder_upgrade_eligible === true
     const productByCode = (code: string): PublicProduct | null =>
       this.products.find((product) => product.code === code) ?? null
+    const ownerProTestProduct: PublicProduct | null = import.meta.env.DEV
+      && this.ownerTools.isAuthorized(this.session?.user)
+      ? {
+          code: 'PRO_TEST_R1',
+          currency: 'BRL',
+          description: 'Teste administrativo de ativação do plano PRO.',
+          lifetime: true,
+          name: 'Teste administrativo PRO',
+          price_amount: 1,
+        }
+      : null
     const productFor = (plan: 'FOUNDER' | 'PRO' | 'PRO_PLUS'): PublicProduct | null => {
       if (plan === 'PRO') {
         return productByCode('PRO_LIFETIME')
@@ -5448,6 +5561,7 @@ export class AuthApp {
           <span aria-hidden="true">✓</span>
           <div><strong>Todos os planos pagos são vitalícios</strong><small>Você paga uma única vez, sem mensalidade. A licença fica vinculada à sua conta AltGrid.</small></div>
         </div>
+        ${ownerProTestProduct ? `<div class="plan-lifetime-banner"><span aria-hidden="true">$</span><div><strong>Teste administrativo do PRO</strong><small>Exclusivo da sua conta: Pix por R$ 1,00 ou cartão por R$ 1,20 com a taxa de 20%.</small></div><div class="plan-payment-actions"><button class="button button--primary button--compact" data-buy-product="${escapeHtml(ownerProTestProduct.code)}" type="button">Testar Pix · R$ 1</button><button class="button button--secondary button--compact" data-buy-card="${escapeHtml(ownerProTestProduct.code)}" type="button">Testar cartão · R$ 1,20</button></div></div>` : ''}
         <div class="plan-list">
           ${this.renderPlanOption('FREE', currentPlan, null)}
           ${this.renderPlanOption('PRO', currentPlan, productFor('PRO'))}
@@ -5565,6 +5679,7 @@ export class AuthApp {
             <div class="settings-content">
               <section data-settings-panel="general">
                 <h3>Geral</h3>
+                <label class="setting-select"><span><strong>Idioma do aplicativo</strong><small>Escolha o idioma usado nos menus, mensagens e configurações.</small></span>${this.renderLanguageSelect()}</label>
                 <label class="setting-toggle"><span><strong>Eco Mode adaptativo</strong><small>${ecoModeNote}</small></span><input data-preference="eco-mode" type="checkbox" ${this.ecoModeRequested ? 'checked' : ''} ${ecoModeAvailable ? '' : 'disabled'} /></label>
                 ${ownerToolsSettings}
                 <label class="setting-select"><span><strong>Máximo em segundo plano</strong><small>Escolha entre 2, 5, 10, 20 ou 30 FPS para as contas secundárias. A conta em uso continua limitada separadamente a 30 FPS.</small></span><select data-eco-background-fps ${ecoModeAvailable ? '' : 'disabled'}><option value="2" ${this.ecoBackgroundFps === 2 ? 'selected' : ''}>Até 2 FPS</option><option value="5" ${this.ecoBackgroundFps === 5 ? 'selected' : ''}>Até 5 FPS</option><option value="10" ${this.ecoBackgroundFps === 10 ? 'selected' : ''}>Até 10 FPS</option><option value="20" ${this.ecoBackgroundFps === 20 ? 'selected' : ''}>Até 20 FPS</option><option value="30" ${this.ecoBackgroundFps === 30 ? 'selected' : ''}>Até 30 FPS</option></select></label>
@@ -5610,7 +5725,7 @@ export class AuthApp {
       const validity = currentPlan === 'FREE'
         ? 'Grátis para sempre'
         : this.me?.lifetime ? 'Vitalício'
-        : this.me?.expires_at ? `Ativo até ${formatDate(this.me.expires_at)}` : 'Sem vencimento'
+        : this.me?.expires_at ? `Ativo até ${formatDate(this.me.expires_at, localeTag(this.locale))}` : 'Sem vencimento'
       return `
         <dialog class="modal modal--plan-summary" id="app-dialog" aria-labelledby="dialog-title">
           <header class="plan-summary-hero">
@@ -5631,13 +5746,20 @@ export class AuthApp {
               <div class="plan-summary-grid">${PLAN_ORDER.map((plan) => this.renderPlanSummaryCard(plan, currentPlan)).join('')}</div>
             </section>
           </div>
-          <div class="modal__actions">${currentPlan !== 'FOUNDER' ? '<button class="button button--primary" data-show-plans type="button">Ver preços e opções de upgrade</button>' : ''}<button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
+          <div class="modal__actions">${currentPlan !== 'FOUNDER' || (import.meta.env.DEV && this.ownerTools.isAuthorized(this.session?.user)) ? '<button class="button button--primary" data-show-plans type="button">Ver preços e opções de upgrade</button>' : ''}<button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
         </dialog>
       `
     }
 
     if (this.activeDialog === 'payment') {
       const payment = this.pixPayment
+      const cardPayment = payment?.payment_method === 'card'
+        || this.paymentMethod === 'mercadopago-card'
+        || payment?.provider === 'stripe'
+        || this.paymentMethod === 'stripe'
+      const cardProvider = payment?.provider === 'stripe' || this.paymentMethod === 'stripe'
+        ? 'Stripe'
+        : 'Mercado Pago'
       const qrImage = payment?.qr_code_base64?.match(/^[A-Za-z0-9+/=\r\n]+$/)
         ? payment.qr_code_base64.replace(/\s/g, '')
         : null
@@ -5645,11 +5767,11 @@ export class AuthApp {
       const advertisingPayment = Boolean(this.appAdPaymentRequestId)
       return `
         <dialog class="modal modal--payment" id="app-dialog" aria-labelledby="dialog-title">
-          <div class="modal__header"><p class="eyebrow">Pagamento seguro</p><h2 id="dialog-title">${approved ? 'Pagamento confirmado' : advertisingPayment ? 'Pagar campanha com PIX' : 'Ativar com PIX'}</h2>${advertisingPayment ? '<p>Plano e conteúdo aprovados pela equipe AltGrid. A campanha entra no ar somente após a confirmação do pagamento.</p>' : ''}</div>
+          <div class="modal__header"><p class="eyebrow">Pagamento seguro</p><h2 id="dialog-title">${approved ? 'Pagamento confirmado' : cardPayment ? 'Pagar com cartão' : advertisingPayment ? 'Pagar campanha com Pix' : 'Ativar com Pix'}</h2>${advertisingPayment ? '<p>Plano e conteúdo aprovados pela equipe AltGrid. A campanha entra no ar somente após a confirmação do pagamento.</p>' : ''}</div>
           ${this.paymentError ? `<div class="form-alert is-visible" role="alert">${escapeHtml(this.paymentError)}</div>` : ''}
           ${payment
-            ? `<div class="payment-summary"><strong>${escapeHtml(formatCurrency(payment.amount, payment.currency))}</strong><small>${advertisingPayment ? 'Campanha publicitária AltGrid' : escapeHtml(payment.product_code)}</small></div>${approved ? `<div class="payment-approved"><span aria-hidden="true">✓</span><strong>${advertisingPayment ? 'Pagamento confirmado. Sua campanha está sendo ativada.' : 'Seu plano está sendo ativado.'}</strong></div>` : `${qrImage ? `<img class="pix-qr" src="data:image/png;base64,${qrImage}" alt="QR Code PIX" />` : ''}<label class="field pix-copy"><span>Pix Copia e Cola</span><textarea readonly rows="3" data-pix-code>${escapeHtml(payment.qr_code ?? '')}</textarea></label><button class="button button--secondary" data-copy-pix type="button">Copiar código PIX</button><p class="payment-waiting"><i class="spinner spinner--green"></i> Aguardando pagamento…</p>`}`
-            : '<div class="payment-waiting"><i class="spinner spinner--green"></i> Preparando seu PIX…</div>'}
+            ? `<div class="payment-summary"><strong>${escapeHtml(formatCurrency(payment.amount, payment.currency, localeTag(this.locale)))}</strong><small>${advertisingPayment ? 'Campanha publicitária AltGrid' : escapeHtml(payment.product_code)}</small>${cardPayment ? `<small>Plano ${escapeHtml(formatCurrency(payment.base_amount ?? payment.amount / 1.2, payment.currency, localeTag(this.locale)))} + taxa do cartão de ${escapeHtml(String(payment.processing_fee_percent ?? 20))}% (${escapeHtml(formatCurrency(payment.processing_fee ?? payment.amount - (payment.base_amount ?? payment.amount / 1.2), payment.currency, localeTag(this.locale)))})</small>` : ''}</div>${approved ? `<div class="payment-approved"><span aria-hidden="true">✓</span><strong>${advertisingPayment ? 'Pagamento confirmado. Sua campanha está sendo ativada.' : 'Seu plano está sendo ativado.'}</strong></div>` : cardPayment ? `<p class="modal__note">O checkout seguro do ${cardProvider} foi aberto no navegador. Conclua o pagamento e volte ao AltGrid.</p><button class="button button--primary" data-open-card-checkout type="button">Abrir checkout novamente</button><p class="payment-waiting"><i class="spinner spinner--green"></i> Aguardando confirmação do ${cardProvider}…</p>` : `${qrImage ? `<img class="pix-qr" src="data:image/png;base64,${qrImage}" alt="QR Code Pix" />` : ''}<label class="field pix-copy"><span>Pix Copia e Cola</span><textarea readonly rows="3" data-pix-code>${escapeHtml(payment.qr_code ?? '')}</textarea></label><button class="button button--secondary" data-copy-pix type="button">Copiar código Pix</button><p class="payment-waiting"><i class="spinner spinner--green"></i> Aguardando pagamento…</p>`}`
+            : `<div class="payment-waiting"><i class="spinner spinner--green"></i> ${cardPayment ? 'Preparando checkout seguro…' : 'Preparando seu Pix…'}</div>`}
           <div class="modal__actions">${payment && !approved ? `<button class="button button--primary" data-refresh-payment type="button" ${this.paymentLoading ? 'disabled' : ''}>${this.paymentLoading ? 'Atualizando…' : 'Atualizar status'}</button>` : ''}<button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
         </dialog>
       `
@@ -5672,14 +5794,20 @@ export class AuthApp {
     const purchaseTerms = isFree
       ? 'Sem cobrança e sem prazo para acabar'
       : 'Pagamento único · licença vitalícia'
+    const ownerCardTest = import.meta.env.DEV
+      && included
+      && Boolean(product)
+      && this.ownerTools.isAuthorized(this.session?.user)
+      ? `<button class="button button--secondary button--compact" data-buy-card="${escapeHtml(product!.code)}" type="button">Testar cartão</button>`
+      : ''
     const action = current
       ? '<span class="plan-option__badge">Plano atual</span>'
       : included
-        ? '<span class="plan-option__badge plan-option__badge--included">Incluído no seu plano</span>'
+        ? ownerCardTest || '<span class="plan-option__badge plan-option__badge--included">Incluído no seu plano</span>'
         : isFree
           ? '<span class="plan-option__badge plan-option__badge--free">Grátis para sempre</span>'
           : product
-            ? `<button class="button button--primary button--compact" data-buy-product="${escapeHtml(product.code)}" type="button">${product.code.endsWith('_UPGRADE') ? 'Fazer upgrade' : 'Ativar com PIX'}</button>`
+            ? `<div class="plan-payment-actions"><button class="button button--primary button--compact" data-buy-product="${escapeHtml(product.code)}" type="button">Pagar com Pix</button><button class="button button--secondary button--compact" data-buy-card="${escapeHtml(product.code)}" type="button">Pagar com cartão <small>+20%</small></button></div>`
             : '<span class="plan-option__badge">Preço indisponível</span>'
 
     return `
@@ -5695,7 +5823,7 @@ export class AuthApp {
         </div>
         <footer class="plan-option__footer">
           <div class="plan-option__price">${product
-            ? `<b>${escapeHtml(formatCurrency(product.price_amount, product.currency))}</b>${product.code.endsWith('_UPGRADE') ? '<span>valor do upgrade</span>' : ''}`
+            ? `<b>${escapeHtml(formatCurrency(product.price_amount, product.currency, localeTag(this.locale)))}</b>${product.code.endsWith('_UPGRADE') ? '<span>valor do upgrade</span>' : ''}`
             : isFree ? '<b>R$ 0</b>' : '<b>—</b>'}<small>${purchaseTerms}</small></div>
           <div class="plan-option__actions">${action}</div>
         </footer>
@@ -5811,6 +5939,32 @@ export class AuthApp {
   }
 
   private bindViewActions(): void {
+    this.root.querySelectorAll<HTMLSelectElement>('[data-language-select]').forEach((select) => {
+      if (select.dataset.actionBound === 'true') return
+      select.dataset.actionBound = 'true'
+      select.addEventListener('change', () => {
+        const locale = normalizeAppLocale(select.value)
+        if (!locale || locale === this.locale) return
+
+        const form = select.closest<HTMLFormElement>('form')
+        const draft = form
+          ? [...form.querySelectorAll<HTMLInputElement>('input[name]')]
+              .map((input) => [input.name, input.value] as const)
+          : []
+        this.locale = locale
+        storePreferredLocale(locale, this.session?.user.id)
+        this.workspaceMarkupCache.clear()
+        this.render()
+        const renderedForm = form?.id
+          ? this.root.querySelector<HTMLFormElement>(`#${form.id}`)
+          : null
+        draft.forEach(([name, value]) => {
+          const input = renderedForm?.elements.namedItem(name)
+          if (input instanceof HTMLInputElement) input.value = value
+        })
+      })
+    })
+
     this.root.querySelectorAll<HTMLButtonElement>('[data-toggle-password]').forEach((button) => {
       button.addEventListener('click', () => {
         const input = this.root.querySelector<HTMLInputElement>(
@@ -5820,7 +5974,10 @@ export class AuthApp {
         const visible = input.type === 'text'
         input.type = visible ? 'password' : 'text'
         button.setAttribute('aria-pressed', String(!visible))
-        button.setAttribute('aria-label', visible ? 'Mostrar senha' : 'Ocultar senha')
+        button.setAttribute(
+          'aria-label',
+          translateUiText(visible ? 'Mostrar senha' : 'Ocultar senha', this.locale),
+        )
         button.classList.toggle('is-visible', !visible)
       })
     })
@@ -5865,6 +6022,7 @@ export class AuthApp {
 
           button.closest('details')?.removeAttribute('open')
           if (this.activeDialog === 'sponsored') this.selectedSponsoredAdId = null
+          if (dialog === 'settings') this.activeSettingsTab = 'general'
           this.activeDialog = dialog
           this.dialogError = null
           this.render()
@@ -7010,6 +7168,7 @@ export class AuthApp {
     if (this.activeDialog === 'payment') {
       this.stopPaymentPolling()
       this.appAdPaymentRequestId = null
+      this.paymentMethod = null
     }
     if (this.activeDialog === 'proxy' || this.activeDialog === 'copy-proxy') {
       this.proxyConfig = null
@@ -7144,7 +7303,7 @@ export class AuthApp {
     this.render()
     try {
       const response = await this.backendApi.createAppAdRequest(input)
-      this.appAdSuccess = `Pedido enviado com estimativa de ${formatCurrency(response.request.quoted_amount, response.request.currency)} para ${response.request.requested_days} dias. Aguarde sua análise administrativa; o PIX ainda não foi gerado.`
+      this.appAdSuccess = `Pedido enviado com estimativa de ${formatCurrency(response.request.quoted_amount, response.request.currency, localeTag(this.locale))} para ${response.request.requested_days} dias. Aguarde sua análise administrativa; o PIX ainda não foi gerado.`
       await this.loadMyAppAdRequests(false)
     } catch (error) {
       this.dialogError = backendErrorMessage(error)
@@ -7176,6 +7335,7 @@ export class AuthApp {
       return
     }
     this.appAdPaymentRequestId = requestId
+    this.paymentMethod = 'pix'
     this.activeDialog = 'payment'
     this.pixPayment = null
     this.paymentError = null
@@ -7206,6 +7366,7 @@ export class AuthApp {
 
     this.activeDialog = 'payment'
     this.appAdPaymentRequestId = null
+    this.paymentMethod = 'pix'
     this.pixPayment = null
     this.paymentError = null
     this.paymentLoading = true
@@ -7307,7 +7468,7 @@ export class AuthApp {
     void this.refreshAdminPaymentAlerts()
     this.adminPaymentAlertTimer = setInterval(() => {
       void this.refreshAdminPaymentAlerts()
-    }, 10_000)
+    }, 60_000)
   }
 
   private stopAdminPaymentAlerts(): void {
@@ -7375,7 +7536,7 @@ export class AuthApp {
               id: `admin-ad-request:${request.id}`,
               occurredAt: request.created_at,
               title: 'Novo pedido de anúncio',
-              summary: `${request.advertiser_name} · ${request.plan_name} · ${request.requested_days} dias · ${formatCurrency(request.quoted_amount, request.currency)}`,
+              summary: `${request.advertiser_name} · ${request.plan_name} · ${request.requested_days} dias · ${formatCurrency(request.quoted_amount, request.currency, localeTag(this.locale))}`,
             })
             playAdminPaymentAlertSound(false)
             supplementalNotificationAdded = true
@@ -7433,7 +7594,7 @@ export class AuthApp {
     this.notificationCenter.upsertSystemNotification({
       id: `admin-payment:${payment.id}:${confirmed ? 'confirmed' : 'attempt'}`,
       occurredAt: payment.updated_at || payment.created_at,
-      summary: `${identity} · ${payment.product_code} · ${formatCurrency(payment.amount, payment.currency)}`,
+      summary: `${identity} · ${payment.product_code} · ${formatCurrency(payment.amount, payment.currency, localeTag(this.locale))}`,
       title: confirmed ? 'Compra aprovada' : 'Nova tentativa de compra',
     })
     playAdminPaymentAlertSound(confirmed)
@@ -7453,6 +7614,96 @@ export class AuthApp {
     if (saved && tool === 'founder-benefits') {
       void this.syncEcoMode().catch(() => undefined)
     }
+  }
+
+  private async createStripePayment(productCode: string, button: HTMLButtonElement): Promise<void> {
+    if (!this.backendApi?.createStripeCheckout) {
+      this.dialogError = 'O pagamento com cartão está indisponível no momento.'
+      this.render()
+      return
+    }
+    this.activeDialog = 'payment'
+    this.appAdPaymentRequestId = null
+    this.paymentMethod = 'stripe'
+    this.pixPayment = null
+    this.paymentError = null
+    this.paymentLoading = true
+    button.disabled = true
+    this.render()
+    try {
+      const response = await this.backendApi.createStripeCheckout(productCode)
+      this.pixPayment = response.payment
+      const checkoutUrl = response.payment.checkout_url
+      if (!checkoutUrl?.startsWith('https://checkout.stripe.com/')) {
+        throw new Error('A Stripe não retornou um checkout seguro.')
+      }
+      await Promise.resolve(this.openExternalUrl(checkoutUrl))
+      this.startPaymentPolling()
+    } catch (error) {
+      this.paymentError = backendErrorMessage(error)
+    } finally {
+      this.paymentLoading = false
+      this.render()
+    }
+  }
+
+  private async createMercadoPagoCardPayment(productCode: string, button: HTMLButtonElement): Promise<void> {
+    if (!this.backendApi?.createMercadoPagoCardCheckout) {
+      this.dialogError = 'O pagamento com cartão está indisponível no momento.'
+      this.render()
+      return
+    }
+    this.activeDialog = 'payment'
+    this.appAdPaymentRequestId = null
+    this.paymentMethod = 'mercadopago-card'
+    this.pixPayment = null
+    this.paymentError = null
+    this.paymentLoading = true
+    button.disabled = true
+    this.render()
+    try {
+      const response = await this.backendApi.createMercadoPagoCardCheckout(productCode)
+      this.pixPayment = response.payment
+      const checkoutUrl = response.payment.checkout_url
+      if (!isMercadoPagoCheckoutUrl(checkoutUrl)) {
+        throw new Error('O Mercado Pago não retornou um checkout seguro.')
+      }
+      await Promise.resolve(this.openExternalUrl(checkoutUrl))
+      this.startPaymentPolling()
+    } catch (error) {
+      this.paymentError = backendErrorMessage(error)
+    } finally {
+      this.paymentLoading = false
+      this.render()
+    }
+  }
+
+  private renderLanguageOptions(): string {
+    const labels: Record<AppLocale, string> = {
+      'pt-BR': 'Português (Brasil)',
+      en: 'English',
+      es: 'Español',
+    }
+    return APP_LOCALES.map((locale) => (
+      `<option value="${locale}" ${this.locale === locale ? 'selected' : ''}>${labels[locale]}</option>`
+    )).join('')
+  }
+
+  private renderLanguageSelect(): string {
+    return `<select data-language-select aria-label="Idioma">${this.renderLanguageOptions()}</select>`
+  }
+
+  private renderLanguageField(): string {
+    return `
+      <div class="field auth-language-field">
+        <label for="signup-language">Idioma</label>
+        <div class="field__control">
+          <select id="signup-language" name="language" data-language-select>
+            ${this.renderLanguageOptions()}
+          </select>
+        </div>
+      </div>
+    `
   }
 
   private bindDialogActions(): void {
@@ -7495,7 +7746,7 @@ export class AuthApp {
         }
         const plan = this.appAdPlans.find((entry) => entry.code === selected.value)
         quote.textContent = plan
-          ? formatCurrency(plan.price_per_day * Number(daysInput.value), plan.currency)
+          ? formatCurrency(plan.price_per_day * Number(daysInput.value), plan.currency, localeTag(this.locale))
           : '—'
       }
       const syncGameField = (): void => {
@@ -7720,17 +7971,8 @@ export class AuthApp {
       .querySelectorAll<HTMLButtonElement>('[data-settings-tab]')
       .forEach((button) => {
         this.bindButtonOnce(button, () => {
-          const selected = button.dataset.settingsTab
-          this.root.querySelectorAll<HTMLButtonElement>('[data-settings-tab]')
-            .forEach((candidate) => candidate.classList.toggle(
-              'is-active',
-              candidate.dataset.settingsTab === selected,
-            ))
-          this.root.querySelectorAll<HTMLElement>('[data-settings-panel]')
-            .forEach((panel) => panel.toggleAttribute(
-              'hidden',
-              panel.dataset.settingsPanel !== selected,
-            ))
+          const selected = button.dataset.settingsTab as SettingsTab | undefined
+          if (selected) this.activateSettingsTab(selected)
         })
       })
 
@@ -7798,6 +8040,13 @@ export class AuthApp {
           }
         })
       })
+
+    this.root.querySelectorAll<HTMLButtonElement>('[data-buy-card]').forEach((button) => {
+      this.bindButtonOnce(button, () => {
+        const productCode = button.dataset.buyCard
+        if (productCode) void this.createMercadoPagoCardPayment(productCode, button)
+      })
+    })
 
     const refreshPayment = this.root.querySelector<HTMLButtonElement>(
       '[data-refresh-payment]',
@@ -8067,6 +8316,25 @@ export class AuthApp {
         dialog.focus({ preventScroll: true })
         dialog.scrollTop = 0
       }
+    }
+
+    const openCardCheckout = this.root.querySelector<HTMLButtonElement>('[data-open-card-checkout]')
+    if (openCardCheckout) {
+      this.bindButtonOnce(openCardCheckout, () => {
+        const checkoutUrl = this.pixPayment?.checkout_url
+        const safeCheckout = this.pixPayment?.provider === 'stripe'
+          ? checkoutUrl?.startsWith('https://checkout.stripe.com/')
+          : isMercadoPagoCheckoutUrl(checkoutUrl)
+        if (checkoutUrl && safeCheckout) {
+          void Promise.resolve(this.openExternalUrl(checkoutUrl)).catch(() => {
+            this.paymentError = 'Não foi possível abrir o checkout do cartão.'
+            this.render()
+          })
+        }
+      })
+    }
+    if (dialog?.matches('.modal--settings')) {
+      this.activateSettingsTab(this.activeSettingsTab)
     }
   }
 
@@ -8644,7 +8912,6 @@ export class AuthApp {
       this.updateUtilityMetrics()
       if (this.activeDialog === 'settings') {
         this.render()
-        this.activateSettingsTab('accounts')
       }
     }
   }
@@ -8661,7 +8928,7 @@ export class AuthApp {
 
     void this.refreshResourceUsage()
     this.resourceUsageTimer = setInterval(() => {
-      if (this.currentView === 'authenticated' && !document.hidden) {
+      if (this.currentView === 'authenticated' && !this.root.ownerDocument?.hidden) {
         void this.refreshResourceUsage()
       }
     }, RESOURCE_USAGE_REFRESH_INTERVAL_MS)
@@ -8706,7 +8973,8 @@ export class AuthApp {
     if (refresh) refresh.disabled = this.resourceUsageLoading
   }
 
-  private activateSettingsTab(tabName: string): void {
+  private activateSettingsTab(tabName: SettingsTab): void {
+    this.activeSettingsTab = tabName
     this.root.querySelectorAll<HTMLButtonElement>('[data-settings-tab]').forEach((tab) => {
       tab.classList.toggle('is-active', tab.dataset.settingsTab === tabName)
     })
@@ -9135,6 +9403,7 @@ export class AuthApp {
           email,
           password,
         )
+        storePreferredLocale(this.locale, result.user.id)
 
         if (result.session && !result.needsEmailConfirmation) {
           this.prepareAuthenticatedSession(result.session)
@@ -9293,7 +9562,7 @@ export class AuthApp {
         )
 
         if (errorElement) {
-          errorElement.textContent = message
+          errorElement.textContent = translateUiText(message, this.locale)
         }
       }
     })
@@ -9312,7 +9581,7 @@ export class AuthApp {
       return
     }
 
-    alert.textContent = message
+    alert.textContent = translateUiText(message, this.locale)
     alert.classList.toggle('is-visible', Boolean(message))
   }
 
@@ -9339,7 +9608,7 @@ export class AuthApp {
       button.dataset.idleLabel = button.textContent?.trim() ?? ''
       button.disabled = true
       button.innerHTML = `<span class="spinner" aria-hidden="true"></span>${escapeHtml(
-        busyLabel ?? 'Aguarde…',
+        translateUiText(busyLabel ?? 'Aguarde…', this.locale),
       )}`
     } else {
       button.disabled = false
@@ -9354,7 +9623,10 @@ export class AuthApp {
     banner?.classList.toggle('is-hidden', navigator.onLine)
 
     if (topbarStatus) {
-      topbarStatus.textContent = navigator.onLine ? 'Conectado à internet' : 'Sem conexão'
+      topbarStatus.textContent = translateUiText(
+        navigator.onLine ? 'Conectado à internet' : 'Sem conexão',
+        this.locale,
+      )
     }
   }
 
@@ -9369,13 +9641,14 @@ export class AuthApp {
       return
     }
 
-    alert.textContent = message
+    const localizedMessage = translateUiText(message, this.locale)
+    alert.textContent = localizedMessage
     alert.classList.toggle('is-visible', Boolean(message))
     if (message) {
       this.sessionAlertTimer = setTimeout(() => {
         this.sessionAlertTimer = null
         const currentAlert = this.root.querySelector<HTMLElement>('#session-alert')
-        if (!currentAlert || currentAlert.textContent !== message) return
+        if (!currentAlert || currentAlert.textContent !== localizedMessage) return
         currentAlert.classList.remove('is-visible')
         currentAlert.textContent = ''
       }, 4_500)

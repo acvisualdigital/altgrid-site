@@ -378,6 +378,31 @@ describe('SessionManager', () => {
     expect(view.setFrameRateLimit).toHaveBeenLastCalledWith(0)
   })
 
+  it('reduces visual work while the app is hidden and restores each FPS budget', async () => {
+    const harness = createHarness()
+    await harness.manager.createSession('account-1', 'https://game.example/')
+    await harness.manager.createSession('account-2', 'https://game.example/')
+    harness.manager.showSession('account-1')
+    harness.manager.showSession('account-2')
+    harness.manager.focusSession('account-1')
+    harness.manager.setFrameRate('account-1', 60)
+    harness.manager.setFrameRate('account-2', 10)
+    harness.manager.setEcoMode(true, 20)
+
+    const first = harness.views.get('account-1')!
+    const second = harness.views.get('account-2')!
+    first.setFrameRateLimit.mockClear()
+    second.setFrameRateLimit.mockClear()
+
+    harness.manager.setAppBackgrounded(true)
+    expect(first.setFrameRateLimit).toHaveBeenLastCalledWith(2)
+    expect(second.setFrameRateLimit).toHaveBeenLastCalledWith(2)
+
+    harness.manager.setAppBackgrounded(false)
+    expect(first.setFrameRateLimit).toHaveBeenLastCalledWith(30)
+    expect(second.setFrameRateLimit).toHaveBeenLastCalledWith(10)
+  })
+
   it('stores a desired FPS per session and updates native state before its snapshot', async () => {
     const harness = createHarness()
     await harness.manager.createSession('account-1', 'https://game.example/')

@@ -46,6 +46,11 @@ export interface RateLimitBinding {
 }
 
 export interface WorkerEnvironment extends Env {
+  MERCADOPAGO_CARD_FEE_PERCENT?: string
+  STRIPE_SECRET_KEY?: string
+  STRIPE_WEBHOOK_SECRET?: string
+  STRIPE_PROCESSING_FEE_PERCENT?: string
+  STRIPE_TEST_MODE?: string
   ADMIN_WHATSAPP_NUMBER?: string
   WHATSAPP_ACCESS_TOKEN?: string
   WHATSAPP_PHONE_NUMBER_ID?: string
@@ -188,7 +193,7 @@ export interface ChatStatusRecord {
 export interface PaymentRecord {
   id: string
   user_id: string
-  provider: 'mercadopago'
+  provider: 'mercadopago' | 'stripe'
   provider_payment_id: string | null
   provider_external_reference: string | null
   product_code: string
@@ -272,6 +277,19 @@ export interface PaymentRepository {
     productCode: string,
     requestKey: string,
   ): Promise<PaymentRecord>
+  createPendingMercadoPagoCardPayment(
+    userId: string,
+    productCode: string,
+    requestKey: string,
+    processingFeePercent: number,
+  ): Promise<PaymentRecord>
+  attachMercadoPagoCheckout(
+    userId: string,
+    paymentId: string,
+    preferenceId: string,
+    expiresAt: string,
+    checkoutUrl: string,
+  ): Promise<PaymentRecord>
   attachMercadoPagoPayment(
     userId: string,
     paymentId: string,
@@ -307,12 +325,40 @@ export interface PaymentRepository {
   ): Promise<{ payment_id: string; status: string; fulfilled: boolean; duplicate: boolean }>
 }
 
+export interface StripePaymentRepository {
+  createPendingStripePayment(userId: string, productCode: string, requestKey: string, processingFeePercent: number): Promise<PaymentRecord>
+  attachStripeCheckout(userId: string, paymentId: string, sessionId: string, expiresAt: string, checkoutUrl: string): Promise<PaymentRecord>
+  processStripeCheckout(input: {
+    sessionId: string
+    paymentId: string
+    status: string
+    amount: number
+    currency: string
+    paidAt: string | null
+    eventId: string
+    payloadHash: string
+    providerData: Json
+  }): Promise<{ payment_id: string; status: string; fulfilled: boolean; duplicate: boolean }>
+  getPaymentById(paymentId: string): Promise<PaymentRecord | null>
+}
+
 export interface PaymentService {
   createPixPayment(
     user: SafeUser,
     productCode: string,
     requestKey: string,
   ): Promise<Record<string, unknown>>
+  createCardCheckout(
+    user: SafeUser,
+    productCode: string,
+    requestKey: string,
+  ): Promise<Record<string, unknown>>
+  createStripeCheckout?(
+    user: SafeUser,
+    productCode: string,
+    requestKey: string,
+  ): Promise<Record<string, unknown>>
+  handleStripeWebhook?(request: Request): Promise<PaymentRecord | null>
   createAppAdPixPayment(
     user: SafeUser,
     requestId: string,
@@ -325,6 +371,11 @@ export interface PaymentService {
     failed: number
     updated: number
   }>
+  handleWebhook(request: Request): Promise<PaymentRecord | null>
+}
+
+export interface StripeCheckoutService {
+  createCheckout(user: SafeUser, productCode: string, requestKey: string): Promise<Record<string, unknown>>
   handleWebhook(request: Request): Promise<PaymentRecord | null>
 }
 

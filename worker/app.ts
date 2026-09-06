@@ -35,6 +35,7 @@ import type {
   ChatRepository,
   LicenseSnapshotService,
   PaymentService,
+  StripeCheckoutService,
   PlatformRepository,
   RateLimitBinding,
 } from './types'
@@ -50,6 +51,7 @@ interface ApiDependencies {
   platformRepository?: PlatformRepository
   chatRepository?: ChatRepository
   paymentService?: PaymentService
+  stripePaymentService?: StripeCheckoutService
   licenseSnapshotService?: LicenseSnapshotService
   chatRateLimiter?: RateLimitBinding
   paymentRateLimiter?: RateLimitBinding
@@ -134,7 +136,10 @@ function allowedMethods(pathname: string): string[] | null {
     || pathname === '/v1/presence/heartbeat'
     || /^\/v1\/devices\/[^/]+\/revoke$/.test(pathname)
     || pathname === '/v1/payments/pix'
+    || pathname === '/v1/payments/mercadopago/checkout'
+    || pathname === '/v1/payments/stripe/checkout'
     || pathname === '/v1/webhooks/mercadopago'
+    || pathname === '/v1/webhooks/stripe'
     || /^\/v1\/chat\/messages\/[^/]+\/report$/.test(pathname)
     || /^\/v1\/app\/ads\/[^/]+\/events$/.test(pathname)
   ) {
@@ -321,7 +326,7 @@ export function createApi(
     if (pathname === '/v1/app/metrics') {
       const body: AppMetricsResponse = await dependencies.repository.getAppMetrics()
       return jsonResponse(body, 200, {
-        'Cache-Control': 'public, max-age=30, s-maxage=30',
+        'Cache-Control': 'public, max-age=90, s-maxage=90',
       })
     }
 
@@ -381,6 +386,25 @@ export function createApi(
         })
       }
       return jsonResponse({ ok: true })
+    }
+
+    if (pathname === '/v1/webhooks/stripe') {
+      if (!dependencies.stripePaymentService) {
+        throw new ApiError(503, 'payments_unavailable', 'Pagamento indisponível.')
+      }
+      const payment = await dependencies.stripePaymentService.handleWebhook(request)
+      if (payment && ['paid', 'fulfilled'].includes(payment.status)) {
+        await safelyNotifyAdmin(dependencies.adminMobileNotifier, {
+          eventKey: `payment:${payment.id}:approved`, type: 'purchase_approved',
+          title: 'Compra aprovada no cartão', occurredAt: payment.updated_at,
+          details: [
+            { label: 'Produto', value: payment.product_code },
+            { label: 'Valor', value: `${payment.currency} ${payment.amount.toFixed(2)}` },
+            { label: 'Pagamento', value: payment.id },
+          ],
+        })
+      }
+      return jsonResponse({ received: true })
     }
 
     const user = await dependencies.authentication.authenticate(request)
@@ -685,6 +709,57 @@ export function createApi(
           ],
         })
       }
+      return jsonResponse(checkout, 201)
+    }
+
+    if (pathname === '/v1/payments/mercadopago/checkout') {
+      if (!dependencies.paymentService) {
+        throw new ApiError(503, 'payments_unavailable', 'Pagamento com cartão indisponível.')
+      }
+      const rateLimiter = dependencies.paymentRateLimiter ?? dependencies.deviceRateLimiter
+      const { success } = await rateLimiter.limit({ key: `${user.id}:payment-card-create` })
+      if (!success) {
+        throw new ApiError(429, 'rate_limited', 'Aguarde antes de criar outro pagamento.')
+      }
+      const { productCode } = await readPixInput(request)
+      const checkout = await dependencies.paymentService.createCardCheckout(
+        user,
+        productCode,
+        readIdempotencyKey(request),
+      )
+      const payment = (checkout as { payment?: import('./types').PaymentRecord }).payment
+      if (payment && dependencies.adminMobileNotifier) {
+        const profile = dependencies.adminMobileNotifier.enabled === false
+          ? null
+          : await dependencies.repository.getProfile(user.id).catch(() => null)
+        const customer = profile?.display_name?.trim()
+          ? `${profile.display_name}${user.email ? ` · ${user.email}` : ''}`
+          : user.email ?? user.id
+        await safelyNotifyAdmin(dependencies.adminMobileNotifier, {
+          eventKey: `payment:${payment.id}:attempt`,
+          type: 'purchase_attempt',
+          title: 'Nova tentativa de compra no cartão',
+          occurredAt: payment.created_at,
+          details: [
+            { label: 'Cliente', value: customer },
+            { label: 'Produto', value: payment.product_code },
+            { label: 'Valor', value: `${payment.currency} ${payment.amount.toFixed(2)}` },
+            { label: 'Pagamento', value: payment.id },
+          ],
+        })
+      }
+      return jsonResponse(checkout, 201)
+    }
+
+    if (pathname === '/v1/payments/stripe/checkout') {
+      if (!dependencies.stripePaymentService) {
+        throw new ApiError(503, 'payments_unavailable', 'Pagamento com cartão indisponível.')
+      }
+      const rateLimiter = dependencies.paymentRateLimiter ?? dependencies.deviceRateLimiter
+      const { success } = await rateLimiter.limit({ key: `${user.id}:stripe-checkout-create` })
+      if (!success) throw new ApiError(429, 'rate_limited', 'Aguarde antes de criar outro pagamento.')
+      const { productCode } = await readPixInput(request)
+      const checkout = await dependencies.stripePaymentService.createCheckout(user, productCode, readIdempotencyKey(request))
       return jsonResponse(checkout, 201)
     }
 

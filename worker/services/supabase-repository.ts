@@ -159,20 +159,76 @@ export class SupabaseRepository implements
   PaymentRepository {
   constructor(private readonly client: SupabaseClient) {}
 
-  async getAppMetrics(): Promise<AppMetricsResponse> {
-    const { data, error } = await this.client.rpc('app_metrics')
+  private metricsCache: {
+    expiresAt: number
+    value: AppMetricsResponse
+  } | null = null
+  private metricsRequest: Promise<AppMetricsResponse> | null = null
+  private readonly recentPresence = new Map<string, {
+    activeGames: string
+    recordedAt: number
+  }>()
+  private readonly presenceRequests = new Map<string, Promise<void>>()
 
-    if (error) throwDataError(error)
-    return data as AppMetricsResponse
+  async getAppMetrics(): Promise<AppMetricsResponse> {
+    if (this.metricsCache && this.metricsCache.expiresAt > Date.now()) {
+      return this.metricsCache.value
+    }
+    if (this.metricsRequest) {
+      return this.metricsRequest
+    }
+
+    const request = Promise.resolve(this.client.rpc('app_metrics')).then(({ data, error }) => {
+      if (error) throwDataError(error)
+      const value = data as AppMetricsResponse
+      this.metricsCache = {
+        expiresAt: Date.now() + 90_000,
+        value,
+      }
+      return value
+    }).finally(() => {
+      if (this.metricsRequest === request) {
+        this.metricsRequest = null
+      }
+    })
+
+    this.metricsRequest = request
+    return request
   }
 
   async heartbeatPresence(userId: string, activeGameSlugs: readonly string[] = []): Promise<void> {
-    const { error } = await this.client.rpc('record_presence', {
-      p_user_id: userId,
-      p_active_game_slugs: activeGameSlugs,
-    })
+    const normalizedGames = [...new Set(activeGameSlugs)].sort()
+    const activeGames = normalizedGames.join('\u0000')
+    const previous = this.recentPresence.get(userId)
+    if (
+      previous
+      && previous.activeGames === activeGames
+      && Date.now() - previous.recordedAt < 90_000
+    ) {
+      return
+    }
 
-    if (error) throwDataError(error)
+    const requestKey = `${userId}:${activeGames}`
+    const pending = this.presenceRequests.get(requestKey)
+    if (pending) return pending
+
+    const request = Promise.resolve(this.client.rpc('record_presence', {
+      p_user_id: userId,
+      p_active_game_slugs: normalizedGames,
+    })).then(({ error }) => {
+      if (error) throwDataError(error)
+      this.recentPresence.set(userId, { activeGames, recordedAt: Date.now() })
+      if (this.recentPresence.size > 5_000) {
+        const oldestUserId = this.recentPresence.keys().next().value as string | undefined
+        if (oldestUserId) this.recentPresence.delete(oldestUserId)
+      }
+    }).finally(() => {
+      if (this.presenceRequests.get(requestKey) === request) {
+        this.presenceRequests.delete(requestKey)
+      }
+    })
+    this.presenceRequests.set(requestKey, request)
+    return request
   }
 
   async getProfile(userId: string): Promise<SafeProfile | null> {
@@ -629,6 +685,103 @@ export class SupabaseRepository implements
     )
     if (error) throwDataError(error)
     return data as PaymentRecord
+  }
+
+  async createPendingMercadoPagoCardPayment(
+    userId: string,
+    productCode: string,
+    requestKey: string,
+    processingFeePercent: number,
+  ): Promise<PaymentRecord> {
+    const { data, error } = await this.client.rpc(
+      'create_pending_mercadopago_card_payment',
+      {
+        p_user_id: userId,
+        p_product_code: productCode,
+        p_request_key: requestKey,
+        p_processing_fee_percent: processingFeePercent,
+      },
+    )
+    if (error) throwDataError(error)
+    return data as PaymentRecord
+  }
+
+  async attachMercadoPagoCheckout(
+    userId: string,
+    paymentId: string,
+    preferenceId: string,
+    expiresAt: string,
+    checkoutUrl: string,
+  ): Promise<PaymentRecord> {
+    const { data, error } = await this.client.rpc('attach_mercadopago_checkout', {
+      p_user_id: userId,
+      p_payment_id: paymentId,
+      p_preference_id: preferenceId,
+      p_expires_at: expiresAt,
+      p_checkout_url: checkoutUrl,
+    })
+    if (error) throwDataError(error)
+    return data as PaymentRecord
+  }
+
+  async createPendingStripePayment(
+    userId: string,
+    productCode: string,
+    requestKey: string,
+    processingFeePercent: number,
+  ): Promise<PaymentRecord> {
+    const { data, error } = await this.client.rpc('create_pending_stripe_payment_v2', {
+      p_user_id: userId,
+      p_product_code: productCode,
+      p_request_key: requestKey,
+      p_processing_fee_percent: processingFeePercent,
+    })
+    if (error) throwDataError(error)
+    return data as PaymentRecord
+  }
+
+  async attachStripeCheckout(
+    userId: string,
+    paymentId: string,
+    sessionId: string,
+    expiresAt: string,
+    checkoutUrl: string,
+  ): Promise<PaymentRecord> {
+    const { data, error } = await this.client.rpc('attach_stripe_checkout', {
+      p_user_id: userId,
+      p_payment_id: paymentId,
+      p_checkout_session_id: sessionId,
+      p_expires_at: expiresAt,
+      p_checkout_url: checkoutUrl,
+    })
+    if (error) throwDataError(error)
+    return data as PaymentRecord
+  }
+
+  async processStripeCheckout(input: {
+    sessionId: string
+    paymentId: string
+    status: string
+    amount: number
+    currency: string
+    paidAt: string | null
+    eventId: string
+    payloadHash: string
+    providerData: Json
+  }): Promise<{ payment_id: string; status: string; fulfilled: boolean; duplicate: boolean }> {
+    const { data, error } = await this.client.rpc('process_stripe_checkout', {
+      p_checkout_session_id: input.sessionId,
+      p_external_reference: input.paymentId,
+      p_provider_status: input.status,
+      p_amount: input.amount,
+      p_currency: input.currency,
+      p_paid_at: input.paidAt,
+      p_event_id: input.eventId,
+      p_payload_hash: input.payloadHash,
+      p_provider_data: input.providerData,
+    })
+    if (error) throwDataError(error)
+    return data as { payment_id: string; status: string; fulfilled: boolean; duplicate: boolean }
   }
 
   async attachMercadoPagoPayment(

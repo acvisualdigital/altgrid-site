@@ -348,6 +348,25 @@ export class BackendApi {
     })
   }
 
+  createMercadoPagoCardCheckout(productCode: string): Promise<PixPaymentResponse> {
+    return this.privateRequest<PixPaymentResponse>('/v1/payments/mercadopago/checkout', {
+      body: JSON.stringify({ product_code: productCode }),
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': crypto.randomUUID(),
+      },
+      method: 'POST',
+    })
+  }
+
+  createStripeCheckout(productCode: string): Promise<PixPaymentResponse> {
+    return this.privateRequest<PixPaymentResponse>('/v1/payments/stripe/checkout', {
+      body: JSON.stringify({ product_code: productCode }),
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    })
+  }
+
   getPayment(paymentId: string): Promise<PixPaymentResponse> {
     return this.privateRead<PixPaymentResponse>(
       '/v1/payments/' + encodeURIComponent(paymentId),

@@ -20,6 +20,7 @@ import type {
 import { isAllowedSessionUrl } from './url-policy.js'
 
 const hardenedSessions = new WeakSet<Session>()
+const PARKED_COMPATIBILITY_FRAME_RATE = 10
 const PARKED_INITIAL_COLLECTION_DELAY_MS = 8_000
 const PARKED_COLLECTION_INTERVAL_MS = 5 * 60_000
 let cachedAppMetrics: Electron.ProcessMetric[] | null = null
@@ -123,7 +124,6 @@ export function createNativeSessionViewFactory(
 
     let attached = false
     let destroyed = false
-    let ecoModeEnabled = false
     let frameRateLimit = 0
     let requestedMuted = false
     let requestedZoomFactor = 1
@@ -197,9 +197,13 @@ export function createNativeSessionViewFactory(
 
     const applyBackgroundThrottling = (): void => {
       if (!view.webContents.isDestroyed()) {
-        // Hidden views keep their persistent partition but stop spending
-        // renderer time while another account is on screen.
-        view.webContents.setBackgroundThrottling(ecoModeEnabled || parked)
+        // Chromium's background timer throttling becomes increasingly
+        // aggressive after a page stays hidden for a few minutes. Idle games
+        // use ordinary timers for heartbeats, so throttling those timers can
+        // make the game server terminate an otherwise healthy session. Keep
+        // timers/network alive and reduce only visual work through the rAF
+        // budget below.
+        view.webContents.setBackgroundThrottling(false)
       }
     }
 
@@ -210,10 +214,12 @@ export function createNativeSessionViewFactory(
         // this on-screen WebContentsView and its authenticated state stay alive.
         view.webContents.send(
           SESSION_PRELOAD_CHANNELS.setFrameRateLimit,
-          // A manually hidden/overflow session keeps its network and game
-          // state alive, but one animation frame per second avoids spending
-          // renderer/GPU work on pixels the user cannot see.
-          parked ? 1 : frameRateLimit,
+          // Ten FPS is a compatibility floor for a hidden account without an
+          // explicit FPS preference. It keeps visual work bounded without
+          // starving games that advance part of their state from rAF.
+          parked && frameRateLimit === 0
+            ? PARKED_COMPATIBILITY_FRAME_RATE
+            : frameRateLimit,
         )
       }
     }
@@ -473,9 +479,8 @@ export function createNativeSessionViewFactory(
         }
       },
 
-      setEcoMode(enabled): void {
+      setEcoMode(_enabled): void {
         if (!view.webContents.isDestroyed()) {
-          ecoModeEnabled = enabled
           applyBackgroundThrottling()
         }
       },

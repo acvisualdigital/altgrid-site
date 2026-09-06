@@ -10,7 +10,10 @@ import type {
 } from '../types'
 
 const MERCADO_PAGO_API = 'https://api.mercadopago.com'
+const OWNER_EMAIL = 'yacaciio@gmail.com'
+const OWNER_TEST_PRODUCT = 'PRO_TEST_R1'
 const PRODUCT_CODES = new Set([
+  OWNER_TEST_PRODUCT,
   'PRO_LIFETIME',
   'PRO_PLUS_LIFETIME',
   'PRO_PLUS_UPGRADE',
@@ -28,6 +31,7 @@ interface MercadoPagoOptions {
   accessToken?: string
   webhookSecret?: string
   webhookUrl?: string
+  cardProcessingFeePercent?: string
   fetchImplementation?: Fetch
 }
 
@@ -49,6 +53,11 @@ interface MercadoPagoPaymentBody {
   }
 }
 
+interface MercadoPagoPreferenceBody {
+  id?: string
+  init_point?: string
+}
+
 function configuredSecret(value: string | undefined, name: string): string {
   const normalized = value?.trim()
   if (!normalized) {
@@ -59,6 +68,43 @@ function configuredSecret(value: string | undefined, name: string): string {
     )
   }
   return normalized
+}
+
+function assertProductAvailable(user: SafeUser, productCode: string): void {
+  if (!PRODUCT_CODES.has(productCode)) {
+    throw new ApiError(404, 'product_unavailable', 'Produto indisponível.')
+  }
+  if (
+    productCode === OWNER_TEST_PRODUCT
+    && user.email?.trim().toLowerCase() !== OWNER_EMAIL
+  ) {
+    throw new ApiError(404, 'product_unavailable', 'Produto indisponível.')
+  }
+}
+
+function processingFeePercent(value: string | undefined): number {
+  const parsed = Number(value ?? '20')
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+    throw new ApiError(503, 'payments_unavailable', 'A taxa do pagamento com cartão está inválida.')
+  }
+  return parsed
+}
+
+function mercadoPagoCheckoutUrl(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new ApiError(502, 'payment_provider_error', 'O provedor não retornou um checkout seguro.')
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new ApiError(502, 'payment_provider_error', 'O provedor não retornou um checkout seguro.')
+  }
+  const hostname = parsed.hostname.toLowerCase()
+  if (parsed.protocol !== 'https:' || (hostname !== 'mercadopago.com.br' && !hostname.endsWith('.mercadopago.com.br'))) {
+    throw new ApiError(502, 'payment_provider_error', 'O provedor não retornou um checkout seguro.')
+  }
+  return parsed.toString()
 }
 
 function basePaymentResponse(payment: PaymentRecord): Record<string, unknown> {
@@ -72,6 +118,7 @@ function basePaymentResponse(payment: PaymentRecord): Record<string, unknown> {
 
   return {
     id: payment.id,
+    provider: payment.provider,
     status: payment.status,
     product_code: payment.product_code,
     amount: Number(payment.amount),
@@ -83,6 +130,21 @@ function basePaymentResponse(payment: PaymentRecord): Record<string, unknown> {
     ticket_url: typeof safeCheckout?.ticket_url === 'string'
       ? safeCheckout.ticket_url
       : null,
+    checkout_url: typeof safeCheckout?.checkout_url === 'string'
+      ? safeCheckout.checkout_url
+      : null,
+    base_amount: typeof (payment.metadata as Record<string, Json | undefined>)?.base_amount === 'number'
+      ? (payment.metadata as Record<string, Json>).base_amount
+      : null,
+    processing_fee: typeof (payment.metadata as Record<string, Json | undefined>)?.processing_fee === 'number'
+      ? (payment.metadata as Record<string, Json>).processing_fee
+      : null,
+    processing_fee_percent: typeof (payment.metadata as Record<string, Json | undefined>)?.processing_fee_percent === 'number'
+      ? (payment.metadata as Record<string, Json>).processing_fee_percent
+      : null,
+    payment_method: typeof (payment.metadata as Record<string, Json | undefined>)?.payment_method === 'string'
+      ? (payment.metadata as Record<string, Json>).payment_method
+      : 'pix',
     expires_at: payment.provider_expires_at,
     paid_at: payment.paid_at,
     fulfilled_at: payment.fulfilled_at,
@@ -159,6 +221,46 @@ async function providerJson(response: Response): Promise<MercadoPagoPaymentBody>
   }
 
   return body as MercadoPagoPaymentBody
+}
+
+async function preferenceJson(response: Response): Promise<{ id: string; checkoutUrl: string }> {
+  let body: unknown
+  try {
+    body = await response.json()
+  } catch {
+    throw new ApiError(502, 'payment_provider_error', 'O provedor de pagamento retornou uma resposta inválida.')
+  }
+  if (!response.ok || !body || typeof body !== 'object' || Array.isArray(body)) {
+    const providerError = body && typeof body === 'object' && !Array.isArray(body)
+      ? body as Record<string, unknown>
+      : {}
+    console.error('Mercado Pago rejected checkout preference', {
+      status: response.status,
+      error: typeof providerError.error === 'string' ? providerError.error.slice(0, 120) : null,
+      message: typeof providerError.message === 'string' ? providerError.message.slice(0, 240) : null,
+      cause: Array.isArray(providerError.cause)
+        ? providerError.cause.slice(0, 5).map((entry) => {
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
+            const cause = entry as Record<string, unknown>
+            return {
+              code: typeof cause.code === 'string' || typeof cause.code === 'number'
+                ? String(cause.code).slice(0, 80)
+                : null,
+              description: typeof cause.description === 'string'
+                ? cause.description.slice(0, 240)
+                : null,
+            }
+          })
+        : [],
+    })
+    throw new ApiError(502, 'payment_provider_error', 'Não foi possível preparar o pagamento com cartão.')
+  }
+  const preference = body as MercadoPagoPreferenceBody
+  const id = preference.id?.trim() ?? ''
+  if (!id || id.length > 200) {
+    throw new ApiError(502, 'payment_provider_error', 'O provedor retornou uma preferência inválida.')
+  }
+  return { id, checkoutUrl: mercadoPagoCheckoutUrl(preference.init_point) }
 }
 
 async function providerRequest(
@@ -277,9 +379,7 @@ export class MercadoPagoPaymentService implements PaymentService {
     productCode: string,
     requestKey: string,
   ): Promise<Record<string, unknown>> {
-    if (!PRODUCT_CODES.has(productCode)) {
-      throw new ApiError(404, 'product_unavailable', 'Produto indisponível.')
-    }
+    assertProductAvailable(user, productCode)
     if (!user.email) {
       throw new ApiError(
         409,
@@ -352,6 +452,114 @@ export class MercadoPagoPaymentService implements PaymentService {
       } catch {
         // Preserve the provider error; a stale pending row is still safe and
         // cannot grant access without server-side reconciliation.
+      }
+      throw error
+    }
+  }
+
+  async createCardCheckout(
+    user: SafeUser,
+    productCode: string,
+    requestKey: string,
+  ): Promise<Record<string, unknown>> {
+    assertProductAvailable(user, productCode)
+    if (!user.email) {
+      throw new ApiError(409, 'verified_email_required', 'Confirme um e-mail antes de iniciar o pagamento.')
+    }
+
+    const accessToken = configuredSecret(this.options.accessToken, 'MERCADOPAGO_ACCESS_TOKEN')
+    const feePercent = processingFeePercent(this.options.cardProcessingFeePercent)
+    const localPayment = await this.repository.createPendingMercadoPagoCardPayment(
+      user.id,
+      productCode,
+      requestKey,
+      feePercent,
+    )
+    const existingCheckout = localPayment.metadata && typeof localPayment.metadata === 'object'
+      && !Array.isArray(localPayment.metadata)
+      && localPayment.metadata.checkout && typeof localPayment.metadata.checkout === 'object'
+      && !Array.isArray(localPayment.metadata.checkout)
+      ? localPayment.metadata.checkout as Record<string, Json | undefined>
+      : null
+    if (typeof existingCheckout?.checkout_url === 'string') {
+      mercadoPagoCheckoutUrl(existingCheckout.checkout_url)
+      return { payment: basePaymentResponse(localPayment) }
+    }
+
+    const startsAt = new Date(Date.now() - 60_000).toISOString()
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1_000).toISOString()
+    const metadata = localPayment.metadata && typeof localPayment.metadata === 'object'
+      && !Array.isArray(localPayment.metadata)
+      ? localPayment.metadata as Record<string, Json | undefined>
+      : {}
+    const productName = typeof metadata.product_name === 'string'
+      ? metadata.product_name
+      : productCode
+    const providerBody: Record<string, unknown> = {
+      items: [{
+        id: localPayment.id,
+        title: `AltGrid · ${productName}`,
+        description: 'Licença vitalícia AltGrid',
+        quantity: 1,
+        currency_id: localPayment.currency,
+        unit_price: Number(localPayment.amount),
+      }],
+      payer: { email: user.email },
+      external_reference: localPayment.id,
+      back_urls: {
+        success: 'https://altgrid.com.br/?mercadopago=success',
+        pending: 'https://altgrid.com.br/?mercadopago=pending',
+        failure: 'https://altgrid.com.br/?mercadopago=failure',
+      },
+      auto_return: 'approved',
+      payment_methods: {
+        excluded_payment_types: [
+          { id: 'ticket' },
+          { id: 'atm' },
+          { id: 'bank_transfer' },
+          { id: 'debit_card' },
+          { id: 'prepaid_card' },
+          { id: 'digital_currency' },
+        ],
+        installments: 12,
+      },
+      statement_descriptor: 'ALTGRID',
+      expires: true,
+      expiration_date_from: startsAt,
+      expiration_date_to: expiresAt,
+      metadata: { altgrid_payment_id: localPayment.id, payment_method: 'card' },
+    }
+    if (this.options.webhookUrl?.trim()) providerBody.notification_url = this.options.webhookUrl.trim()
+
+    try {
+      const response = await providerRequest(
+        this.fetchImplementation,
+        `${MERCADO_PAGO_API}/checkout/preferences`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+            'X-Idempotency-Key': localPayment.id,
+          },
+          body: JSON.stringify(providerBody),
+          signal: AbortSignal.timeout(15_000),
+        },
+      )
+      const preference = await preferenceJson(response)
+      const attached = await this.repository.attachMercadoPagoCheckout(
+        user.id,
+        localPayment.id,
+        preference.id,
+        expiresAt,
+        preference.checkoutUrl,
+      )
+      return { payment: basePaymentResponse(attached) }
+    } catch (error) {
+      try {
+        await this.repository.failPendingPayment(user.id, localPayment.id, 'checkout creation failed')
+      } catch {
+        // A cobrança não concede acesso sem a confirmação oficial do provedor.
       }
       throw error
     }
@@ -443,7 +651,8 @@ export class MercadoPagoPaymentService implements PaymentService {
     provider_payment_id: string
   } {
     return Boolean(
-      payment.provider_payment_id
+      payment.provider === 'mercadopago'
+      && payment.provider_payment_id
       && ['pending', 'in_process'].includes(payment.status),
     )
   }

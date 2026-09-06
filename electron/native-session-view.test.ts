@@ -243,7 +243,7 @@ describe('createNativeSessionViewFactory', () => {
     expect(partition.on).toHaveBeenCalledOnce()
   })
 
-  it('throttles hidden views without closing their persistent WebContents', () => {
+  it('limits hidden rendering without throttling game timers or closing the WebContents', () => {
     const { hostWindow } = createHostWindow()
     const factory = createNativeSessionViewFactory(hostWindow, false)
     const nativeView = factory({
@@ -259,17 +259,17 @@ describe('createNativeSessionViewFactory', () => {
     nativeView.setEcoMode(false)
 
     expect(view.webContents.setBackgroundThrottling.mock.calls).toEqual([
-      [true],
-      [true],
-      [true],
-      [true],
+      [false],
+      [false],
+      [false],
+      [false],
     ])
     expect(view.webContents.loadURL).not.toHaveBeenCalled()
     expect(view.webContents.reload).not.toHaveBeenCalled()
     expect(view.webContents.close).not.toHaveBeenCalled()
     expect(view.webContents.send).toHaveBeenLastCalledWith(
       'altgrid:session-preload:set-frame-rate-limit',
-      1,
+      10,
     )
   })
 

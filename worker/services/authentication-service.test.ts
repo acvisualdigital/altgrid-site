@@ -55,4 +55,33 @@ describe('SupabaseAuthenticationService', () => {
       code: 'auth_unavailable',
     })
   })
+
+  it('deduplicates repeated validation of the same access token', async () => {
+    const getUser = vi.fn(async () => ({
+      data: {
+        user: {
+          id: '00000000-0000-4000-8000-000000000010',
+          email: 'cache@example.com',
+          email_confirmed_at: null,
+          created_at: '2026-09-05T10:00:00.000Z',
+          last_sign_in_at: null,
+        },
+      },
+      error: null,
+    }))
+    const client = { auth: { getUser } } as unknown as SupabaseClient<Database>
+    const service = new SupabaseAuthenticationService(client)
+    const request = () => new Request('https://api.example.com/v1/me', {
+      headers: { Authorization: 'Bearer cache-specific-token' },
+    })
+
+    await Promise.all([
+      service.authenticate(request()),
+      service.authenticate(request()),
+      service.authenticate(request()),
+    ])
+    await service.authenticate(request())
+
+    expect(getUser).toHaveBeenCalledTimes(1)
+  })
 })
