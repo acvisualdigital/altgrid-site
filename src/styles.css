@@ -2154,6 +2154,192 @@ form {
   .admin-ad-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* Android plan dialogs: reserve most of the viewport for content and keep
+   prices/actions visible instead of letting oversized cards cover them. */
+@media (max-width: 700px) {
+  .app-frame.is-mobile-session .modal--plans,
+  .app-frame.is-mobile-session .modal--plan-summary {
+    width: 100%;
+    max-width: none;
+    height: min(94dvh, 780px);
+    max-height: 94dvh;
+    padding: 14px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+    overflow: hidden;
+  }
+
+  .app-frame.is-mobile-session .modal--plans > .modal__header {
+    margin-bottom: 8px;
+  }
+
+  .app-frame.is-mobile-session .modal--plans > .modal__header h2 {
+    margin-top: 2px;
+    font-size: 21px;
+  }
+
+  .app-frame.is-mobile-session .modal--plans > .modal__header > p:last-child {
+    display: none;
+  }
+
+  .app-frame.is-mobile-session .plan-lifetime-banner {
+    gap: 8px;
+    margin: 0 0 8px;
+    padding: 8px 9px;
+  }
+
+  .app-frame.is-mobile-session .plan-lifetime-banner > span {
+    width: 24px;
+    height: 24px;
+  }
+
+  .app-frame.is-mobile-session .plan-lifetime-banner strong {
+    font-size: 10.5px;
+  }
+
+  .app-frame.is-mobile-session .plan-lifetime-banner small {
+    font-size: 9px;
+    line-height: 1.3;
+  }
+
+  .app-frame.is-mobile-session .modal--plans > .plan-list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding-right: 2px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: auto;
+  }
+
+  .app-frame.is-mobile-session .plan-option {
+    min-height: 0;
+    padding: 12px;
+    border-radius: 10px;
+  }
+
+  .app-frame.is-mobile-session .plan-option__identity > strong {
+    font-size: 16px;
+  }
+
+  .app-frame.is-mobile-session .plan-option__body {
+    gap: 5px;
+    padding: 9px 0;
+  }
+
+  .app-frame.is-mobile-session .plan-option__capacity {
+    font-size: 11.5px;
+  }
+
+  .app-frame.is-mobile-session .plan-option__summary {
+    min-height: 0;
+    font-size: 9.5px;
+    line-height: 1.35;
+  }
+
+  .app-frame.is-mobile-session .plan-option__features {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 8px;
+    font-size: 9px;
+    line-height: 1.25;
+  }
+
+  .app-frame.is-mobile-session .plan-option__footer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 9px;
+    align-items: stretch;
+    padding-top: 9px;
+  }
+
+  .app-frame.is-mobile-session .plan-option__price b {
+    font-size: 17px;
+  }
+
+  .app-frame.is-mobile-session .plan-option__actions,
+  .app-frame.is-mobile-session .plan-payment-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    justify-content: stretch;
+  }
+
+  .app-frame.is-mobile-session .plan-option__actions > :only-child,
+  .app-frame.is-mobile-session .plan-payment-actions > :only-child {
+    grid-column: 1 / -1;
+  }
+
+  .app-frame.is-mobile-session .plan-option__actions .button,
+  .app-frame.is-mobile-session .plan-payment-actions .button {
+    width: 100%;
+    min-height: 40px;
+    padding: 8px 6px;
+    white-space: normal;
+  }
+
+  .app-frame.is-mobile-session .plan-purchase-note {
+    margin: 7px 0 0;
+    font-size: 8.5px;
+    line-height: 1.3;
+  }
+
+  .app-frame.is-mobile-session .modal--plans > .modal__actions,
+  .app-frame.is-mobile-session .modal--plan-summary > .modal__actions {
+    padding: 9px 0 0;
+    background: #12171f;
+  }
+
+  .app-frame.is-mobile-session .plan-summary-hero {
+    gap: 9px;
+    padding: 5px 2px 11px;
+  }
+
+  .app-frame.is-mobile-session .plan-summary-hero__mark {
+    width: 36px;
+    height: 36px;
+  }
+
+  .app-frame.is-mobile-session .plan-summary-hero h2 {
+    font-size: 19px;
+  }
+
+  .app-frame.is-mobile-session .plan-summary-hero > div > p:last-child,
+  .app-frame.is-mobile-session .current-plan-card__summary,
+  .app-frame.is-mobile-session .current-plan-card__progress {
+    display: none;
+  }
+
+  .app-frame.is-mobile-session .modal--plan-summary .plan-summary__content {
+    padding: 8px 2px 10px 0;
+    overscroll-behavior: contain;
+  }
+
+  .app-frame.is-mobile-session .modal--plan-summary .current-plan-card {
+    padding: 11px 12px;
+  }
+
+  .app-frame.is-mobile-session .modal--plan-summary .current-plan-card__features {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 8px;
+  }
+
+  .app-frame.is-mobile-session .modal--plan-summary .plan-comparison__header > p {
+    display: none;
+  }
+
+  .app-frame.is-mobile-session .modal--plan-summary .plan-summary-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  .app-frame.is-mobile-session .modal--plan-summary .plan-summary-card {
+    min-height: 0;
+    padding: 10px;
+  }
+
+  .app-frame.is-mobile-session .modal--plan-summary .plan-summary-card ul {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .admin-referral-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

@@ -136,8 +136,10 @@ jobs:
         shell: pwsh
         run: |
           $artifact = "release/AltGrid-Android-$($env:ANDROID_VERSION_NAME).apk"
+          $latestArtifact = "release/AltGrid-Android-latest.apk"
           New-Item -ItemType Directory -Force -Path "release" | Out-Null
           Copy-Item -LiteralPath "android/app/build/outputs/apk/release/app-release.apk" -Destination $artifact
+          Copy-Item -LiteralPath $artifact -Destination $latestArtifact
 
       - name: Keep Android package for private review
         if: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish }}
@@ -174,7 +176,8 @@ jobs:
             }
           }
 
-          gh release upload $env:RELEASE_TAG $artifact --repo $releaseRepo --clobber
+          $latestArtifact = "release/AltGrid-Android-latest.apk"
+          gh release upload $env:RELEASE_TAG $artifact $latestArtifact --repo $releaseRepo --clobber
           if ($LASTEXITCODE -ne 0) {
             throw "Não foi possível publicar o APK Android."
           }

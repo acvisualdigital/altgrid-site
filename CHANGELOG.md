@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.5.9 — Android
+
+### Estabilidade das sessões
+
+- Mantém a tela ativa enquanto existirem jogos abertos para impedir que o bloqueio automático suspenda as contas.
+- Mantém prioridade alta nos WebViews das sessões visíveis e ocultas, reduzindo encerramentos feitos pelo Android após uso prolongado.
+- Recupera automaticamente o renderizador de uma sessão sem apagar cookies, login ou dados isolados.
+- Restaura temporizadores e prioridade quando o aplicativo retorna ao primeiro plano.
+
+### Interface móvel
+
+- Compacta as telas **Meu plano** e **Planos AltGrid** para celulares pequenos.
+- Mantém preços, botões de Pix/cartão e ações de fechamento acessíveis.
+- Melhora rolagem, espaçamento, legibilidade e organização dos benefícios.
+
+### Canais de atualização
+
+- Separa os downloads Android e Windows para que hotfixes móveis não interrompam o atualizador do computador.
+
 ## 1.5.5
 
 ### Desempenho e presença

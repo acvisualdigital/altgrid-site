@@ -266,7 +266,7 @@ describe('platform Worker endpoints', () => {
       Assets: [{ Version: '1.5.0' }],
     })
     expect(fetcher).toHaveBeenCalledWith(
-      'https://github.com/acvisualdigital/altgrid-releases/releases/latest/download/releases.win-x64.json',
+      'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.5.8/releases.win-x64.json',
       { headers: { Accept: 'application/json' } },
     )
     expect(authentication.authenticate).not.toHaveBeenCalled()
@@ -276,7 +276,7 @@ describe('platform Worker endpoints', () => {
     ))
     expect(packageResponse.status).toBe(302)
     expect(packageResponse.headers.get('Location')).toBe(
-      'https://github.com/acvisualdigital/altgrid-releases/releases/latest/download/AltGrid-1.5.1-win-x64-full.nupkg',
+      'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.5.8/AltGrid-1.5.1-win-x64-full.nupkg',
     )
 
     const rejected = await updateApi.fetch(new Request(
@@ -318,7 +318,7 @@ describe('platform Worker endpoints', () => {
     expect(response.headers.get('Content-Disposition')).toContain('AltGrid-Android-latest.apk')
     await expect(response.text()).resolves.toBe('apk-bytes')
     expect(fetcher).toHaveBeenCalledWith(
-      'https://github.com/acvisualdigital/altgrid-releases/releases/latest/download/AltGrid-Android-latest.apk',
+      'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.5.9/AltGrid-Android-1.5.9.apk',
       { headers: expect.any(Headers) },
     )
     expect(receivedHeaders).not.toBeNull()

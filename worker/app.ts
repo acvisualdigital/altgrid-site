@@ -79,12 +79,16 @@ interface ApiOptions {
   fetcher?: typeof fetch
 }
 
-const UPDATE_RELEASE_BASE_URL =
-  'https://github.com/acvisualdigital/altgrid-releases/releases/latest/download/'
+// Platform releases can advance independently. Pin Windows to its desktop
+// release so an Android-only hotfix cannot make the Windows feed disappear.
+const WINDOWS_RELEASE_BASE_URL =
+  'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.5.8/'
+const ANDROID_RELEASE_BASE_URL =
+  'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.5.9/'
 const WINDOWS_UPDATE_FEED = 'releases.win-x64.json'
 const WINDOWS_UPDATE_PACKAGE = /^AltGrid-[0-9A-Za-z.+-]+-win-x64-(?:full|delta)\.nupkg$/
 const ANDROID_DOWNLOAD_PATH = '/v1/downloads/android'
-const ANDROID_RELEASE_ASSET = 'AltGrid-Android-latest.apk'
+const ANDROID_RELEASE_ASSET = 'AltGrid-Android-1.5.9.apk'
 
 function normalizedPath(url: string): string {
   const pathname = new URL(url).pathname
@@ -237,7 +241,7 @@ export function createApi(
       const assetName = decodePathSegment(updateAssetMatch[1])
       if (assetName === WINDOWS_UPDATE_FEED) {
         const upstream = await (options.fetcher ?? fetch)(
-          UPDATE_RELEASE_BASE_URL + WINDOWS_UPDATE_FEED,
+          WINDOWS_RELEASE_BASE_URL + WINDOWS_UPDATE_FEED,
           { headers: { Accept: 'application/json' } },
         )
         if (!upstream.ok) {
@@ -257,7 +261,7 @@ export function createApi(
           status: 302,
           headers: {
             'Cache-Control': 'public, max-age=60, s-maxage=60',
-            Location: UPDATE_RELEASE_BASE_URL + encodeURIComponent(assetName),
+            Location: WINDOWS_RELEASE_BASE_URL + encodeURIComponent(assetName),
           },
         })
       }
@@ -273,7 +277,7 @@ export function createApi(
       if (range) upstreamHeaders.set('Range', range)
 
       const upstream = await (options.fetcher ?? fetch)(
-        UPDATE_RELEASE_BASE_URL + ANDROID_RELEASE_ASSET,
+        ANDROID_RELEASE_BASE_URL + ANDROID_RELEASE_ASSET,
         { headers: upstreamHeaders },
       )
       if (!upstream.ok) {

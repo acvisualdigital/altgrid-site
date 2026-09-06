@@ -12,6 +12,7 @@ import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
+import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebChromeClient;
@@ -102,11 +103,14 @@ public class GameActivity extends BridgeActivity {
         final String accountId;
         final String title;
         final FrameLayout container;
-        final WebView webView;
+        WebView webView;
         final List<WebView> popupViews = new ArrayList<>();
         boolean documentStartViewportInstalled;
         boolean terminalStatusEmitted;
         boolean visible;
+        String lastUrl;
+        int rendererRecoveryAttempts;
+        long rendererRecoveryWindowStartedAt;
         int lastHeight = -1;
         int lastLeft = Integer.MIN_VALUE;
         int lastRendererPriority = -1;
@@ -123,6 +127,7 @@ public class GameActivity extends BridgeActivity {
             this.title = title;
             this.container = container;
             this.webView = webView;
+            this.lastUrl = null;
         }
     }
 
@@ -337,6 +342,7 @@ public class GameActivity extends BridgeActivity {
         }
         sessions.clear();
         latestLayout.clear();
+        updateKeepScreenAwake();
 
         synchronized (SESSION_LOCK) {
             if (activeActivity.get() == this) {
@@ -373,8 +379,10 @@ public class GameActivity extends BridgeActivity {
             container.setClickable(false);
             sessionStage.addView(container, matchParentLayout());
             sessions.put(accountId, session);
+            updateKeepScreenAwake();
 
             applySessionLayout(session, latestLayout.get(accountId));
+            session.lastUrl = url;
             webView.loadUrl(url);
             completeOpen(accountId, null);
         } catch (RuntimeException error) {
@@ -402,7 +410,35 @@ public class GameActivity extends BridgeActivity {
 
         emitTerminalStatus(session, "closed", reason);
         destroySessionViews(session, true);
+        updateKeepScreenAwake();
         completed.run();
+    }
+
+    /** Keep active games in the foreground instead of allowing screen timeout
+     * to suspend their JavaScript timers and disconnect their sessions. */
+    private void updateKeepScreenAwake() {
+        if (sessions.isEmpty()) {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            if (sessionStage != null) {
+                sessionStage.setKeepScreenOn(false);
+            }
+            return;
+        }
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        if (sessionStage != null) {
+            sessionStage.setKeepScreenOn(true);
+        }
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        updateKeepScreenAwake();
+        for (GameSession session : sessions.values()) {
+            session.webView.onResume();
+            session.webView.resumeTimers();
+            updateRendererPriority(session, session.visible);
+        }
     }
 
     private void attachSessionStage() {
@@ -524,9 +560,11 @@ public class GameActivity extends BridgeActivity {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             return;
         }
-        int priority = visible
-            ? WebView.RENDERER_PRIORITY_IMPORTANT
-            : WebView.RENDERER_PRIORITY_BOUND;
+        // Every open account is a live game even when its surface is temporarily
+        // hidden by navigation or pagination. BOUND allowed Android to reclaim
+        // those renderers after a few minutes, which looked like an account
+        // restart. Keep all live sessions IMPORTANT and never waive priority.
+        int priority = WebView.RENDERER_PRIORITY_IMPORTANT;
         if (session.lastRendererPriority == priority) {
             return;
         }
@@ -661,6 +699,11 @@ public class GameActivity extends BridgeActivity {
 
             @Override
             public void onPageFinished(WebView current, String url) {
+                if (!popup && current == session.webView) {
+                    session.lastUrl = url;
+                    session.rendererRecoveryAttempts = 0;
+                    session.rendererRecoveryWindowStartedAt = 0;
+                }
                 if (!popup
                     && current == session.webView
                     && !session.documentStartViewportInstalled) {
@@ -685,18 +728,52 @@ public class GameActivity extends BridgeActivity {
                     return true;
                 }
                 String reason = detail.didCrash() ? "renderer_crash" : "renderer_killed";
-                emitTerminalStatus(session, "crashed", reason);
-                AltGridMobilePlugin.emitSessionStatus(session.accountId, "closed", reason);
-                sessions.remove(session.accountId);
-                latestLayout.remove(session.accountId);
-                completeOpen(
-                    session.accountId,
-                    "O processo gráfico da sessão Android foi encerrado."
-                );
-                destroySessionViews(session, false);
+                recoverSessionRenderer(session, current, reason);
                 return true;
             }
         });
+    }
+
+    private void recoverSessionRenderer(GameSession session, WebView failedView, String reason) {
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (session.rendererRecoveryWindowStartedAt == 0
+            || now - session.rendererRecoveryWindowStartedAt > 120_000L) {
+            session.rendererRecoveryWindowStartedAt = now;
+            session.rendererRecoveryAttempts = 0;
+        }
+        session.rendererRecoveryAttempts += 1;
+        String recoveryUrl = session.lastUrl;
+        if (!isAllowedUrl(recoveryUrl) || session.rendererRecoveryAttempts > 3) {
+            finishFailedSession(session, failedView, reason);
+            return;
+        }
+
+        Log.w(TAG, "Recovering game renderer for " + session.accountId + ": " + reason);
+        AltGridMobilePlugin.emitSessionStatus(session.accountId, "opening", "renderer_recovery");
+        try {
+            detachAndDestroy(failedView, false);
+            WebView replacement = new WebView(this);
+            assignIsolatedProfile(replacement, session.accountId);
+            session.webView = replacement;
+            configureWebView(replacement, session, false);
+            session.documentStartViewportInstalled = installMobileViewportPolicy(replacement);
+            session.container.addView(replacement, 0, matchParentLayout());
+            updateRendererPriority(session, session.visible);
+            replacement.loadUrl(recoveryUrl);
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Unable to recover the Android game renderer.", error);
+            finishFailedSession(session, session.webView, "renderer_recovery_failed");
+        }
+    }
+
+    private void finishFailedSession(GameSession session, WebView failedView, String reason) {
+        emitTerminalStatus(session, "crashed", reason);
+        AltGridMobilePlugin.emitSessionStatus(session.accountId, "closed", reason);
+        sessions.remove(session.accountId);
+        latestLayout.remove(session.accountId);
+        completeOpen(session.accountId, "O processo gráfico da sessão Android foi encerrado.");
+        destroySessionViews(session, false);
+        updateKeepScreenAwake();
     }
 
     private void closePopup(GameSession session, WebView popup, boolean stopLoading) {
