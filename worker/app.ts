@@ -82,13 +82,13 @@ interface ApiOptions {
 // Platform releases can advance independently. Pin Windows to its desktop
 // release so an Android-only hotfix cannot make the Windows feed disappear.
 const WINDOWS_RELEASE_BASE_URL =
-  'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.5.8/'
+  'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.6.0/'
 const ANDROID_RELEASE_BASE_URL =
-  'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.5.11/'
+  'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.6.0/'
 const WINDOWS_UPDATE_FEED = 'releases.win-x64.json'
 const WINDOWS_UPDATE_PACKAGE = /^AltGrid-[0-9A-Za-z.+-]+-win-x64-(?:full|delta)\.nupkg$/
 const ANDROID_DOWNLOAD_PATH = '/v1/downloads/android'
-const ANDROID_RELEASE_ASSET = 'AltGrid-Android-1.5.11.apk'
+const ANDROID_RELEASE_ASSET = 'AltGrid-Android-1.6.0.apk'
 
 function normalizedPath(url: string): string {
   const pathname = new URL(url).pathname

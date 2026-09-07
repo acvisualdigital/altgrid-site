@@ -429,6 +429,8 @@ h1, h2, h3, p { margin-top: 0; }
 .proxy-demo b { margin-left: auto; color: var(--green); font: 800 .6rem Consolas,monospace; }
 .extension-demo { display: flex; gap: 7px; margin-top: auto; }
 .extension-demo span,.extension-demo i { display: grid; place-items: center; width: 48px; height: 45px; color: var(--green); border: 1px solid rgba(76,255,143,.2); border-radius: 9px; background: rgba(37,230,111,.06); font: 800 .57rem Consolas,monospace; font-style: normal; }
+.platform-demo { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; margin-top: auto; }
+.platform-demo span { display: grid; place-items: center; min-height: 45px; color: var(--green); border: 1px solid rgba(76,255,143,.2); border-radius: 9px; background: rgba(37,230,111,.06); font: 800 .57rem Consolas,monospace; }
 
 .control-section { padding: 135px 0; border-block: 1px solid var(--line); background: radial-gradient(circle at 75% 50%,rgba(37,230,111,.08),transparent 34%),rgba(8,15,11,.82); }
 .control-grid { display: grid; grid-template-columns: .78fr 1.22fr; gap: clamp(55px,7vw,110px); align-items: center; }
@@ -486,6 +488,8 @@ h1, h2, h3, p { margin-top: 0; }
 .hero-platform-pair .button > span:last-child,.download-platform-pair .button > span:last-child { min-width: 0; }
 .hero-platform-pair .button strong,.hero-platform-pair .button small,.download-platform-pair .button strong,.download-platform-pair .button small { overflow-wrap: anywhere; }
 .download-notice { color: var(--quiet); font-size: .67rem; line-height: 1.55; text-align: center; }
+.download-linux { border-color: rgba(255, 190, 91, .26) !important; }
+.download-linux .button-icon { color: #ffd38a; }
 
 .mac-download-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin-top: 28px; }
 .mac-download-card { display: grid; grid-template-columns: 46px minmax(0,1fr); gap: 6px 14px; align-items: center; min-width: 0; padding: 20px; color: var(--text); border: 1px solid var(--line); border-radius: 15px; background: linear-gradient(145deg,rgba(18,32,25,.94),rgba(9,17,13,.96)); box-shadow: 0 18px 40px rgba(0,0,0,.16); transition: transform .2s,border-color .2s,box-shadow .2s; }
@@ -546,6 +550,30 @@ h1, h2, h3, p { margin-top: 0; }
   .mac-download-grid { grid-template-columns: 1fr; }
   .mac-download-card { width: 100%; padding: 17px; }
   .mac-help-steps { grid-template-columns: 1fr; }
+}
+
+/* Multiplatform downloads: keep labels readable on notebook and phone widths. */
+.hero-v15 .hero-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(28px, 4vw, 64px); }
+.hero-v15 h1 { font-size: clamp(3rem, 5.5vw, 6rem); }
+.hero-v15 .hero-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
+.hero-platform-pair { width: 100%; }
+.hero-v15 .hero-actions .button { min-width: 0; padding-block: 14px; }
+.hero-platform-pair .button small, .download-platform-pair .button small { font-size: .875rem; line-height: 1.45; }
+.download-spotlight { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; padding: clamp(24px, 4vw, 48px); }
+.download-spotlight-actions .button { height: auto; padding-block: 16px; white-space: normal; }
+.download-spotlight h2 { font-size: clamp(2.5rem, 5vw, 4.5rem); }
+.plans-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.plans-v15 .plan-card { min-width: 0; padding: 22px; }
+@media (max-width: 1100px) {
+  .hero-v15 .hero-grid, .download-spotlight { grid-template-columns: minmax(0, 1fr); }
+  .hero-v15 .hero-media { margin-top: 72px; }
+  .plans-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 580px) {
+  .plans-grid { grid-template-columns: minmax(0, 1fr); }
+  .hero-v15 .hero-media { margin-top: 0; }
+  .hero-platform-pair, .download-platform-pair { grid-template-columns: minmax(0, 1fr); }
+  .hero-v15 .hero-actions .button { width: 100%; }
 }
 
 /* AI contribution landing page */

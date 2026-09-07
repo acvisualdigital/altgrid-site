@@ -27,7 +27,7 @@
     "FIREBASE_PROJECT_ID": "altgrid-d0504",
     "LICENSE_KEY_ID": "altgrid-license-v1",
     "MERCADOPAGO_CARD_FEE_PERCENT": "20",
-    "STRIPE_TEST_MODE": "true",
+    "STRIPE_TEST_MODE": "false",
     "STRIPE_PROCESSING_FEE_PERCENT": "20",
     "WHATSAPP_GRAPH_API_VERSION": "v23.0",
     "WHATSAPP_TEMPLATE_NAME": "altgrid_admin_alert",
