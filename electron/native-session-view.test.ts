@@ -269,7 +269,7 @@ describe('createNativeSessionViewFactory', () => {
     expect(view.webContents.close).not.toHaveBeenCalled()
     expect(view.webContents.send).toHaveBeenLastCalledWith(
       'altgrid:session-preload:set-frame-rate-limit',
-      10,
+      2,
     )
   })
 
@@ -572,12 +572,25 @@ describe('createNativeSessionViewFactory', () => {
       24,
     )
 
+    nativeView.setVisible(false)
+    nativeView.setFrameRateLimit(60)
+    expect(view.webContents.send).toHaveBeenLastCalledWith(
+      'altgrid:session-preload:set-frame-rate-limit',
+      2,
+    )
+
+    nativeView.setVisible(true)
+    expect(view.webContents.send).toHaveBeenLastCalledWith(
+      'altgrid:session-preload:set-frame-rate-limit',
+      60,
+    )
+
     view.handlers.get('did-finish-load')?.()
     expect(view.webContents.send).toHaveBeenLastCalledWith(
       'altgrid:session-preload:set-frame-rate-limit',
-      24,
+      60,
     )
-    expect(view.webContents.send).toHaveBeenCalledTimes(3)
+    expect(view.webContents.send).toHaveBeenCalledTimes(6)
     expect('setFrameRate' in view.webContents).toBe(false)
   })
 

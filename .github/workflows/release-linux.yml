@@ -1,0 +1,64 @@
+name: Release Linux
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        required: true
+        type: string
+      publish:
+        required: true
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      ALTGRID_API_BASE_URL: ${{ vars.ALTGRID_API_BASE_URL }}
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      LICENSE_PUBLIC_KEY: ${{ secrets.LICENSE_PUBLIC_KEY }}
+      LICENSE_KEY_ID: ${{ vars.LICENSE_KEY_ID }}
+      RELEASE_TAG: v${{ inputs.version }}
+      ALTGRID_LINUX_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm release:preflight && pnpm test:run
+      - run: pnpm linux:build
+      - name: Verify package contents
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          dpkg-deb --info "release/linux/AltGrid-linux-${ALTGRID_LINUX_ARCH}-${VERSION}.deb"
+          test -s "release/linux/AltGrid-linux-${ALTGRID_LINUX_ARCH}-${VERSION}.AppImage"
+          dpkg-deb -x "release/linux/AltGrid-linux-${ALTGRID_LINUX_ARCH}-${VERSION}.deb" "$RUNNER_TEMP/altgrid-smoke"
+          ELECTRON_RUN_AS_NODE=1 "$RUNNER_TEMP/altgrid-smoke/opt/AltGrid/altgrid" -e 'console.log(process.platform,process.arch)'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AltGrid-Linux-${{ matrix.arch }}-${{ inputs.version }}
+          path: release/linux/*
+          if-no-files-found: error
+      - name: Upload to release
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ secrets.ALTGRID_RELEASES_TOKEN }}
+        run: gh release upload "$RELEASE_TAG" release/linux/* --repo acvisualdigital/altgrid-releases

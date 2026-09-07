@@ -20,7 +20,10 @@ import type {
 import { isAllowedSessionUrl } from './url-policy.js'
 
 const hardenedSessions = new WeakSet<Session>()
-const PARKED_COMPATIBILITY_FRAME_RATE = 10
+// Parked views keep their network/timer lifecycle alive, but should almost
+// never redraw. Two FPS is enough for lightweight idle-game effects while
+// avoiding a hidden renderer competing with the focused account.
+const PARKED_COMPATIBILITY_FRAME_RATE = 2
 const PARKED_INITIAL_COLLECTION_DELAY_MS = 8_000
 const PARKED_COLLECTION_INTERVAL_MS = 5 * 60_000
 let cachedAppMetrics: Electron.ProcessMetric[] | null = null
@@ -214,11 +217,14 @@ export function createNativeSessionViewFactory(
         // this on-screen WebContentsView and its authenticated state stay alive.
         view.webContents.send(
           SESSION_PRELOAD_CHANNELS.setFrameRateLimit,
-          // Ten FPS is a compatibility floor for a hidden account without an
-          // explicit FPS preference. It keeps visual work bounded without
-          // starving games that advance part of their state from rAF.
-          parked && frameRateLimit === 0
-            ? PARKED_COMPATIBILITY_FRAME_RATE
+          // A parked account must be capped even when the user configured a
+          // higher per-account FPS. Previously an explicit 30/60 FPS setting
+          // bypassed the rest-mode budget and kept the hidden renderer busy.
+          parked
+            ? Math.min(
+              frameRateLimit > 0 ? frameRateLimit : PARKED_COMPATIBILITY_FRAME_RATE,
+              PARKED_COMPATIBILITY_FRAME_RATE,
+            )
             : frameRateLimit,
         )
       }

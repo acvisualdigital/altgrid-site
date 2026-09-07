@@ -8044,7 +8044,8 @@ export class AuthApp {
     this.root.querySelectorAll<HTMLButtonElement>('[data-buy-card]').forEach((button) => {
       this.bindButtonOnce(button, () => {
         const productCode = button.dataset.buyCard
-        if (productCode) void this.createMercadoPagoCardPayment(productCode, button)
+        // Cartão agora usa o checkout Stripe; o Mercado Pago permanece reservado ao Pix.
+        if (productCode) void this.createStripePayment(productCode, button)
       })
     })
 
