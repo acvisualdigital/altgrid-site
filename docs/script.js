@@ -145,6 +145,7 @@ const applyLatestRelease = async () => {
       document.querySelectorAll('.current-version-short').forEach((element) => {
         element.textContent = releaseVersion
       })
+      window.AltGridI18n?.apply(window.AltGridI18n.getLanguage())
     }
   } catch (error) {
     console.info('AltGrid: usando links de download estáveis.', error)
@@ -159,7 +160,8 @@ const applyPublicMetrics = async () => {
     if (!response.ok) throw new Error(`Metrics API returned ${response.status}`)
 
     const metrics = await response.json()
-    const numberFormat = new Intl.NumberFormat('pt-BR')
+    const language = window.AltGridI18n?.getLanguage() || 'pt'
+    const numberFormat = new Intl.NumberFormat(language === 'pt' ? 'pt-BR' : language)
     const activeUsers = Number(metrics?.users?.active)
     const totalUsers = Number(metrics?.users?.total)
 

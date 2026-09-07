@@ -2,12 +2,18 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4'
 
 const config = window.ALTGRID_SITE_CONFIG ?? {}
 const targets = document.querySelectorAll('[data-total-visitors]')
-const format = new Intl.NumberFormat('pt-BR')
+let lastTotal = 1
 const render = (value) => {
   const total = Math.max(1, Number(value) || 1)
+  lastTotal = total
+  const language = window.AltGridI18n?.getLanguage() || 'pt'
+  const format = new Intl.NumberFormat(language === 'pt' ? 'pt-BR' : language)
   targets.forEach((target) => { target.textContent = format.format(total) })
-  document.querySelectorAll('[data-visitor-word]').forEach((target) => { target.textContent = total === 1 ? target.dataset.singular : target.dataset.plural })
+  const words = { pt: ['visitante', 'visitantes'], en: ['visitor', 'visitors'], es: ['visitante', 'visitantes'] }
+  document.querySelectorAll('[data-visitor-word]').forEach((target) => { target.textContent = words[language][total === 1 ? 0 : 1] })
 }
+
+window.addEventListener('altgrid:languagechange', () => render(lastTotal))
 
 render(localStorage.getItem('altgrid.site.last-visitor-count.v1') || 1)
 
