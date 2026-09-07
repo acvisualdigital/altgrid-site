@@ -234,6 +234,13 @@ public class GameActivity extends BridgeActivity {
         return true;
     }
 
+    static boolean hasActiveSessions() {
+        synchronized (SESSION_LOCK) {
+            GameActivity activity = trackedActivityLocked();
+            return activity != null && !activity.sessions.isEmpty();
+        }
+    }
+
     public static boolean reload(String requestedAccountId) {
         GameActivity activity;
         synchronized (SESSION_LOCK) {
@@ -564,9 +571,10 @@ public class GameActivity extends BridgeActivity {
         // entire host app when a third memory-heavy game opens. The visible game
         // remains IMPORTANT; hidden live sessions stay BOUND and are never
         // waived, preserving their state without starving the host process.
-        int priority = visible
-            ? WebView.RENDERER_PRIORITY_IMPORTANT
-            : WebView.RENDERER_PRIORITY_BOUND;
+        // Hidden sessions are still live game sessions. Keeping their renderer
+        // important prevents Android WebView from reclaiming it after a period
+        // without visual focus, which otherwise disconnects the game account.
+        int priority = WebView.RENDERER_PRIORITY_IMPORTANT;
         if (session.lastRendererPriority == priority) {
             return;
         }

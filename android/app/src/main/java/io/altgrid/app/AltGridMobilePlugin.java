@@ -7,6 +7,9 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import android.content.Intent;
+import android.os.Build;
+
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -96,7 +99,10 @@ public class AltGridMobilePlugin extends Plugin {
         }
 
         runOnUiThread(call, () -> {
-            if (!GameActivity.close(accountId, () -> call.resolve(new JSObject()))) {
+            if (!GameActivity.close(accountId, () -> {
+                call.resolve(new JSObject());
+                stopKeepAliveIfIdle();
+            })) {
                 call.reject("Não foi possível fechar a sessão Android.");
             }
         });
@@ -252,6 +258,7 @@ public class AltGridMobilePlugin extends Plugin {
                     }
                     return;
                 }
+                startKeepAlive();
                 if (reservation == GameActivity.OPEN_EXISTING) {
                     call.resolve(new JSObject());
                 }
@@ -266,6 +273,29 @@ public class AltGridMobilePlugin extends Plugin {
                 }
             }
         });
+    }
+
+    private void startKeepAlive() {
+        try {
+            Intent intent = new Intent(getContext(), SessionKeepAliveService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                getContext().startForegroundService(intent);
+            } else {
+                getContext().startService(intent);
+            }
+        } catch (RuntimeException ignored) {
+            // The sessions remain usable if the device disallows a foreground service.
+        }
+    }
+
+    private void stopKeepAliveIfIdle() {
+        if (!GameActivity.hasActiveSessions()) {
+            try {
+                getContext().stopService(new Intent(getContext(), SessionKeepAliveService.class));
+            } catch (RuntimeException ignored) {
+                // Activity teardown may race service cleanup.
+            }
+        }
     }
 
     private static boolean isValidLayoutNumber(double value) {
