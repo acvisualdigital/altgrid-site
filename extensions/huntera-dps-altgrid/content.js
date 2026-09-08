@@ -1,9 +1,17 @@
 (function () {
   'use strict'
-  const VERSION = '1.0.0'
+  if (window.__altgridDpsUi) return
+  window.__altgridDpsUi = true
+  const VERSION = '1.0.1'
   const UI_KEY = 'altgrid.dps.ui.v1'
   const ui = Object.assign({ collapsed: false, left: null, top: null }, loadUi())
   const colors = { sorcerer: '#ef7777', druid: '#58d889', paladin: '#f3c75f', knight: '#8fb8e8' }
+  const rows = new Map()
+  let lastSnapshot = null
+  function syncUiState() {
+    window.postMessage({ __altgridDpsCommand: 'ui-state', suspended: ui.collapsed || document.hidden }, '*')
+    if (!ui.collapsed && !document.hidden && lastSnapshot) render(lastSnapshot)
+  }
 
   function loadUi() {
     try { return JSON.parse(localStorage.getItem(UI_KEY)) || {} } catch { return {} }
@@ -21,24 +29,62 @@
     const seconds = Math.floor(ms / 1000)
     return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
   }
-  function render(party) {
+  function setText(element, value) {
+    if (element.textContent !== value) element.textContent = value
+  }
+  function render(snapshot) {
+    if (ui.collapsed || document.hidden) return
+    const party = snapshot.party
     const list = document.getElementById('altgrid-dps-list')
     const footer = document.getElementById('altgrid-dps-footer')
     if (!list || !footer) return
+    const warning = snapshot.incomplete ? 'Medição parcial por sobrecarga · zere para reiniciar. ' : ''
     if (!party || !party.rows.length) {
-      list.innerHTML = '<div class="altgrid-dps-empty">Aguardando combate…</div>'
-      footer.textContent = 'Entre em uma hunt para iniciar'
+      if (rows.size || !list.querySelector('.altgrid-dps-empty')) {
+        list.innerHTML = '<div class="altgrid-dps-empty">Aguardando combate…</div>'
+        rows.clear()
+      }
+      setText(footer, warning || 'Entre em uma hunt para iniciar')
       return
     }
-    list.innerHTML = party.rows.map((row) => {
+    list.querySelector('.altgrid-dps-empty')?.remove()
+    const visible = new Set()
+    party.rows.forEach((row, index) => {
+      const key = String(row.id ?? row.name)
+      visible.add(key)
+      let elements = rows.get(key)
+      if (!elements) {
+        const node = document.createElement('div')
+        node.className = 'altgrid-dps-row'
+        node.innerHTML = '<div class="altgrid-dps-name"></div><div class="altgrid-dps-bar"><span></span></div><div class="altgrid-dps-value"><b></b><small></small></div>'
+        elements = { node, name: node.querySelector('.altgrid-dps-name'), bar: node.querySelector('.altgrid-dps-bar span'), damage: node.querySelector('.altgrid-dps-value b'), detail: node.querySelector('.altgrid-dps-value small') }
+        rows.set(key, elements)
+      }
       const percentage = Math.round(row.share * 100)
       const color = colors[row.voc] || '#a7b5c4'
-      return `<div class="altgrid-dps-row"><div class="altgrid-dps-name" style="color:${color}" title="${escapeHtml(row.voc || '')}">${escapeHtml(row.name)}</div><div class="altgrid-dps-bar"><span style="width:${percentage}%;background:${color}"></span></div><div class="altgrid-dps-value">${number(row.dmg)}<small>${percentage}% · ${number(row.dps)}/s${row.taken > 0 ? ` · <i>-${number(row.taken)}</i>` : ''}</small></div></div>`
-    }).join('')
-    footer.textContent = `${duration(party.ms)} · total ${number(party.total)} · grupo ${number(party.dps)}/s`
+      setText(elements.name, String(row.name ?? ''))
+      setText(elements.damage, number(row.dmg))
+      setText(elements.detail, `${percentage}% · ${number(row.dps)}/s${row.taken > 0 ? ` · -${number(row.taken)}` : ''}`)
+      if (elements.name.dataset.vocation !== String(row.voc ?? '')) {
+        elements.name.dataset.vocation = String(row.voc ?? '')
+        elements.name.title = String(row.voc ?? '')
+        elements.name.style.color = color
+        elements.bar.style.background = color
+      }
+      const width = `${percentage}%`
+      if (elements.bar.style.width !== width) elements.bar.style.width = width
+      if (list.children[index] !== elements.node) list.insertBefore(elements.node, list.children[index] ?? null)
+    })
+    for (const [key, elements] of rows) {
+      if (!visible.has(key)) { elements.node.remove(); rows.delete(key) }
+    }
+    setText(footer, `${warning}${duration(party.ms)} · total ${number(party.total)} · grupo ${number(party.dps)}/s`)
   }
   window.addEventListener('message', (event) => {
-    if (event.source === window && event.data?.__altgridDps) render(event.data.party)
+    if (event.source === window && event.data?.__altgridDps) {
+      lastSnapshot = event.data
+      render(lastSnapshot)
+    }
   })
   function build() {
     if (document.getElementById('altgrid-dps-panel')) return
@@ -98,6 +144,7 @@
         ui.collapsed = !ui.collapsed
         body.hidden = ui.collapsed
         saveUi()
+        syncUiState()
       }
     }
     header.addEventListener('pointerup', finishDrag)
@@ -113,7 +160,9 @@
     panel.querySelector('#altgrid-dps-reset').addEventListener('click', () => {
       window.postMessage({ __altgridDpsCommand: 'reset' }, '*')
     })
+    syncUiState()
   }
+  document.addEventListener('visibilitychange', syncUiState)
   if (document.body) build()
   else window.addEventListener('DOMContentLoaded', build, { once: true })
 })()

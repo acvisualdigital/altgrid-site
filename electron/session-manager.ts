@@ -253,7 +253,9 @@ export class SessionManager {
     }
 
     this.appBackgrounded = backgrounded
-    this.refreshFrameRateBudgets()
+    // Leaving the background must also restore Auto/manual FPS when Eco is
+    // off; a normal budget refresh otherwise skips this foreground state.
+    this.refreshFrameRateBudgets(true)
   }
 
   async createSession(
@@ -729,8 +731,8 @@ export class SessionManager {
     return record.interfaceZoom ?? computeAutoFitZoom(record.bounds.width)
   }
 
-  private refreshFrameRateBudgets(): void {
-    if (!this.ecoModeEnabled && !this.appBackgrounded) {
+  private refreshFrameRateBudgets(force = false): void {
+    if (!force && !this.ecoModeEnabled && !this.appBackgrounded) {
       return
     }
     for (const record of this.records.values()) {

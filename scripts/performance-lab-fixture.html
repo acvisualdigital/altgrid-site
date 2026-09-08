@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>AltGrid synthetic canvas performance fixture</title>
+<style>html,body{margin:0;background:#071b19;color:#ecfff3;font:13px sans-serif;overflow:hidden}canvas{width:100vw;height:100vh}label{position:fixed;top:8px;left:8px;background:#000b;padding:8px;pointer-events:none}</style>
+<canvas width="1280" height="720"></canvas><label></label>
+<script>
+const accountId = new URL(location.href).searchParams.get('id')
+const timerRender = new URL(location.href).searchParams.get('timer') === '1'
+const canvas = document.querySelector('canvas')
+const context = canvas.getContext('2d', { alpha: false })
+const label = document.querySelector('label')
+const stats = globalThis.labStats = { frames: 0, timerFrames: 0, timerTicks: 0, receivedEvents: 0, sentHeartbeats: 0, heartbeatErrors: 0, maxHeartbeatGapMs: 0, maxFrameGapMs: 0 }
+// A fixed, touched backing store models session-owned resources without an
+// artificial leak. Transient frame allocations deliberately remain collectible.
+const resources = globalThis.labResources = new Uint8Array(24 * 1024 * 1024)
+resources.fill(17)
+const particles = Array.from({ length: 1800 }, (_, i) => ({ x: i * 29 % 1280, y: i * 17 % 720, color: `hsl(${i * 7 % 360} 75% 55%)`, phase: i * 0.007 }))
+let previousFrame = 0
+let previousHeartbeat = 0
+let lastLabel = 0
+function render(timestamp) {
+  context.fillStyle = '#071b19'
+  context.fillRect(0, 0, 1280, 720)
+  const transient = new Float32Array(12000)
+  for (let i = 0; i < particles.length; i++) {
+    const particle = particles[i]
+    const oscillation = Math.sin(timestamp * 0.001 + particle.phase)
+    transient[i] = oscillation
+    context.fillStyle = particle.color
+    context.fillRect((particle.x + timestamp * 0.018) % 1280, particle.y + oscillation * 18, 7, 7)
+  }
+  if (timestamp - lastLabel > 1000) {
+    label.textContent = `${accountId} | frames ${stats.frames} | timer ${stats.timerTicks} | heartbeat ${stats.sentHeartbeats} | ${document.visibilityState}`
+    lastLabel = timestamp
+  }
+}
+function frame(timestamp) {
+  if (previousFrame) stats.maxFrameGapMs = Math.max(stats.maxFrameGapMs, timestamp - previousFrame)
+  previousFrame = timestamp
+  stats.frames++
+  render(timestamp)
+  requestAnimationFrame(frame)
+}
+requestAnimationFrame(frame)
+if (timerRender) setInterval(() => { stats.timerFrames++; render(performance.now()) }, 16)
+setInterval(() => { stats.timerTicks++ }, 50)
+setInterval(async () => {
+  const now = performance.now()
+  if (previousHeartbeat) stats.maxHeartbeatGapMs = Math.max(stats.maxHeartbeatGapMs, now - previousHeartbeat)
+  previousHeartbeat = now
+  try {
+    const response = await fetch(`/heartbeat?id=${encodeURIComponent(accountId)}`, { cache: 'no-store' })
+    if (!response.ok) throw new Error(response.status)
+    stats.sentHeartbeats++
+  } catch { stats.heartbeatErrors++ }
+}, 1000)
+const stream = new EventSource(`/events?id=${encodeURIComponent(accountId)}`)
+stream.onmessage = () => { stats.receivedEvents++ }
+</script>

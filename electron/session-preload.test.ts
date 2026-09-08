@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 type IpcListener = (event: unknown, frameRate: unknown) => void
+declare function requestAnimationFrame(callback: (timestamp: number) => void): number
+declare function cancelAnimationFrame(handle: number): void
 
 const electronMocks = vi.hoisted(() => ({
   exposeInIsolatedWorld: vi.fn(),
@@ -94,6 +96,65 @@ describe('session frame-budget preload', () => {
       performanceNow.mockRestore()
       delete (globalThis as typeof globalThis & { __altgridFrameBudget?: unknown })
         .__altgridFrameBudget
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it('honors cancellation inside a frame and keeps new callbacks for the next frame', () => {
+    const frames: Array<(time: number) => void> = []
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback) => frames.push(callback)))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    try {
+      electronMocks.listeners.get('altgrid:session-preload:set-frame-rate-limit')?.(null, 0)
+      const install = electronMocks.executeInMainWorld.mock.calls[0]![0].func
+      install(0)
+      const canceled = vi.fn()
+      const next = vi.fn()
+      let canceledId = 0
+      requestAnimationFrame(() => {
+        cancelAnimationFrame(canceledId)
+        requestAnimationFrame(next)
+      })
+      canceledId = requestAnimationFrame(canceled)
+      frames.shift()?.(1_000)
+      expect(canceled).not.toHaveBeenCalled()
+      expect(next).not.toHaveBeenCalled()
+      frames.shift()?.(1_017)
+      expect(next).toHaveBeenCalledOnce()
+    } finally {
+      delete (globalThis as typeof globalThis & { __altgridFrameBudget?: unknown }).__altgridFrameBudget
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('does not reset the frame deadline when the same FPS arrives repeatedly', async () => {
+    vi.useFakeTimers()
+    const frames: Array<(time: number) => void> = []
+    const request = vi.fn((callback) => frames.push(callback))
+    const cancel = vi.fn()
+    vi.stubGlobal('requestAnimationFrame', request)
+    vi.stubGlobal('cancelAnimationFrame', cancel)
+    const now = vi.spyOn(performance, 'now').mockReturnValue(1_000)
+    try {
+      electronMocks.listeners.get('altgrid:session-preload:set-frame-rate-limit')?.(null, 2)
+      const install = electronMocks.executeInMainWorld.mock.calls[0]![0].func
+      install(2)
+      const loop = () => requestAnimationFrame(loop)
+      requestAnimationFrame(loop)
+      frames.shift()?.(1_000)
+      for (let i = 0; i < 4; i += 1) {
+        now.mockReturnValue(1_000 + i * 100)
+        install(2)
+        await vi.advanceTimersByTimeAsync(100)
+      }
+      expect(request).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(99)
+      expect(request).toHaveBeenCalledTimes(2)
+      expect(cancel).not.toHaveBeenCalled()
+    } finally {
+      now.mockRestore()
+      delete (globalThis as typeof globalThis & { __altgridFrameBudget?: unknown }).__altgridFrameBudget
       vi.unstubAllGlobals()
       vi.useRealTimers()
     }

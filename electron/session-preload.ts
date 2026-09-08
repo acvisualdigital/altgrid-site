@@ -82,9 +82,14 @@ function applyFrameRateLimit(frameRate: number): void {
             }
 
             state.lastDispatch = timestamp
-            const callbacks = [...state.callbacks.entries()]
-            state.callbacks.clear()
-            for (const [, callback] of callbacks) {
+            // Match browser rAF semantics: a callback may cancel another one
+            // in this same frame. Clearing the map before dispatch made those
+            // cancellations ineffective and could leave duplicate game loops.
+            const callbackIds = [...state.callbacks.keys()]
+            for (const id of callbackIds) {
+              const callback = state.callbacks.get(id)
+              if (!callback) continue
+              state.callbacks.delete(id)
               try {
                 callback(timestamp)
               } catch (error) {
@@ -149,11 +154,15 @@ function applyFrameRateLimit(frameRate: number): void {
         state.schedule = schedule
       }
 
-      state.frameRate = Number.isInteger(nextFrameRate)
+      const normalizedFrameRate = Number.isInteger(nextFrameRate)
         && nextFrameRate >= 0
         && nextFrameRate <= 240
         ? nextFrameRate
         : 0
+      // Layout/focus refreshes can resend the same budget. Resetting its clock
+      // gives each duplicate an immediate frame and defeats a low FPS limit.
+      if (state.frameRate === normalizedFrameRate) return
+      state.frameRate = normalizedFrameRate
       state.lastDispatch = 0
       if (state.scheduledFrame !== null) {
         state.nativeCancel(state.scheduledFrame)

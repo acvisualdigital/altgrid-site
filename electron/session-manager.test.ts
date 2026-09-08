@@ -403,6 +403,96 @@ describe('SessionManager', () => {
     expect(second.setFrameRateLimit).toHaveBeenLastCalledWith(10)
   })
 
+  it('restores automatic and explicit FPS after minimize with Eco Mode disabled', async () => {
+    const harness = createHarness()
+    const desiredRates = [0, 60, 10, 1]
+    for (let index = 0; index < desiredRates.length; index += 1) {
+      const accountId = `account-${index}`
+      await harness.manager.createSession(accountId, 'https://game.example/')
+      harness.manager.showSession(accountId)
+      harness.manager.setFrameRate(accountId, desiredRates[index])
+      harness.views.get(accountId)!.setFrameRateLimit.mockClear()
+    }
+
+    harness.manager.setAppBackgrounded(true)
+    for (let index = 0; index < desiredRates.length; index += 1) {
+      expect(harness.views.get(`account-${index}`)!.setFrameRateLimit)
+        .toHaveBeenLastCalledWith(desiredRates[index] === 1 ? 1 : 2)
+    }
+
+    // A focus change while minimized must never lift the background budget.
+    harness.views.get('account-2')!.emit({ type: 'focused' })
+    expect(harness.views.get('account-2')!.setFrameRateLimit).toHaveBeenLastCalledWith(2)
+    harness.manager.setAppBackgrounded(false)
+    for (let index = 0; index < desiredRates.length; index += 1) {
+      const view = harness.views.get(`account-${index}`)!
+      expect(view.setFrameRateLimit).toHaveBeenLastCalledWith(desiredRates[index])
+      expect(view.loadURL).toHaveBeenCalledOnce()
+      expect(view.reload).not.toHaveBeenCalled()
+      expect(view.destroy).not.toHaveBeenCalled()
+    }
+  })
+
+  it('restores current preferences for accounts opened and changed while minimized', async () => {
+    const harness = createHarness()
+    await harness.manager.createSession('account-1', 'https://game.example/')
+    harness.manager.showSession('account-1')
+    harness.manager.setEcoMode(true, 20)
+    harness.manager.setAppBackgrounded(true)
+    await harness.manager.createSession('account-2', 'https://game.example/')
+    harness.manager.showSession('account-2')
+    harness.manager.setFrameRate('account-1', 75)
+    harness.manager.setFrameRate('account-2', 30)
+    harness.manager.setEcoMode(false)
+
+    const first = harness.views.get('account-1')!
+    const second = harness.views.get('account-2')!
+    expect(first.setFrameRateLimit).toHaveBeenLastCalledWith(2)
+    expect(second.setFrameRateLimit).toHaveBeenLastCalledWith(2)
+
+    harness.manager.setAppBackgrounded(false)
+    expect(first.setFrameRateLimit).toHaveBeenLastCalledWith(75)
+    expect(second.setFrameRateLimit).toHaveBeenLastCalledWith(30)
+  })
+
+  it('reassigns the focused Eco budget when a focused account closes while minimized', async () => {
+    const harness = createHarness()
+    for (let index = 1; index <= 4; index += 1) {
+      await harness.manager.createSession(`account-${index}`, 'https://game.example/')
+      harness.manager.showSession(`account-${index}`)
+    }
+    harness.manager.setEcoMode(true, 20)
+    harness.manager.focusSession('account-3')
+    harness.manager.setAppBackgrounded(true)
+    harness.manager.closeSession('account-3')
+    for (const accountId of ['account-1', 'account-2', 'account-4']) {
+      expect(harness.views.get(accountId)!.setFrameRateLimit).toHaveBeenLastCalledWith(2)
+    }
+
+    harness.manager.setAppBackgrounded(false)
+    expect(harness.views.get('account-1')!.setFrameRateLimit).toHaveBeenLastCalledWith(30)
+    expect(harness.views.get('account-2')!.setFrameRateLimit).toHaveBeenLastCalledWith(20)
+    expect(harness.views.get('account-4')!.setFrameRateLimit).toHaveBeenLastCalledWith(20)
+  })
+
+  it('does not resend unchanged Eco, focus, or window visibility budgets', async () => {
+    const harness = createHarness()
+    await harness.manager.createSession('account-1', 'https://game.example/')
+    harness.manager.showSession('account-1')
+    harness.manager.setEcoMode(true, 10)
+    harness.manager.setAppBackgrounded(true)
+    const view = harness.views.get('account-1')!
+    view.setFrameRateLimit.mockClear()
+    view.setEcoMode.mockClear()
+
+    harness.manager.setEcoMode(true, 10)
+    harness.manager.setAppBackgrounded(true)
+    view.emit({ type: 'focused' })
+
+    expect(view.setFrameRateLimit).not.toHaveBeenCalled()
+    expect(view.setEcoMode).not.toHaveBeenCalled()
+  })
+
   it('stores a desired FPS per session and updates native state before its snapshot', async () => {
     const harness = createHarness()
     await harness.manager.createSession('account-1', 'https://game.example/')

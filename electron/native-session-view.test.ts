@@ -259,10 +259,7 @@ describe('createNativeSessionViewFactory', () => {
     nativeView.setEcoMode(false)
 
     expect(view.webContents.setBackgroundThrottling.mock.calls).toEqual([
-      [false],
-      [false],
-      [false],
-      [false],
+      [false], [false], [false], [false],
     ])
     expect(view.webContents.loadURL).not.toHaveBeenCalled()
     expect(view.webContents.reload).not.toHaveBeenCalled()
@@ -585,12 +582,15 @@ describe('createNativeSessionViewFactory', () => {
       60,
     )
 
+    const previousPolicyCalls = view.webContents.setBackgroundThrottling.mock.calls.length
     view.handlers.get('did-finish-load')?.()
+    expect(view.webContents.setBackgroundThrottling).toHaveBeenCalledTimes(previousPolicyCalls + 1)
+    expect(view.webContents.setBackgroundThrottling).toHaveBeenLastCalledWith(false)
     expect(view.webContents.send).toHaveBeenLastCalledWith(
       'altgrid:session-preload:set-frame-rate-limit',
       60,
     )
-    expect(view.webContents.send).toHaveBeenCalledTimes(6)
+    expect(view.webContents.send).toHaveBeenCalledTimes(5)
     expect('setFrameRate' in view.webContents).toBe(false)
   })
 
@@ -608,6 +608,30 @@ describe('createNativeSessionViewFactory', () => {
       privateKb: 128_000,
       sharedKb: 16_000,
     })
+  })
+
+  it('keeps parked cleanup and FPS deadlines through repeated layout refreshes', async () => {
+    vi.useFakeTimers()
+    try {
+      const { hostWindow } = createHostWindow()
+      const native = createNativeSessionViewFactory(hostWindow, false)({
+        accountId: 'stable-parked', onEvent: vi.fn(), partition: 'persist:stable-parked',
+      })
+      const view = electronMocks.views[0]!
+      native.setVisible(false)
+      for (let second = 0; second < 20; second += 1) {
+        native.setVisible(false)
+        native.setFrameRateLimit(30)
+        native.setEcoMode(true)
+        await vi.advanceTimersByTimeAsync(1_000)
+      }
+      expect(view.webContents.send).toHaveBeenCalledTimes(1)
+      expect(view.webContents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1)
+      expect(view.webContents.setBackgroundThrottling).toHaveBeenCalledTimes(21)
+      native.destroy(true)
+      await vi.advanceTimersByTimeAsync(600_000)
+      expect(view.webContents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1)
+    } finally { vi.useRealTimers() }
   })
 
   it('shares one Electron process snapshot across a simultaneous account batch', async () => {

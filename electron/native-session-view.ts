@@ -131,6 +131,8 @@ export function createNativeSessionViewFactory(
     let requestedMuted = false
     let requestedZoomFactor = 1
     let parked = true
+    let presentationApplied = false
+    let lastSentFrameRate: number | null = null
     let parkedCollectionTimer: NodeJS.Timeout | null = null
     const parkedCollectionOffsetMs = stableCollectionOffset(accountId)
     let currentBounds = { height: 720, width: 1_280, x: 0, y: 0 }
@@ -212,6 +214,10 @@ export function createNativeSessionViewFactory(
 
     const applyFrameRateLimit = (): void => {
       if (!view.webContents.isDestroyed()) {
+        const effectiveLimit = parked
+          ? Math.min(frameRateLimit > 0 ? frameRateLimit : PARKED_COMPATIBILITY_FRAME_RATE, PARKED_COMPATIBILITY_FRAME_RATE)
+          : frameRateLimit
+        if (lastSentFrameRate === effectiveLimit) return
         // Electron's native setFrameRate API only supports offscreen rendering.
         // The isolated preload therefore applies a best-effort rAF budget while
         // this on-screen WebContentsView and its authenticated state stay alive.
@@ -220,13 +226,9 @@ export function createNativeSessionViewFactory(
           // A parked account must be capped even when the user configured a
           // higher per-account FPS. Previously an explicit 30/60 FPS setting
           // bypassed the rest-mode budget and kept the hidden renderer busy.
-          parked
-            ? Math.min(
-              frameRateLimit > 0 ? frameRateLimit : PARKED_COMPATIBILITY_FRAME_RATE,
-              PARKED_COMPATIBILITY_FRAME_RATE,
-            )
-            : frameRateLimit,
+          effectiveLimit,
         )
+        lastSentFrameRate = effectiveLimit
       }
     }
 
@@ -357,6 +359,12 @@ export function createNativeSessionViewFactory(
     view.webContents.on('did-start-loading', () => onEvent({ type: 'loading' }))
     view.webContents.on('focus', () => onEvent({ type: 'focused' }))
     view.webContents.on('did-finish-load', () => {
+      // A new document has a new preload; it must receive the budget even
+      // when the preceding page used the same limit.
+      lastSentFrameRate = null
+      // Reapply after navigation/visibility changes: Electron needs the policy
+      // on the live renderer, not just the initial empty WebContents.
+      applyBackgroundThrottling()
       applyZoomFactor()
       applyFrameRateLimit()
       onEvent({ type: 'ready' })
@@ -480,6 +488,8 @@ export function createNativeSessionViewFactory(
 
       setBounds(bounds): void {
         if (!destroyed) {
+          if (bounds.x === currentBounds.x && bounds.y === currentBounds.y
+            && bounds.width === currentBounds.width && bounds.height === currentBounds.height) return
           currentBounds = { ...bounds }
           applyBounds()
         }
@@ -574,6 +584,8 @@ export function createNativeSessionViewFactory(
 
       setVisible(visible): void {
         if (!destroyed) {
+          if (presentationApplied && parked === !visible) return
+          presentationApplied = true
           // Keep the WebContents and persistent partition alive while hiding
           // its pixels when another account is displayed.
           parked = !visible
