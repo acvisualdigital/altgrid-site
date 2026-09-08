@@ -79,10 +79,10 @@ interface ApiOptions {
   fetcher?: typeof fetch
 }
 
-// Platform releases can advance independently. Pin Windows to its desktop
-// release so an Android-only hotfix cannot make the Windows feed disappear.
+// Platform releases can advance independently. Keep the worker pinned to the
+// verified desktop release so a platform-specific hotfix cannot break updates.
 const WINDOWS_RELEASE_BASE_URL =
-  'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.6.0/'
+  'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.6.2/'
 const ANDROID_RELEASE_BASE_URL =
   'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.6.1/'
 const WINDOWS_UPDATE_FEED = 'releases.win-x64.json'
