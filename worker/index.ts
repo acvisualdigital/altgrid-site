@@ -10,6 +10,7 @@ import { SupabaseAdminRepository } from './services/supabase-admin-repository'
 import { AsymmetricLicenseSnapshotService } from './services/license-snapshot-service'
 import { MercadoPagoPaymentService } from './services/mercado-pago-service'
 import { StripePaymentService } from './services/stripe-service'
+import { NowPaymentsService } from './services/nowpayments-service'
 import { WhatsAppAdminNotifier } from './services/whatsapp-admin-notifier'
 import { FirebaseAdminNotifier } from './services/firebase-admin-notifier'
 import { CompositeAdminNotifier } from './services/composite-admin-notifier'
@@ -40,6 +41,9 @@ function runtimeKey(environment: WorkerEnvironment): string {
     environment.STRIPE_WEBHOOK_SECRET,
     environment.STRIPE_PROCESSING_FEE_PERCENT,
     environment.STRIPE_TEST_MODE,
+    environment.NOWPAYMENTS_API_KEY,
+    environment.NOWPAYMENTS_IPN_SECRET,
+    environment.NOWPAYMENTS_WEBHOOK_URL,
   ].join('|')
 }
 
@@ -83,6 +87,12 @@ function createRuntime(environment: WorkerEnvironment): ApiRuntime {
         webhookSecret: environment.STRIPE_WEBHOOK_SECRET,
         processingFeePercent: environment.STRIPE_PROCESSING_FEE_PERCENT,
         testMode: environment.STRIPE_TEST_MODE,
+      }),
+      nowPaymentsService: new NowPaymentsService(repository, {
+        apiKey: environment.NOWPAYMENTS_API_KEY,
+        ipnSecret: environment.NOWPAYMENTS_IPN_SECRET,
+        webhookUrl: environment.NOWPAYMENTS_WEBHOOK_URL,
+        processingFeePercent: environment.NOWPAYMENTS_PROCESSING_FEE_PERCENT,
       }),
       licenseSnapshotService: new AsymmetricLicenseSnapshotService(
         entitlementService,

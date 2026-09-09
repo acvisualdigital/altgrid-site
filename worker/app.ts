@@ -24,6 +24,7 @@ import {
   readAppAdRequest,
   readIdempotencyKey,
   readPixInput,
+  readNowPaymentsInput,
   readPresenceHeartbeat,
 } from './lib/platform-validation'
 import { EntitlementService } from './services/entitlement-service'
@@ -36,6 +37,7 @@ import type {
   LicenseSnapshotService,
   PaymentService,
   StripeCheckoutService,
+  NowPaymentsCheckoutService,
   PlatformRepository,
   RateLimitBinding,
 } from './types'
@@ -52,6 +54,7 @@ interface ApiDependencies {
   chatRepository?: ChatRepository
   paymentService?: PaymentService
   stripePaymentService?: StripeCheckoutService
+  nowPaymentsService?: NowPaymentsCheckoutService
   licenseSnapshotService?: LicenseSnapshotService
   chatRateLimiter?: RateLimitBinding
   paymentRateLimiter?: RateLimitBinding
@@ -74,6 +77,16 @@ async function safelyNotifyAdmin(
   }
 }
 
+function paymentMethodLabel(payment: import('./types').PaymentRecord): string {
+  const metadata = payment.metadata && typeof payment.metadata === 'object' && !Array.isArray(payment.metadata)
+    ? payment.metadata as Record<string, unknown>
+    : {}
+  if (payment.provider === 'nowpayments' || metadata.payment_method === 'crypto') return 'Crypto'
+  if (payment.provider === 'stripe') return 'Cartão · Stripe'
+  if (metadata.payment_method === 'card') return 'Cartão · Mercado Pago'
+  return 'PIX · Mercado Pago'
+}
+
 interface ApiOptions {
   allowedOrigins?: readonly string[]
   fetcher?: typeof fetch
@@ -82,13 +95,13 @@ interface ApiOptions {
 // Platform releases can advance independently. Keep the worker pinned to the
 // verified desktop release so a platform-specific hotfix cannot break updates.
 const WINDOWS_RELEASE_BASE_URL =
-  'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.6.2/'
+  'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.6.5/'
 const ANDROID_RELEASE_BASE_URL =
-  'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.6.1/'
+  'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.6.5/'
 const WINDOWS_UPDATE_FEED = 'releases.win-x64.json'
 const WINDOWS_UPDATE_PACKAGE = /^AltGrid-[0-9A-Za-z.+-]+-win-x64-(?:full|delta)\.nupkg$/
 const ANDROID_DOWNLOAD_PATH = '/v1/downloads/android'
-const ANDROID_RELEASE_ASSET = 'AltGrid-Android-1.6.1.apk'
+const ANDROID_RELEASE_ASSET = 'AltGrid-Android-1.6.5.apk'
 
 function normalizedPath(url: string): string {
   const pathname = new URL(url).pathname
@@ -142,8 +155,10 @@ function allowedMethods(pathname: string): string[] | null {
     || pathname === '/v1/payments/pix'
     || pathname === '/v1/payments/mercadopago/checkout'
     || pathname === '/v1/payments/stripe/checkout'
+    || pathname === '/v1/payments/nowpayments/checkout'
     || pathname === '/v1/webhooks/mercadopago'
     || pathname === '/v1/webhooks/stripe'
+    || pathname === '/v1/webhooks/nowpayments'
     || /^\/v1\/chat\/messages\/[^/]+\/report$/.test(pathname)
     || /^\/v1\/app\/ads\/[^/]+\/events$/.test(pathname)
   ) {
@@ -383,6 +398,7 @@ export function createApi(
           occurredAt: payment.updated_at,
           details: [
             { label: 'Produto', value: payment.product_code },
+            { label: 'Forma de pagamento', value: paymentMethodLabel(payment) },
             { label: 'Valor', value: `${payment.currency} ${payment.amount.toFixed(2)}` },
             { label: 'Status', value: payment.status },
             { label: 'Pagamento', value: payment.id },
@@ -403,6 +419,25 @@ export function createApi(
           title: 'Compra aprovada no cartão', occurredAt: payment.updated_at,
           details: [
             { label: 'Produto', value: payment.product_code },
+            { label: 'Forma de pagamento', value: paymentMethodLabel(payment) },
+            { label: 'Valor', value: `${payment.currency} ${payment.amount.toFixed(2)}` },
+            { label: 'Pagamento', value: payment.id },
+          ],
+        })
+      }
+      return jsonResponse({ received: true })
+    }
+
+    if (pathname === '/v1/webhooks/nowpayments') {
+      if (!dependencies.nowPaymentsService) throw new ApiError(503, 'payments_unavailable', 'Pagamento indisponível.')
+      const payment = await dependencies.nowPaymentsService.handleWebhook(request)
+      if (payment && ['approved', 'paid', 'fulfilled'].includes(payment.status)) {
+        await safelyNotifyAdmin(dependencies.adminMobileNotifier, {
+          eventKey: `payment:${payment.id}:approved`, type: 'purchase_approved',
+          title: 'Compra aprovada em cripto', occurredAt: payment.updated_at,
+          details: [
+            { label: 'Produto', value: payment.product_code },
+            { label: 'Forma de pagamento', value: paymentMethodLabel(payment) },
             { label: 'Valor', value: `${payment.currency} ${payment.amount.toFixed(2)}` },
             { label: 'Pagamento', value: payment.id },
           ],
@@ -708,6 +743,7 @@ export function createApi(
           details: [
             { label: 'Cliente', value: customer },
             { label: 'Produto', value: payment.product_code },
+            { label: 'Forma de pagamento', value: 'PIX · Mercado Pago' },
             { label: 'Valor', value: `${payment.currency} ${payment.amount.toFixed(2)}` },
             { label: 'Pagamento', value: payment.id },
           ],
@@ -747,6 +783,7 @@ export function createApi(
           details: [
             { label: 'Cliente', value: customer },
             { label: 'Produto', value: payment.product_code },
+            { label: 'Forma de pagamento', value: 'Cartão · Mercado Pago' },
             { label: 'Valor', value: `${payment.currency} ${payment.amount.toFixed(2)}` },
             { label: 'Pagamento', value: payment.id },
           ],
@@ -764,6 +801,38 @@ export function createApi(
       if (!success) throw new ApiError(429, 'rate_limited', 'Aguarde antes de criar outro pagamento.')
       const { productCode } = await readPixInput(request)
       const checkout = await dependencies.stripePaymentService.createCheckout(user, productCode, readIdempotencyKey(request))
+      return jsonResponse(checkout, 201)
+    }
+
+    if (pathname === '/v1/payments/nowpayments/checkout') {
+      if (!dependencies.nowPaymentsService) throw new ApiError(503, 'payments_unavailable', 'Pagamento em cripto indisponível.')
+      const rateLimiter = dependencies.paymentRateLimiter ?? dependencies.deviceRateLimiter
+      const { success } = await rateLimiter.limit({ key: `${user.id}:nowpayments-checkout-create` })
+      if (!success) throw new ApiError(429, 'rate_limited', 'Muitas tentativas. Tente novamente em instantes.')
+      const { productCode, payCurrency } = await readNowPaymentsInput(request)
+      const checkout = await dependencies.nowPaymentsService.createCheckout(user, productCode, readIdempotencyKey(request), payCurrency)
+      const payment = (checkout as { payment?: import('./types').PaymentRecord }).payment
+      if (payment && dependencies.adminMobileNotifier) {
+        const profile = dependencies.adminMobileNotifier.enabled === false
+          ? null
+          : await dependencies.repository.getProfile(user.id).catch(() => null)
+        const customer = profile?.display_name?.trim()
+          ? `${profile.display_name}${user.email ? ` · ${user.email}` : ''}`
+          : user.email ?? user.id
+        await safelyNotifyAdmin(dependencies.adminMobileNotifier, {
+          eventKey: `payment:${payment.id}:attempt`,
+          type: 'purchase_attempt',
+          title: 'Nova tentativa de compra em Crypto',
+          occurredAt: payment.created_at,
+          details: [
+            { label: 'Cliente', value: customer },
+            { label: 'Produto', value: payment.product_code },
+            { label: 'Forma de pagamento', value: `Crypto · ${payCurrency.toUpperCase()}` },
+            { label: 'Valor', value: `${payment.currency} ${payment.amount.toFixed(2)}` },
+            { label: 'Pagamento', value: payment.id },
+          ],
+        })
+      }
       return jsonResponse(checkout, 201)
     }
 

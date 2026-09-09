@@ -31,6 +31,7 @@ import type {
   MercadoPagoSnapshot,
   PaymentRecord,
   PaymentRepository,
+  NowPaymentsRepository,
   PlanRecord,
   PlatformRepository,
   PublicProductRecord,
@@ -156,7 +157,8 @@ export class SupabaseRepository implements
   BackendRepository,
   PlatformRepository,
   ChatRepository,
-  PaymentRepository {
+  PaymentRepository,
+  NowPaymentsRepository {
   constructor(private readonly client: SupabaseClient) {}
 
   private metricsCache: {
@@ -778,6 +780,38 @@ export class SupabaseRepository implements
       p_paid_at: input.paidAt,
       p_event_id: input.eventId,
       p_payload_hash: input.payloadHash,
+      p_provider_data: input.providerData,
+    })
+    if (error) throwDataError(error)
+    return data as { payment_id: string; status: string; fulfilled: boolean; duplicate: boolean }
+  }
+
+  async createPendingNowPaymentsPayment(userId: string, productCode: string, requestKey: string, processingFeePercent: number): Promise<PaymentRecord> {
+    const { data, error } = await this.client.rpc('create_pending_nowpayments_payment', {
+      p_user_id: userId, p_product_code: productCode, p_request_key: requestKey,
+      p_processing_fee_percent: processingFeePercent,
+    })
+    if (error) throwDataError(error)
+    return data as PaymentRecord
+  }
+
+  async attachNowPaymentsCheckout(userId: string, paymentId: string, providerPaymentId: string, expiresAt: string, checkoutUrl: string): Promise<PaymentRecord> {
+    const { data, error } = await this.client.rpc('attach_nowpayments_checkout', {
+      p_user_id: userId, p_payment_id: paymentId, p_provider_payment_id: providerPaymentId,
+      p_expires_at: expiresAt, p_checkout_url: checkoutUrl,
+    })
+    if (error) throwDataError(error)
+    return data as PaymentRecord
+  }
+
+  async processNowPaymentsPayment(input: {
+    providerPaymentId: string; paymentId: string; status: string; amount: number; currency: string;
+    paidAt: string | null; eventId: string; payloadHash: string; providerData: Json
+  }): Promise<{ payment_id: string; status: string; fulfilled: boolean; duplicate: boolean }> {
+    const { data, error } = await this.client.rpc('process_nowpayments_payment', {
+      p_provider_payment_id: input.providerPaymentId, p_external_reference: input.paymentId,
+      p_provider_status: input.status, p_amount: input.amount, p_currency: input.currency,
+      p_paid_at: input.paidAt, p_event_id: input.eventId, p_payload_hash: input.payloadHash,
       p_provider_data: input.providerData,
     })
     if (error) throwDataError(error)

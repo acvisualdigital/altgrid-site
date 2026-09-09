@@ -314,7 +314,7 @@ export interface PixPayment {
   expires_at?: string | null
   paid_at?: string | null
   fulfilled_at?: string | null
-  provider?: 'mercadopago' | 'stripe'
+  provider?: 'mercadopago' | 'stripe' | 'nowpayments'
   checkout_url?: string | null
   base_amount?: number | null
   processing_fee?: number | null

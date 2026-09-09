@@ -367,6 +367,14 @@ export class BackendApi {
     })
   }
 
+  createNowPaymentsCheckout(productCode: string, payCurrency = 'usdttrc20'): Promise<PixPaymentResponse> {
+    return this.privateRequest<PixPaymentResponse>('/v1/payments/nowpayments/checkout', {
+      body: JSON.stringify({ product_code: productCode, pay_currency: payCurrency }),
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+      method: 'POST',
+    })
+  }
+
   getPayment(paymentId: string): Promise<PixPaymentResponse> {
     return this.privateRead<PixPaymentResponse>(
       '/v1/payments/' + encodeURIComponent(paymentId),

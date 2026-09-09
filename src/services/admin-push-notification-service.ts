@@ -48,10 +48,11 @@ export class AdminPushNotificationService {
 
     await this.initializeListeners()
     await PushNotifications.createChannel({
-      id: 'altgrid_admin_alerts',
-      name: 'Compras e pedidos AltGrid',
-      description: 'Avisos administrativos de compras, pagamentos, anúncios e suporte.',
+      id: 'altgrid_admin_purchases_v2',
+      name: 'Compras AltGrid — prioridade máxima',
+      description: 'Alertas sonoros exclusivos de novas compras e pagamentos.',
       importance: 5,
+      sound: 'default',
       visibility: 1,
       vibration: true,
     })

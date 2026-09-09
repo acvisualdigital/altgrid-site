@@ -56,6 +56,10 @@ export interface WorkerEnvironment extends Env {
   WHATSAPP_PHONE_NUMBER_ID?: string
   FIREBASE_PROJECT_ID?: string
   FIREBASE_SERVICE_ACCOUNT_JSON?: string
+  NOWPAYMENTS_API_KEY?: string
+  NOWPAYMENTS_IPN_SECRET?: string
+  NOWPAYMENTS_WEBHOOK_URL?: string
+  NOWPAYMENTS_PROCESSING_FEE_PERCENT?: string
 }
 
 export type AdminMobileNotificationType =
@@ -193,7 +197,7 @@ export interface ChatStatusRecord {
 export interface PaymentRecord {
   id: string
   user_id: string
-  provider: 'mercadopago' | 'stripe'
+  provider: 'mercadopago' | 'stripe' | 'nowpayments'
   provider_payment_id: string | null
   provider_external_reference: string | null
   product_code: string
@@ -342,6 +346,23 @@ export interface StripePaymentRepository {
   getPaymentById(paymentId: string): Promise<PaymentRecord | null>
 }
 
+export interface NowPaymentsRepository {
+  createPendingNowPaymentsPayment(userId: string, productCode: string, requestKey: string, processingFeePercent: number): Promise<PaymentRecord>
+  attachNowPaymentsCheckout(userId: string, paymentId: string, providerPaymentId: string, expiresAt: string, checkoutUrl: string): Promise<PaymentRecord>
+  processNowPaymentsPayment(input: {
+    providerPaymentId: string
+    paymentId: string
+    status: string
+    amount: number
+    currency: string
+    paidAt: string | null
+    eventId: string
+    payloadHash: string
+    providerData: Json
+  }): Promise<{ payment_id: string; status: string; fulfilled: boolean; duplicate: boolean }>
+  getPaymentById(paymentId: string): Promise<PaymentRecord | null>
+}
+
 export interface PaymentService {
   createPixPayment(
     user: SafeUser,
@@ -376,6 +397,11 @@ export interface PaymentService {
 
 export interface StripeCheckoutService {
   createCheckout(user: SafeUser, productCode: string, requestKey: string): Promise<Record<string, unknown>>
+  handleWebhook(request: Request): Promise<PaymentRecord | null>
+}
+
+export interface NowPaymentsCheckoutService {
+  createCheckout(user: SafeUser, productCode: string, requestKey: string, payCurrency?: string): Promise<Record<string, unknown>>
   handleWebhook(request: Request): Promise<PaymentRecord | null>
 }
 

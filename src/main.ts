@@ -102,7 +102,7 @@ try {
     : null
   const unsubscribeFromAdminPush = adminPushNotifications
     ? authService.onAuthStateChange((_event, session) => {
-        if (session) {
+        if (session?.user.email?.trim().toLowerCase() === 'yacaciio@gmail.com') {
           void adminPushNotifications.enableForCurrentAdmin().catch(() => undefined)
         } else {
           void adminPushNotifications.disable()

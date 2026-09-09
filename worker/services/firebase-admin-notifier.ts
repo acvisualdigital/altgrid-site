@@ -60,6 +60,10 @@ function compactBody(input: AdminMobileNotificationInput): string {
     .slice(0, 450) || 'Abra o painel administrativo para conferir os detalhes.'
 }
 
+function detailValue(input: AdminMobileNotificationInput, label: string): string {
+  return input.details.find((detail) => detail.label === label)?.value ?? ''
+}
+
 export class FirebaseAdminNotifier implements AdminMobileNotifier {
   readonly enabled: boolean
   private readonly fetchImplementation: typeof fetch
@@ -97,12 +101,17 @@ export class FirebaseAdminNotifier implements AdminMobileNotifier {
                 event_key: input.eventKey,
                 event_type: input.type,
                 occurred_at: input.occurredAt ?? new Date().toISOString(),
+                customer: detailValue(input, 'Cliente'),
+                product: detailValue(input, 'Produto'),
+                payment_method: detailValue(input, 'Forma de pagamento'),
+                amount: detailValue(input, 'Valor'),
               },
               android: {
                 priority: 'high',
                 notification: {
-                  channel_id: 'altgrid_admin_alerts',
+                  channel_id: 'altgrid_admin_purchases_v2',
                   default_sound: true,
+                  sound: 'default',
                   notification_priority: 'PRIORITY_MAX',
                   visibility: 'PRIVATE',
                 },

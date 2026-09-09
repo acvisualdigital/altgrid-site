@@ -122,6 +122,8 @@ type ActiveDialog =
   | 'grid-manager'
   | 'more-games'
   | 'my-plan'
+  | 'payment-methods'
+  | 'crypto-methods'
   | 'payment'
   | 'plans'
   | 'copy-proxy'
@@ -136,6 +138,17 @@ type BackendLoadStatus = 'error' | 'idle' | 'loading' | 'ready'
 type ServiceStatus = 'checking' | 'offline' | 'online' | 'unknown'
 type SettingsTab = 'about' | 'accounts' | 'general' | 'notifications' | 'updates' | 'visual'
 type WorkspaceMode = 'account' | 'grid'
+
+interface AdminPaymentPopup {
+  amount: string
+  confirmed: boolean
+  eventKey: string
+  nickname: string
+  paymentMethod: string
+  product: string
+}
+
+const OWNER_ADMIN_EMAIL = 'yacaciio@gmail.com'
 
 interface PlanPresentation {
   benefits: readonly string[]
@@ -345,6 +358,7 @@ type ApplicationBackend = Pick<BackendApi, 'getEntitlements' | 'getGames' | 'get
     | 'createPixPayment'
     | 'createMercadoPagoCardCheckout'
     | 'createStripeCheckout'
+    | 'createNowPaymentsCheckout'
     | 'getAppConfig'
     | 'getAppMetrics'
     | 'getAnnouncements'
@@ -645,27 +659,51 @@ function playAdminPaymentAlertSound(confirmed: boolean): void {
     if (!AudioContextConstructor) return
 
     const context = new AudioContextConstructor()
-    const oscillator = context.createOscillator()
     const gain = context.createGain()
     const startedAt = context.currentTime
-    oscillator.type = confirmed ? 'sine' : 'triangle'
-    oscillator.frequency.setValueAtTime(confirmed ? 880 : 560, startedAt)
-    if (confirmed) {
-      oscillator.frequency.setValueAtTime(1_120, startedAt + 0.12)
-    }
     gain.gain.setValueAtTime(0.0001, startedAt)
-    gain.gain.exponentialRampToValueAtTime(0.16, startedAt + 0.015)
-    gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + 0.32)
-    oscillator.connect(gain)
+    gain.gain.exponentialRampToValueAtTime(0.34, startedAt + 0.02)
+    gain.gain.setValueAtTime(0.34, startedAt + 0.82)
+    gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + 1.05)
     gain.connect(context.destination)
-    oscillator.start(startedAt)
-    oscillator.stop(startedAt + 0.34)
-    oscillator.addEventListener('ended', () => {
+    const frequencies = confirmed ? [880, 1_120, 1_320] : [620, 820, 620]
+    frequencies.forEach((frequency, index) => {
+      const oscillator = context.createOscillator()
+      oscillator.type = confirmed ? 'sine' : 'square'
+      oscillator.frequency.setValueAtTime(frequency, startedAt + index * 0.28)
+      oscillator.connect(gain)
+      oscillator.start(startedAt + index * 0.28)
+      oscillator.stop(startedAt + index * 0.28 + 0.2)
+    })
+    setTimeout(() => {
       void context.close().catch(() => undefined)
-    }, { once: true })
+    }, 1_200)
     void context.resume().catch(() => undefined)
   } catch {
     // Sound is supplemental; notification delivery must remain reliable.
+  }
+}
+
+function showAdminSystemNotification(title: string, body: string): void {
+  try {
+    if (!('Notification' in window)) return
+    const openNotification = (): void => {
+      if (Notification.permission !== 'granted') return
+      const notification = new Notification(title, {
+        body,
+        icon: altgridLogoUrl,
+        requireInteraction: true,
+        tag: `altgrid-admin-payment-${Date.now()}`,
+      })
+      notification.onclick = () => window.focus()
+    }
+    if (Notification.permission === 'default') {
+      void Notification.requestPermission().then(openNotification).catch(() => undefined)
+      return
+    }
+    openNotification()
+  } catch {
+    // The in-app alert remains available when the OS blocks notifications.
   }
 }
 
@@ -770,6 +808,14 @@ function openExternalBrowserUrl(url: string): void {
     // noopener is already requested; some browser wrappers make opener readonly.
   }
 }
+
+const CRYPTO_OPTIONS = [
+  { code: 'usdcsol', name: 'USDC', network: 'Solana' },
+  { code: 'sol', name: 'SOL', network: 'Solana' },
+  { code: 'bnbbsc', name: 'BNB', network: 'BNB Smart Chain (BEP20)' },
+  { code: 'usdttrc20', name: 'USDT', network: 'TRON (TRC20)' },
+  { code: 'usdtbsc', name: 'USDT', network: 'BNB Smart Chain (BEP20)' },
+] as const
 
 function isMercadoPagoCheckoutUrl(value: string | null | undefined): value is string {
   if (!value) return false
@@ -956,6 +1002,7 @@ export class AuthApp {
   private adminAdRequestsInitialized = false
   private adminChatReportsInitialized = false
   private adminPaymentAlertLoading = false
+  private adminPaymentPopup: AdminPaymentPopup | null = null
   private freePlanPromptShown = false
   private configuredAccounts: ConfiguredAccount[] = []
   private savedGridWorkspaces: SavedGridWorkspace[] = []
@@ -985,7 +1032,9 @@ export class AuthApp {
   private presenceUserId: string | null = null
   private presenceRefreshPending = false
   private pixPayment: PixPayment | null = null
-  private paymentMethod: 'pix' | 'mercadopago-card' | 'stripe' | null = null
+  private paymentMethod: 'pix' | 'mercadopago-card' | 'stripe' | 'nowpayments' | null = null
+  private selectedCryptoCurrency = 'usdttrc20'
+  private pendingPaymentProductCode: string | null = null
   private paymentLoading = false
   private paymentError: string | null = null
   private paymentPollTimer: ReturnType<typeof setTimeout> | null = null
@@ -1455,7 +1504,7 @@ export class AuthApp {
   }
 
   private readonly handleAdminPush = (event: Event): void => {
-    if (this.currentView !== 'authenticated' || !this.session) return
+    if (this.currentView !== 'authenticated' || !this.session || !this.isOwnerAdmin()) return
     const detail = (event as CustomEvent<AdminPushEventDetail>).detail
     if (!detail) return
     const title = String(detail.title ?? '').trim().slice(0, 100)
@@ -1464,6 +1513,19 @@ export class AuthApp {
     const eventKey = String(detail.data?.event_key ?? Date.now())
       .replace(/[^a-zA-Z0-9:_-]/g, '')
       .slice(0, 160)
+    const paymentType = String(detail.data?.event_type ?? '')
+    if (paymentType === 'purchase_attempt' || paymentType === 'purchase_approved') {
+      this.adminPaymentPopup = {
+        amount: String(detail.data?.amount ?? ''),
+        confirmed: paymentType === 'purchase_approved',
+        eventKey,
+        nickname: String(detail.data?.customer ?? 'Cliente').split(' · ')[0] || 'Cliente',
+        paymentMethod: String(detail.data?.payment_method ?? 'Pagamento'),
+        product: String(detail.data?.product ?? 'Plano AltGrid'),
+      }
+      playAdminPaymentAlertSound(paymentType === 'purchase_approved')
+      showAdminSystemNotification(title, body)
+    }
     this.notificationCenter.upsertSystemNotification({
       id: `admin-push:${eventKey || Date.now()}`,
       title,
@@ -1471,6 +1533,12 @@ export class AuthApp {
     })
     this.render()
     this.showSessionAlert(`${title}: ${body}`)
+  }
+
+  private isOwnerAdmin(): boolean {
+    return this.adminAccess
+      && (!this.session
+        || this.session.user.email?.trim().toLowerCase() === OWNER_ADMIN_EMAIL)
   }
 
   private readonly handleGlobalPointerDown = (event: PointerEvent): void => {
@@ -2334,7 +2402,7 @@ export class AuthApp {
           : [...DEFAULT_APP_AD_PLANS]
       }
 
-      if (this.adminAccess) {
+      if (this.isOwnerAdmin()) {
         this.startAdminPaymentAlerts()
       } else {
         this.stopAdminPaymentAlerts()
@@ -2517,7 +2585,7 @@ export class AuthApp {
               </div>`}
         </main>
 
-        <div data-overlay-region>${this.renderDialog()}</div>
+        <div data-overlay-region>${this.renderDialog()}${this.renderAdminPaymentPopup()}</div>
 
         ${authenticated ? '' : `<footer class="app-footer">
           <span>AltGrid</span>
@@ -2643,7 +2711,7 @@ export class AuthApp {
 
       if (signature !== this.renderedDialogSignature) {
         const draft = this.captureDialogDraft(overlayRegion)
-        overlayRegion.innerHTML = this.renderDialog()
+        overlayRegion.innerHTML = `${this.renderDialog()}${this.renderAdminPaymentPopup()}`
         this.restoreDialogDraft(overlayRegion, draft)
         this.renderedDialogSignature = signature
         dialogReplaced = true
@@ -2754,10 +2822,12 @@ export class AuthApp {
                 account?.gameSlug,
               ]
             })()
-          : this.activeDialog === 'payment'
-            ? [this.paymentLoading, this.paymentError, this.pixPayment]
-            : this.activeDialog === 'update'
-              ? this.updateState
+          : this.activeDialog === 'payment-methods' || this.activeDialog === 'crypto-methods'
+            ? [this.pendingPaymentProductCode, this.products]
+            : this.activeDialog === 'payment'
+              ? [this.paymentLoading, this.paymentError, this.pixPayment]
+              : this.activeDialog === 'update'
+                ? this.updateState
               : this.activeDialog === 'more-games'
                 ? [this.games, this.gameCatalogError]
                 : this.activeDialog === 'my-plan'
@@ -2781,6 +2851,7 @@ export class AuthApp {
       this.dialogError,
       dependency,
       this.locale,
+      this.adminPaymentPopup,
     ])
   }
 
@@ -5561,7 +5632,7 @@ export class AuthApp {
           <span aria-hidden="true">✓</span>
           <div><strong>Todos os planos pagos são vitalícios</strong><small>Você paga uma única vez, sem mensalidade. A licença fica vinculada à sua conta AltGrid.</small></div>
         </div>
-        ${ownerProTestProduct ? `<div class="plan-lifetime-banner"><span aria-hidden="true">$</span><div><strong>Teste administrativo do PRO</strong><small>Exclusivo da sua conta: Pix por R$ 1,00 ou cartão por R$ 1,20 com a taxa de 20%.</small></div><div class="plan-payment-actions"><button class="button button--primary button--compact" data-buy-product="${escapeHtml(ownerProTestProduct.code)}" type="button">Testar Pix · R$ 1</button><button class="button button--secondary button--compact" data-buy-card="${escapeHtml(ownerProTestProduct.code)}" type="button">Testar cartão · R$ 1,20</button></div></div>` : ''}
+        ${ownerProTestProduct ? `<div class="plan-lifetime-banner"><span aria-hidden="true">$</span><div><strong>Teste administrativo do PRO</strong><small>Exclusivo da sua conta: Pix por R$ 1,00 ou cartão por R$ 1,10 com a taxa de 10%.</small></div><div class="plan-payment-actions"><button class="button button--primary button--compact" data-buy-product="${escapeHtml(ownerProTestProduct.code)}" type="button">Testar Pix · R$ 1</button><button class="button button--secondary button--compact" data-buy-card="${escapeHtml(ownerProTestProduct.code)}" type="button">Testar cartão · R$ 1,10</button></div></div>` : ''}
         <div class="plan-list">
           ${this.renderPlanOption('FREE', currentPlan, null)}
           ${this.renderPlanOption('PRO', currentPlan, productFor('PRO'))}
@@ -5751,15 +5822,50 @@ export class AuthApp {
       `
     }
 
+    if (this.activeDialog === 'payment-methods') {
+      const productCode = this.pendingPaymentProductCode
+      const product = this.products.find((entry) => entry.code === productCode)
+      return `
+        <dialog class="modal modal--payment-methods" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="modal__header"><p class="eyebrow">PAGAMENTO SEGURO</p><h2 id="dialog-title">Escolha como pagar</h2><p>Pix e cartão são processados pelo Mercado Pago. Para criptomoedas, escolha Crypto no plano.</p></div>
+          <div class="payment-method-choice">
+            <button class="button button--primary" data-choose-payment="pix" type="button"><strong>Pix</strong><small>Confirmação rápida pelo Mercado Pago</small></button>
+            <button class="button button--secondary" data-choose-payment="mercadopago-card" type="button"><strong>Cartão</strong><small>Mercado Pago · taxa de 10%</small></button>
+          </div>
+          ${product ? `<p class="modal__note">Plano selecionado: ${escapeHtml(product.name ?? product.code)}</p>` : ''}
+          <div class="modal__actions"><button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
+        </dialog>
+      `
+    }
+
+    if (this.activeDialog === 'crypto-methods') {
+      const productCode = this.pendingPaymentProductCode
+      const product = this.products.find((entry) => entry.code === productCode)
+      return `
+        <dialog class="modal modal--payment-methods" id="app-dialog" aria-labelledby="dialog-title">
+          <div class="modal__header"><p class="eyebrow">PAGAMENTO EM CRYPTO</p><h2 id="dialog-title">Escolha a moeda</h2><p>Selecione a moeda e a rede que você usará. O checkout seguro será aberto pela NOWPayments.</p></div>
+          <div class="payment-method-choice payment-method-choice--crypto">
+            ${CRYPTO_OPTIONS.map((option) => `<button class="button ${option.code === this.selectedCryptoCurrency ? 'button--primary' : 'button--secondary'}" data-choose-crypto="${option.code}" type="button"><strong>${option.name}</strong><small>${option.network}</small></button>`).join('')}
+          </div>
+          ${product ? `<p class="modal__note">Plano selecionado: ${escapeHtml(product.name ?? product.code)} · taxa de 10%</p>` : ''}
+          <div class="modal__actions"><button class="button button--secondary" data-close-dialog type="button">Voltar</button></div>
+        </dialog>
+      `
+    }
+
     if (this.activeDialog === 'payment') {
       const payment = this.pixPayment
       const cardPayment = payment?.payment_method === 'card'
         || this.paymentMethod === 'mercadopago-card'
         || payment?.provider === 'stripe'
         || this.paymentMethod === 'stripe'
+      const cryptoPayment = this.paymentMethod === 'nowpayments' || payment?.provider === 'nowpayments'
+      const externalCheckout = cardPayment || cryptoPayment
+      const feePayment = cardPayment || cryptoPayment
+      const selectedCrypto = CRYPTO_OPTIONS.find((option) => option.code === this.selectedCryptoCurrency)
       const cardProvider = payment?.provider === 'stripe' || this.paymentMethod === 'stripe'
         ? 'Stripe'
-        : 'Mercado Pago'
+        : this.paymentMethod === 'nowpayments' ? `NOWPayments (${selectedCrypto?.name ?? 'Crypto'} ${selectedCrypto?.network ?? ''})` : 'Mercado Pago'
       const qrImage = payment?.qr_code_base64?.match(/^[A-Za-z0-9+/=\r\n]+$/)
         ? payment.qr_code_base64.replace(/\s/g, '')
         : null
@@ -5767,11 +5873,11 @@ export class AuthApp {
       const advertisingPayment = Boolean(this.appAdPaymentRequestId)
       return `
         <dialog class="modal modal--payment" id="app-dialog" aria-labelledby="dialog-title">
-          <div class="modal__header"><p class="eyebrow">Pagamento seguro</p><h2 id="dialog-title">${approved ? 'Pagamento confirmado' : cardPayment ? 'Pagar com cartão' : advertisingPayment ? 'Pagar campanha com Pix' : 'Ativar com Pix'}</h2>${advertisingPayment ? '<p>Plano e conteúdo aprovados pela equipe AltGrid. A campanha entra no ar somente após a confirmação do pagamento.</p>' : ''}</div>
+          <div class="modal__header"><p class="eyebrow">Pagamento seguro</p><h2 id="dialog-title">${approved ? 'Pagamento confirmado' : cardPayment ? 'Pagar com cartão' : cryptoPayment ? 'Pagar com Crypto' : advertisingPayment ? 'Pagar campanha com Pix' : 'Ativar com Pix'}</h2>${advertisingPayment ? '<p>Plano e conteúdo aprovados pela equipe AltGrid. A campanha entra no ar somente após a confirmação do pagamento.</p>' : ''}</div>
           ${this.paymentError ? `<div class="form-alert is-visible" role="alert">${escapeHtml(this.paymentError)}</div>` : ''}
           ${payment
-            ? `<div class="payment-summary"><strong>${escapeHtml(formatCurrency(payment.amount, payment.currency, localeTag(this.locale)))}</strong><small>${advertisingPayment ? 'Campanha publicitária AltGrid' : escapeHtml(payment.product_code)}</small>${cardPayment ? `<small>Plano ${escapeHtml(formatCurrency(payment.base_amount ?? payment.amount / 1.2, payment.currency, localeTag(this.locale)))} + taxa do cartão de ${escapeHtml(String(payment.processing_fee_percent ?? 20))}% (${escapeHtml(formatCurrency(payment.processing_fee ?? payment.amount - (payment.base_amount ?? payment.amount / 1.2), payment.currency, localeTag(this.locale)))})</small>` : ''}</div>${approved ? `<div class="payment-approved"><span aria-hidden="true">✓</span><strong>${advertisingPayment ? 'Pagamento confirmado. Sua campanha está sendo ativada.' : 'Seu plano está sendo ativado.'}</strong></div>` : cardPayment ? `<p class="modal__note">O checkout seguro do ${cardProvider} foi aberto no navegador. Conclua o pagamento e volte ao AltGrid.</p><button class="button button--primary" data-open-card-checkout type="button">Abrir checkout novamente</button><p class="payment-waiting"><i class="spinner spinner--green"></i> Aguardando confirmação do ${cardProvider}…</p>` : `${qrImage ? `<img class="pix-qr" src="data:image/png;base64,${qrImage}" alt="QR Code Pix" />` : ''}<label class="field pix-copy"><span>Pix Copia e Cola</span><textarea readonly rows="3" data-pix-code>${escapeHtml(payment.qr_code ?? '')}</textarea></label><button class="button button--secondary" data-copy-pix type="button">Copiar código Pix</button><p class="payment-waiting"><i class="spinner spinner--green"></i> Aguardando pagamento…</p>`}`
-            : `<div class="payment-waiting"><i class="spinner spinner--green"></i> ${cardPayment ? 'Preparando checkout seguro…' : 'Preparando seu Pix…'}</div>`}
+            ? `<div class="payment-summary"><strong>${escapeHtml(formatCurrency(payment.amount, payment.currency, localeTag(this.locale)))}</strong><small>${advertisingPayment ? 'Campanha publicitária AltGrid' : escapeHtml(payment.product_code)}</small>${feePayment ? `<small>Plano ${escapeHtml(formatCurrency(payment.base_amount ?? payment.amount / 1.1, payment.currency, localeTag(this.locale)))} + taxa de ${escapeHtml(String(payment.processing_fee_percent ?? 10))}% (${escapeHtml(formatCurrency(payment.processing_fee ?? payment.amount - (payment.base_amount ?? payment.amount / 1.1), payment.currency, localeTag(this.locale)))})</small>` : ''}</div>${approved ? `<div class="payment-approved"><span aria-hidden="true">✓</span><strong>${advertisingPayment ? 'Pagamento confirmado. Sua campanha está sendo ativada.' : 'Seu plano está sendo ativado.'}</strong></div>` : externalCheckout ? `<p class="modal__note">O checkout seguro do ${cardProvider} foi aberto no navegador. Conclua o pagamento e volte ao AltGrid.</p><button class="button button--primary" data-open-card-checkout type="button">Abrir checkout novamente</button><p class="payment-waiting"><i class="spinner spinner--green"></i> Aguardando confirmação do ${cardProvider}…</p>` : `${qrImage ? `<img class="pix-qr" src="data:image/png;base64,${qrImage}" alt="QR Code Pix" />` : ''}<label class="field pix-copy"><span>Pix Copia e Cola</span><textarea readonly rows="3" data-pix-code>${escapeHtml(payment.qr_code ?? '')}</textarea></label><button class="button button--secondary" data-copy-pix type="button">Copiar código Pix</button><p class="payment-waiting"><i class="spinner spinner--green"></i> Aguardando pagamento…</p>`}`
+            : `<div class="payment-waiting"><i class="spinner spinner--green"></i> ${externalCheckout ? 'Preparando checkout seguro…' : 'Preparando seu Pix…'}</div>`}
           <div class="modal__actions">${payment && !approved ? `<button class="button button--primary" data-refresh-payment type="button" ${this.paymentLoading ? 'disabled' : ''}>${this.paymentLoading ? 'Atualizando…' : 'Atualizar status'}</button>` : ''}<button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
         </dialog>
       `
@@ -5807,7 +5913,7 @@ export class AuthApp {
         : isFree
           ? '<span class="plan-option__badge plan-option__badge--free">Grátis para sempre</span>'
           : product
-            ? `<div class="plan-payment-actions"><button class="button button--primary button--compact" data-buy-product="${escapeHtml(product.code)}" type="button">Pagar com Pix</button><button class="button button--secondary button--compact" data-buy-card="${escapeHtml(product.code)}" type="button">Pagar com cartão <small>+20%</small></button></div>`
+            ? `<div class="plan-payment-actions"><button class="button button--primary button--compact" data-buy-combined="${escapeHtml(product.code)}" type="button">PIX:Cartão</button><button class="button button--secondary button--compact" data-buy-crypto="${escapeHtml(product.code)}" type="button">Crypto</button></div>`
             : '<span class="plan-option__badge">Preço indisponível</span>'
 
     return `
@@ -7170,6 +7276,9 @@ export class AuthApp {
       this.appAdPaymentRequestId = null
       this.paymentMethod = null
     }
+    if (this.activeDialog === 'payment-methods' || this.activeDialog === 'crypto-methods') {
+      this.pendingPaymentProductCode = null
+    }
     if (this.activeDialog === 'proxy' || this.activeDialog === 'copy-proxy') {
       this.proxyConfig = null
       this.proxyLoading = false
@@ -7457,7 +7566,7 @@ export class AuthApp {
 
   private startAdminPaymentAlerts(): void {
     if (
-      !this.adminAccess
+      !this.isOwnerAdmin()
       || !this.backendApi?.getAdminPaymentLogs
       || this.adminPaymentAlertTimer !== null
       || this.destroyed
@@ -7468,7 +7577,7 @@ export class AuthApp {
     void this.refreshAdminPaymentAlerts()
     this.adminPaymentAlertTimer = setInterval(() => {
       void this.refreshAdminPaymentAlerts()
-    }, 60_000)
+    }, 10_000)
   }
 
   private stopAdminPaymentAlerts(): void {
@@ -7488,7 +7597,7 @@ export class AuthApp {
   private async refreshAdminPaymentAlerts(): Promise<void> {
     const backendApi = this.backendApi
     if (
-      !this.adminAccess
+      !this.isOwnerAdmin()
       || !backendApi?.getAdminPaymentLogs
       || this.adminPaymentAlertLoading
     ) {
@@ -7591,14 +7700,66 @@ export class AuthApp {
     const identity = nickname
       ? `${nickname}${user?.email ? ` · ${user.email}` : ''}`
       : user?.email ?? payment.user_id
+    const metadata = payment.metadata
+      && typeof payment.metadata === 'object'
+      && !Array.isArray(payment.metadata)
+      ? payment.metadata as Record<string, unknown>
+      : {}
+    const provider = payment.provider.trim().toLowerCase()
+    const paymentMethod = provider === 'nowpayments'
+      ? `Crypto${typeof metadata.pay_currency === 'string' ? ` · ${metadata.pay_currency.toUpperCase()}` : ''}`
+      : provider === 'stripe'
+        ? 'Cartão · Stripe'
+        : metadata.payment_method === 'card'
+          ? 'Cartão · Mercado Pago'
+          : 'PIX · Mercado Pago'
+    const popupNickname = nickname || user?.email || payment.user_id
+    const popupAmount = formatCurrency(
+      payment.amount,
+      payment.currency,
+      localeTag(this.locale),
+    )
+    this.adminPaymentPopup = {
+      amount: popupAmount,
+      confirmed,
+      eventKey: payment.id,
+      nickname: popupNickname,
+      paymentMethod,
+      product: payment.product_code,
+    }
     this.notificationCenter.upsertSystemNotification({
       id: `admin-payment:${payment.id}:${confirmed ? 'confirmed' : 'attempt'}`,
       occurredAt: payment.updated_at || payment.created_at,
-      summary: `${identity} · ${payment.product_code} · ${formatCurrency(payment.amount, payment.currency, localeTag(this.locale))}`,
+      summary: `${identity} · ${payment.product_code} · ${paymentMethod} · ${popupAmount}`,
       title: confirmed ? 'Compra aprovada' : 'Nova tentativa de compra',
     })
     playAdminPaymentAlertSound(confirmed)
+    showAdminSystemNotification(
+      confirmed ? 'Compra aprovada no AltGrid' : 'Nova tentativa de compra no AltGrid',
+      `Nick: ${popupNickname} · Forma de pagamento: ${paymentMethod} · ${popupAmount}`,
+    )
     this.render()
+  }
+
+  private renderAdminPaymentPopup(): string {
+    const popup = this.adminPaymentPopup
+    if (!popup || !this.isOwnerAdmin()) return ''
+
+    return `
+      <section class="admin-payment-alert" role="alertdialog" aria-modal="true" aria-labelledby="admin-payment-alert-title">
+        <div class="admin-payment-alert__pulse" aria-hidden="true">!</div>
+        <p class="eyebrow">${popup.confirmed ? 'PAGAMENTO CONFIRMADO' : 'NOVA TENTATIVA DE PAGAMENTO'}</p>
+        <h2 id="admin-payment-alert-title">${popup.confirmed ? 'Compra aprovada' : 'Novo pagamento iniciado'}</h2>
+        <p class="admin-payment-alert__copy">Recebido agora no painel administrativo.</p>
+        <dl>
+          <div><dt>Nick</dt><dd>${escapeHtml(popup.nickname)}</dd></div>
+          <div><dt>Forma de pagamento</dt><dd>${escapeHtml(popup.paymentMethod)}</dd></div>
+          <div><dt>Plano</dt><dd>${escapeHtml(popup.product)}</dd></div>
+          <div><dt>Valor</dt><dd>${escapeHtml(popup.amount || '—')}</dd></div>
+        </dl>
+        <button class="button button--primary" data-close-admin-payment-alert type="button">Entendi</button>
+      </section>
+    `
   }
 
   private updateOwnerToolPreference(tool: OwnerTool, input: HTMLInputElement): void {
@@ -7645,6 +7806,24 @@ export class AuthApp {
       this.paymentLoading = false
       this.render()
     }
+  }
+
+  private async createNowPaymentsPayment(productCode: string, payCurrency: string, button: HTMLButtonElement): Promise<void> {
+    if (!this.backendApi?.createNowPaymentsCheckout) {
+      this.dialogError = 'O pagamento em crypto está indisponível no momento.'
+      this.render()
+      return
+    }
+    this.activeDialog = 'payment'; this.appAdPaymentRequestId = null; this.paymentMethod = 'nowpayments'
+    this.pixPayment = null; this.paymentError = null; this.paymentLoading = true; button.disabled = true; this.render()
+    try {
+      const response = await this.backendApi.createNowPaymentsCheckout(productCode, payCurrency)
+      this.pixPayment = response.payment
+      const checkoutUrl = response.payment.checkout_url
+      if (!checkoutUrl?.startsWith('https://nowpayments.io/')) throw new Error('O NOWPayments não retornou um checkout seguro.')
+      await Promise.resolve(this.openExternalUrl(checkoutUrl)); this.startPaymentPolling()
+    } catch (error) { this.paymentError = backendErrorMessage(error) }
+    finally { this.paymentLoading = false; this.render() }
   }
 
   private async createMercadoPagoCardPayment(productCode: string, button: HTMLButtonElement): Promise<void> {
@@ -7707,6 +7886,15 @@ export class AuthApp {
   }
 
   private bindDialogActions(): void {
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-close-admin-payment-alert]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          this.adminPaymentPopup = null
+          this.render()
+        })
+      })
+
     this.root
       .querySelectorAll<HTMLButtonElement>('[data-close-dialog]')
       .forEach((button) => {
@@ -8044,8 +8232,55 @@ export class AuthApp {
     this.root.querySelectorAll<HTMLButtonElement>('[data-buy-card]').forEach((button) => {
       this.bindButtonOnce(button, () => {
         const productCode = button.dataset.buyCard
-        // Cartão agora usa o checkout Stripe; o Mercado Pago permanece reservado ao Pix.
-        if (productCode) void this.createStripePayment(productCode, button)
+        if (productCode) void this.createMercadoPagoCardPayment(productCode, button)
+      })
+    })
+
+    this.root.querySelectorAll<HTMLButtonElement>('[data-buy-combined]').forEach((button) => {
+      this.bindButtonOnce(button, () => {
+        const productCode = button.dataset.buyCombined
+        if (!productCode) return
+        this.pendingPaymentProductCode = productCode
+        this.dialogError = null
+        this.activeDialog = 'payment-methods'
+        this.render()
+      })
+    })
+
+    this.root.querySelectorAll<HTMLButtonElement>('[data-choose-payment]').forEach((button) => {
+      this.bindButtonOnce(button, () => {
+        const productCode = this.pendingPaymentProductCode
+        if (!productCode) return
+        const method = button.dataset.choosePayment
+        this.pendingPaymentProductCode = null
+        if (method === 'pix') {
+          void this.createPixPayment(productCode, button)
+        } else if (method === 'mercadopago-card') {
+          void this.createMercadoPagoCardPayment(productCode, button)
+        }
+      })
+    })
+
+    this.root.querySelectorAll<HTMLButtonElement>('[data-buy-crypto]').forEach((button) => {
+      this.bindButtonOnce(button, () => {
+        const productCode = button.dataset.buyCrypto
+        if (!productCode) return
+        this.pendingPaymentProductCode = productCode
+        this.selectedCryptoCurrency = 'usdttrc20'
+        this.dialogError = null
+        this.activeDialog = 'crypto-methods'
+        this.render()
+      })
+    })
+
+    this.root.querySelectorAll<HTMLButtonElement>('[data-choose-crypto]').forEach((button) => {
+      this.bindButtonOnce(button, () => {
+        const productCode = this.pendingPaymentProductCode
+        const payCurrency = button.dataset.chooseCrypto
+        if (!productCode || !payCurrency) return
+        this.selectedCryptoCurrency = payCurrency
+        this.pendingPaymentProductCode = null
+        void this.createNowPaymentsPayment(productCode, payCurrency, button)
       })
     })
 
@@ -8325,7 +8560,9 @@ export class AuthApp {
         const checkoutUrl = this.pixPayment?.checkout_url
         const safeCheckout = this.pixPayment?.provider === 'stripe'
           ? checkoutUrl?.startsWith('https://checkout.stripe.com/')
-          : isMercadoPagoCheckoutUrl(checkoutUrl)
+          : this.pixPayment?.provider === 'nowpayments' || this.paymentMethod === 'nowpayments'
+            ? checkoutUrl?.startsWith('https://nowpayments.io/')
+            : isMercadoPagoCheckoutUrl(checkoutUrl)
         if (checkoutUrl && safeCheckout) {
           void Promise.resolve(this.openExternalUrl(checkoutUrl)).catch(() => {
             this.paymentError = 'Não foi possível abrir o checkout do cartão.'

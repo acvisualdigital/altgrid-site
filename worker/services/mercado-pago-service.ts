@@ -83,7 +83,7 @@ function assertProductAvailable(user: SafeUser, productCode: string): void {
 }
 
 function processingFeePercent(value: string | undefined): number {
-  const parsed = Number(value ?? '20')
+  const parsed = Number(value ?? '10')
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
     throw new ApiError(503, 'payments_unavailable', 'A taxa do pagamento com cartão está inválida.')
   }

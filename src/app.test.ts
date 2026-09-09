@@ -374,14 +374,14 @@ describe('Founder upgrade offer', () => {
     harness.activeDialog = 'plans'
     harness.products = [founder, upgrade]
     harness.me = { founder_upgrade_eligible: false }
-    expect(harness.renderDialog()).toContain('data-buy-product="FOUNDER_LIFETIME"')
-    expect(harness.renderDialog()).not.toContain('data-buy-product="FOUNDER_UPGRADE"')
+    expect(harness.renderDialog()).toContain('data-buy-combined="FOUNDER_LIFETIME"')
+    expect(harness.renderDialog()).not.toContain('data-buy-combined="FOUNDER_UPGRADE"')
 
     harness.me = { founder_upgrade_eligible: true }
-    expect(harness.renderDialog()).toContain('data-buy-product="FOUNDER_UPGRADE"')
+    expect(harness.renderDialog()).toContain('data-buy-combined="FOUNDER_UPGRADE"')
 
     harness.products = [founder]
-    expect(harness.renderDialog()).toContain('data-buy-product="FOUNDER_LIFETIME"')
+    expect(harness.renderDialog()).toContain('data-buy-combined="FOUNDER_LIFETIME"')
   })
 })
 

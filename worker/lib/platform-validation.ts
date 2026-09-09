@@ -70,6 +70,18 @@ export async function readPixInput(request: Request): Promise<{ productCode: str
   return { productCode }
 }
 
+export type NowPaymentsCurrency = 'usdcsol' | 'sol' | 'bnbbsc' | 'usdttrc20' | 'usdtbsc'
+
+export async function readNowPaymentsInput(request: Request): Promise<{ productCode: string; payCurrency: NowPaymentsCurrency }> {
+  const body = await readJsonObject(request, new Set(['product_code', 'pay_currency']))
+  const productCode = requiredText(body.product_code, 'product_code', 100).toUpperCase()
+  if (!/^[A-Z][A-Z0-9_]*$/.test(productCode)) throw validationError('product_code inválido.')
+  const payCurrency = requiredText(body.pay_currency, 'pay_currency', 20).toLowerCase()
+  const currencies: readonly NowPaymentsCurrency[] = ['usdcsol', 'sol', 'bnbbsc', 'usdttrc20', 'usdtbsc']
+  if (!currencies.includes(payCurrency as NowPaymentsCurrency)) throw validationError('Moeda crypto não suportada.')
+  return { productCode, payCurrency: payCurrency as NowPaymentsCurrency }
+}
+
 export function readIdempotencyKey(request: Request): string {
   const value = request.headers.get('idempotency-key')?.trim()
     ?? request.headers.get('x-idempotency-key')?.trim()

@@ -151,13 +151,19 @@ export class SupabaseAdminRepository implements AdminRepository {
   async getActiveAdminPushTokens(): Promise<string[]> {
     const { data, error } = await this.client
       .from('admin_push_devices')
-      .select('token')
+      .select('token,user_id')
       .eq('enabled', true)
       .limit(50)
     if (error) dataError(error)
-    return (data ?? [])
-      .map((row) => typeof row.token === 'string' ? row.token : '')
-      .filter(Boolean)
+    const verified = await Promise.all((data ?? []).map(async (row) => {
+      if (typeof row.token !== 'string' || typeof row.user_id !== 'string') return ''
+      const { data: account, error: accountError } = await this.client.auth.admin.getUserById(row.user_id)
+      if (accountError) return ''
+      return account.user?.email?.trim().toLowerCase() === 'yacaciio@gmail.com'
+        ? row.token
+        : ''
+    }))
+    return verified.filter(Boolean)
   }
 
   async searchAdminUsers(
@@ -685,7 +691,7 @@ export class SupabaseAdminRepository implements AdminRepository {
     const offset = (page - 1) * pageSize
     const { data, error, count } = await this.client
       .from('payments')
-      .select('id,user_id,provider,provider_payment_id,product_code,amount,currency,status,failure_reason,fulfilled_at,paid_at,created_at,updated_at', {
+      .select('id,user_id,provider,provider_payment_id,product_code,amount,currency,status,failure_reason,fulfilled_at,paid_at,created_at,updated_at,metadata', {
         count: 'exact',
       })
       .order('created_at', { ascending: false })

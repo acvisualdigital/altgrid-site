@@ -55,6 +55,7 @@ export interface AdminPayment {
   fulfilled_at: string | null
   paid_at: string | null
   created_at: string
+  metadata?: Json
 }
 
 export interface AdminPaymentLog extends AdminPayment {

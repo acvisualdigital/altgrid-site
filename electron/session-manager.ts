@@ -16,6 +16,10 @@ const DEFAULT_LOAD_TIMEOUT_MS = 30_000
 // Many game pages are not responsive below this width; zooming out below it
 // gives their layout more effective CSS space so buttons/bars stop clipping.
 const AUTO_FIT_REFERENCE_WIDTH = 960
+// Huntera keeps the Party status (gold and stamina) anchored to a desktop-width
+// canvas. Give this game a wider virtual viewport when it shares the grid so
+// the right edge remains visible instead of being clipped by a narrow slot.
+const HUNTERA_AUTO_FIT_REFERENCE_WIDTH = 1_280
 const AUTO_FIT_MIN_ZOOM = 0.67
 const MIN_INTERFACE_ZOOM = 0.5
 const MAX_INTERFACE_ZOOM = 1
@@ -29,12 +33,26 @@ const DEFAULT_ECO_SECONDARY_FRAME_RATE = 20
 const MIN_ECO_SECONDARY_FRAME_RATE = 2
 const MAX_ECO_SECONDARY_FRAME_RATE = 30
 
-function computeAutoFitZoom(width: number): number {
+function isHunteraUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase()
+    return hostname === 'huntera.com.br' || hostname.endsWith('.huntera.com.br')
+  } catch {
+    return false
+  }
+}
+
+function computeAutoFitZoom(width: number, url = ''): number {
   if (!Number.isFinite(width) || width <= 0) {
     return 1
   }
 
-  return Math.min(1, Math.max(AUTO_FIT_MIN_ZOOM, width / AUTO_FIT_REFERENCE_WIDTH))
+  const huntera = isHunteraUrl(url)
+  const referenceWidth = huntera
+    ? HUNTERA_AUTO_FIT_REFERENCE_WIDTH
+    : AUTO_FIT_REFERENCE_WIDTH
+  const minimumZoom = huntera ? MIN_INTERFACE_ZOOM : AUTO_FIT_MIN_ZOOM
+  return Math.min(1, Math.max(minimumZoom, width / referenceWidth))
 }
 
 function normalizeFrameRate(input: unknown): number {
@@ -728,7 +746,7 @@ export class SessionManager {
   }
 
   private effectiveInterfaceZoom(record: SessionRecord): number {
-    return record.interfaceZoom ?? computeAutoFitZoom(record.bounds.width)
+    return record.interfaceZoom ?? computeAutoFitZoom(record.bounds.width, record.url)
   }
 
   private refreshFrameRateBudgets(force = false): void {

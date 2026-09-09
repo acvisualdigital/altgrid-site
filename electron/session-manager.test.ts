@@ -248,6 +248,19 @@ describe('SessionManager', () => {
     expect(view.setZoomFactor).toHaveBeenLastCalledWith(1)
   })
 
+  it('keeps Huntera Party gold and stamina inside narrow grid slots', async () => {
+    const harness = createHarness()
+    await harness.manager.createSession('huntera-party', 'https://huntera.com.br/game')
+    const view = harness.views.get('huntera-party')!
+    view.setZoomFactor.mockClear()
+
+    harness.manager.resizeSession('huntera-party', { x: 0, y: 0, width: 800, height: 600 })
+    expect(view.setZoomFactor).toHaveBeenLastCalledWith(0.625)
+
+    harness.manager.resizeSession('huntera-party', { x: 0, y: 0, width: 640, height: 600 })
+    expect(view.setZoomFactor).toHaveBeenLastCalledWith(0.5)
+  })
+
   it('keeps a manual interface scale across grid resizes and restores automatic fit', async () => {
     const harness = createHarness()
     await harness.manager.createSession('account-1', 'https://game.example/')
