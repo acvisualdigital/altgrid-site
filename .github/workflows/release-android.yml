@@ -71,7 +71,7 @@ jobs:
           $releaseTag = "v$versionName"
           $releaseType = if ($versionName.Contains("-")) { "prerelease" } else { "release" }
           $runAttempt = [Math]::Min([int64]"${{ github.run_attempt }}", 9)
-          $versionCode = 2000000 + ([int64]"${{ github.run_number }}" * 10) + $runAttempt
+          $versionCode = 3000000 + ([int64]"${{ github.run_number }}" * 10) + $runAttempt
 
           "ANDROID_VERSION_NAME=$versionName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "ALTGRID_ANDROID_VERSION_NAME=$versionName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
