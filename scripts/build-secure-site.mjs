@@ -22,7 +22,7 @@ for (const name of await readdir('build/site')) {
 const csp = [
   "default-src 'self'",
   `script-src 'self' ${[...hashes].join(' ')} https://www.googletagmanager.com https://*.googlesyndication.com https://googleads.g.doubleclick.net`,
-  "style-src 'self' 'unsafe-inline'",
+  "style-src 'self'",
   "img-src 'self' data: https:",
   "font-src 'self' data:",
   "connect-src 'self' https://altgrid-api.altgrid.workers.dev https://ohauktuwjzwbvkuxlatt.supabase.co wss://ohauktuwjzwbvkuxlatt.supabase.co https://*.google-analytics.com https://www.googletagmanager.com https://*.googlesyndication.com https://*.doubleclick.net https://www.google.com https://www.google.com.br https://www.googleadservices.com",

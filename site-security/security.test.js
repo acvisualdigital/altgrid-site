@@ -10,6 +10,7 @@ describe('Public site security', () => {
     } }), new Request('https://altgrid.com.br/'))
     expect(response.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'")
     expect(response.headers.get('Content-Security-Policy')).not.toContain("script-src 'unsafe-inline'")
+    expect(response.headers.get('Content-Security-Policy')).not.toContain("style-src 'self' 'unsafe-inline'")
     expect(response.headers.get('X-Frame-Options')).toBe('DENY')
     expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff')
     expect(response.headers.get('Strict-Transport-Security')).toBe('max-age=31536000')

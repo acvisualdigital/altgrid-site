@@ -42,6 +42,17 @@ const publisherAccount = document.querySelector('[data-publisher-account]')
 const spotlightCard = document.querySelector('[data-spotlight-card]')
 const number = new Intl.NumberFormat('pt-BR')
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+const accentClasses = Object.freeze({
+  '#e8a83e': 'accent-gold',
+  '#d8b861': 'accent-sand',
+  '#49a7ff': 'accent-blue',
+  '#77cfff': 'accent-sky',
+  '#a875ff': 'accent-purple',
+  '#d7a717': 'accent-amber',
+  '#78d996': 'accent-mint',
+  '#ff775e': 'accent-coral',
+})
+const accentClass = (value) => accentClasses[String(value ?? '').toLowerCase()] ?? 'accent-green'
 const revealObserver = !reduceMotion && 'IntersectionObserver' in window
   ? new IntersectionObserver((entries, observer) => {
       entries.forEach((entry) => {
@@ -354,7 +365,7 @@ const renderHeroDeck = () => {
 
 const gameCard = (game, index) => {
   const view = socialView(game)
-  const article = document.createElement('article'); article.className = `game-card reveal-item${game.site_only ? ' is-community' : ''}`; article.style.setProperty('--game-glow', `${view.accent}38`)
+  const article = document.createElement('article'); article.className = `game-card reveal-item ${accentClass(view.accent)}${game.site_only ? ' is-community' : ''}`
   const visual = document.createElement('div'); visual.className = 'game-card__visual'
   const rank = document.createElement('span'); rank.className = 'game-card__rank'; rank.textContent = String(index + 1).padStart(2, '0')
   const favorite = document.createElement('button'); favorite.className = 'game-card__favorite'; favorite.type = 'button'; favorite.textContent = state.favorites.has(game.slug) ? '♥' : '♡'; favorite.setAttribute('aria-pressed', String(state.favorites.has(game.slug))); favorite.setAttribute('aria-label', `${state.favorites.has(game.slug) ? 'Remover' : 'Adicionar'} ${game.name} da minha lista`)
@@ -412,15 +423,11 @@ function renderDiscovery() {
     button.addEventListener('click', () => { state.category = category; controls.elements.category.value = category; renderGames(); document.querySelector('#lista')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) })
     return button
   }))
-  const statusConfig = [
-    ['Lançado', '#25e66f'],
-    ['Beta', '#e8a83e'],
-    ['Em desenvolvimento', '#8e7cff'],
-  ]
+  const statusConfig = ['Lançado', 'Beta', 'Em desenvolvimento']
   const radar = document.querySelector('[data-status-radar]')
-  radar.replaceChildren(...statusConfig.map(([status, color]) => {
+  radar.replaceChildren(...statusConfig.map((status) => {
     const count = state.games.filter((game) => metadata(game).status === status).length
-    const button = document.createElement('button'); button.type = 'button'; button.style.setProperty('--status-color', color); button.innerHTML = `<span><i></i>${escapeHtml(status)}</span><strong>${count}</strong>`; button.addEventListener('click', () => filterByStatus(status)); return button
+    const button = document.createElement('button'); button.type = 'button'; button.className = `status-${status === 'Lançado' ? 'live' : status === 'Beta' ? 'beta' : 'development'}`; button.innerHTML = `<span><i></i>${escapeHtml(status)}</span><strong>${count}</strong>`; button.addEventListener('click', () => filterByStatus(status)); return button
   }))
   renderVoteAgenda()
 }
@@ -451,7 +458,9 @@ function openGame(game, countVisit = true) {
     trackSiteEvent('view_item', { content_type: 'idle_game', item_id: game.slug, item_name: game.name })
   }
   state.activeGame = game; const view = socialView(game); const local = localSocial(game.slug)
-  document.querySelector('[data-detail-hero]').style.setProperty('--detail-glow', `${view.accent}42`)
+  const detailHero = document.querySelector('[data-detail-hero]')
+  detailHero.classList.remove(...Object.values(accentClasses), 'accent-green')
+  detailHero.classList.add(accentClass(view.accent))
   const icon = document.querySelector('[data-detail-icon]'); icon.replaceChildren(...iconElement(game, '').childNodes)
   document.querySelector('[data-detail-name]').textContent = game.name; document.querySelector('[data-detail-tagline]').textContent = view.tagline; document.querySelector('[data-detail-description]').textContent = view.description
   document.querySelector('[data-detail-tags]').innerHTML = `<span>${escapeHtml(view.category)}</span><span>${escapeHtml(view.status)}</span>`
