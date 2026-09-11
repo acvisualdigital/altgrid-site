@@ -1,4 +1,31 @@
 const CONSENT_STORAGE_KEY = 'altgrid.google-consent.v1'
+let googleLoaded = false
+
+const loadGoogleServices = () => {
+  if (googleLoaded) return
+  googleLoaded = true
+  window.dataLayer = window.dataLayer || []
+  window.gtag = function () { window.dataLayer.push(arguments) }
+  window.gtag('consent', 'default', {
+    ad_storage: 'denied', analytics_storage: 'denied',
+    ad_user_data: 'denied', ad_personalization: 'denied',
+  })
+  updateGoogleConsent('granted')
+  window.gtag('js', new Date())
+  window.gtag('config', 'AW-18415695413')
+  // Google serves changing scripts: a fixed SRI hash would break updates.
+  // The site's CSP restricts these endpoints; neither loads before consent.
+  for (const src of [
+    'https://www.googletagmanager.com/gtag/js?id=AW-18415695413',
+    'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2576736310394290',
+  ]) {
+    const script = document.createElement('script')
+    script.async = true
+    script.src = src
+    script.crossOrigin = 'anonymous'
+    document.head.append(script)
+  }
+}
 
 const updateGoogleConsent = (choice) => {
   if (typeof window.gtag !== 'function') return
@@ -27,6 +54,8 @@ const saveConsentChoice = (choice) => {
     // Mantém a decisão na página quando o armazenamento está bloqueado.
   }
   updateGoogleConsent(choice)
+  if (choice === 'granted') loadGoogleServices()
+  else if (googleLoaded) window.location.reload()
 }
 
 const showConsentBanner = () => {
@@ -57,7 +86,8 @@ const showConsentBanner = () => {
 }
 
 const storedConsentChoice = readConsentChoice()
-if (storedConsentChoice) updateGoogleConsent(storedConsentChoice)
+if (storedConsentChoice === 'granted') loadGoogleServices()
+else if (storedConsentChoice) updateGoogleConsent(storedConsentChoice)
 else showConsentBanner()
 
 const consentSettings = document.createElement('button')

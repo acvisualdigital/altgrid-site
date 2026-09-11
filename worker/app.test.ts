@@ -98,6 +98,25 @@ describe('Cloudflare Worker API', () => {
     expect(authenticate).not.toHaveBeenCalled()
   })
 
+  it('rejects foreign origins before authentication and returns security headers', async () => {
+    const response = await api.fetch(new Request('https://api.example.com/v1/me', {
+      headers: { Origin: 'https://attacker.example', Authorization: `Bearer ${ACCESS_TOKEN}` },
+    }))
+    expect(response.status).toBe(403)
+    expect(authenticate).not.toHaveBeenCalled()
+    expect(response.headers.has('Access-Control-Allow-Origin')).toBe(false)
+    expect(response.headers.get('X-Frame-Options')).toBe('DENY')
+    expect(response.headers.get('Cache-Control')).toBe('no-store')
+  })
+
+  it('does not authenticate a forged request with only cookies or URL credentials', async () => {
+    const response = await api.fetch(new Request(`https://api.example.com/v1/me?access_token=${ACCESS_TOKEN}`, {
+      headers: { Cookie: `access_token=${ACCESS_TOKEN}` },
+    }))
+    expect(response.status).toBe(401)
+    expect(response.headers.get('Cache-Control')).toBe('no-store')
+  })
+
   it('GET /v1/app/metrics returns aggregate-only public presence counters', async () => {
     repository.metrics = {
       users: { active: 7, total: 42 },

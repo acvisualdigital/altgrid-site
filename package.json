@@ -28,6 +28,8 @@
     "release:preflight": "node scripts/release-preflight.mjs",
     "smoke:staging": "node scripts/staging-smoke.mjs",
     "site:test": "node scripts/site-preflight.mjs",
+    "site:build": "node scripts/build-secure-site.mjs",
+    "site:deploy": "wrangler deploy --config wrangler.site.jsonc",
     "test": "vitest",
     "test:run": "vitest run",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit && tsc -p tsconfig.electron.test.json",

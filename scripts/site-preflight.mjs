@@ -9,6 +9,14 @@ const warnings = []
 
 const files = await readdir(SITE_ROOT, { withFileTypes: true })
 const htmlFiles = files.filter((entry) => entry.isFile() && extname(entry.name) === '.html')
+const consentScript = await readFile(resolve(SITE_ROOT, 'site-consent.js'), 'utf8')
+if (!consentScript.includes(`googletagmanager.com/gtag/js?id=${EXPECTED_GOOGLE_ADS_ID}`)) errors.push('Google Ads não configurado no controle de consentimento')
+if (!consentScript.includes(`client=ca-${EXPECTED_ADSENSE_PUBLISHER}`)) errors.push('AdSense não configurado no controle de consentimento')
+for (const entry of ['games.js', 'site-visitors.js']) {
+  const script = await readFile(resolve(SITE_ROOT, entry), 'utf8')
+  if (/from ['"]https?:/.test(script)) errors.push(`${entry}: importação remota de JavaScript`)
+}
+await readFile(resolve(SITE_ROOT, 'vendor/supabase.js'))
 
 function report(collection, file, message) {
   collection.push(`${file}: ${message}`)
@@ -37,9 +45,7 @@ for (const entry of htmlFiles) {
   if (!/<title>[^<]{12,}<\/title>/i.test(html)) report(errors, file, 'título ausente ou curto')
   if (!/<meta\s+name=["']description["']\s+content=["'][^"']{50,}["']/i.test(html)) report(errors, file, 'descrição SEO ausente ou curta')
   if (!/<link\s+rel=["']canonical["']\s+href=["']https:\/\/altgrid\.com\.br\//i.test(html)) report(errors, file, 'URL canônica ausente')
-  if (!html.includes(`googletagmanager.com/gtag/js?id=${EXPECTED_GOOGLE_ADS_ID}`)) report(errors, file, 'Google Ads tag ausente')
-  if (!html.includes(`googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-${EXPECTED_ADSENSE_PUBLISHER}`)) report(errors, file, 'AdSense tag ausente')
-  if (!html.includes("gtag('consent', 'default'")) report(errors, file, 'consentimento padrão ausente')
+  if (/<script[^>]+src=["']https?:/i.test(html)) report(errors, file, 'script externo carregado antes do consentimento')
   if (!html.includes('site-consent.js')) report(errors, file, 'controle de privacidade compartilhado ausente')
   if (duplicateIds.length) report(errors, file, `IDs duplicados: ${[...new Set(duplicateIds)].join(', ')}`)
 

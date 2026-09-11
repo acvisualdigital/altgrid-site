@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4'
+import { createClient } from './vendor/supabase.js'
 
 const config = window.ALTGRID_SITE_CONFIG ?? {}
 const targets = document.querySelectorAll('[data-total-visitors]')
