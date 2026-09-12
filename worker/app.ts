@@ -272,7 +272,7 @@ export function createApi(
           throw new ApiError(502, 'invalid_update_feed', 'Feed de atualizações inválido.')
         }
         return jsonResponse(feed, 200, {
-          'Cache-Control': 'public, max-age=60, s-maxage=60',
+          'Cache-Control': 'no-store',
         })
       }
 
