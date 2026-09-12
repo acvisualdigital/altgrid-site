@@ -53,6 +53,7 @@ import {
 import { SessionSurfaceManager } from './services/session-surface-manager'
 import { parseProxyLine } from './services/proxy-line-parser'
 import { ChatService, type ChatState } from './services/chat-service'
+import { playMentionSound, unlockChatSound } from './services/chat-sound'
 import { NotificationCenterService } from './services/notification-center-service'
 import {
   APP_LOCALES,
@@ -503,7 +504,7 @@ const GRID_MODE_STORAGE_KEY = 'altgrid.preference.grid-mode.v1'
 // Process-tree sampling is useful telemetry, but doing it too frequently adds
 // measurable work with several Chromium sessions. The display remains fresh
 // without competing with the games every few seconds.
-const RESOURCE_USAGE_REFRESH_INTERVAL_MS = 30_000
+const RESOURCE_USAGE_REFRESH_INTERVAL_MS = 60_000
 
 export type EcoBackgroundFps = 2 | 5 | 10 | 20 | 30
 
@@ -1057,6 +1058,8 @@ export class AuthApp {
   private sessionAlertTimer: ReturnType<typeof setTimeout> | null = null
   private readonly backgroundAccountIds = new Set<string>()
   private chatNicknameSaving = false
+  private chatReply: ChatState['messages'][number] | null = null
+  private readonly chatDrafts = new Map<string, string>()
   private nicknameOnboarding = false
   private selectedChatGameChannelIds: Set<string> | null = null
   private accountOrderChanged = false
@@ -1360,6 +1363,8 @@ export class AuthApp {
     this.unsubscribeFromChat = null
     this.chatService?.reset()
     this.unsubscribeFromUpdater?.()
+    this.chatDrafts.clear()
+    this.chatReply = null
     this.unsubscribeFromUpdater = null
     window.removeEventListener('online', this.handleConnectivityChange)
     window.removeEventListener('offline', this.handleConnectivityChange)
@@ -1542,6 +1547,7 @@ export class AuthApp {
   }
 
   private readonly handleGlobalPointerDown = (event: PointerEvent): void => {
+    unlockChatSound()
     const target = event.target instanceof Element ? event.target : null
     const currentMenu = target?.closest<HTMLDetailsElement>(
       'details[data-session-menu], details[data-toolbar-menu]',
@@ -1591,7 +1597,7 @@ export class AuthApp {
   }
 
   private switchToAccountByDigit(digit: string): boolean {
-    const account = this.configuredAccounts[Number(digit) - 1]
+    const account = this.tabAccounts()[Number(digit) - 1]
 
     if (!account) {
       return false
@@ -1941,6 +1947,8 @@ export class AuthApp {
     this.ecoModeEffective = false
     void this.syncEcoMode()
     this.chatService?.reset()
+    this.chatDrafts.clear()
+    this.chatReply = null
   }
 
   private stopAppAdPopupTimer(): void {
@@ -2333,6 +2341,7 @@ export class AuthApp {
 
       if (meResult.status === 'fulfilled' && meResult.value) {
         this.me = meResult.value
+        this.chatService?.watchMentions(this.session!.user.id, this.me.profile.display_name ?? '', playMentionSound)
       }
 
       const verifiedAdmin = adminResult.status === 'fulfilled' ? adminResult.value : null
@@ -2944,12 +2953,17 @@ export class AuthApp {
     return `<span aria-hidden="true">${account.gameSlug === CUSTOM_GAME_SLUG ? 'URL' : escapeHtml(account.gameSlug.slice(0, 2).toUpperCase())}</span>`
   }
 
+  private tabAccounts(): ConfiguredAccount[] {
+    return this.configuredAccounts.filter((account) => account.pinned
+      || this.permissionService.isSessionActive(account.id))
+  }
+
   private renderAccountTabs(): string {
     return `
       <div class="account-tabs" data-account-tabs aria-label="Contas">
         <button class="account-tabs__nav account-tabs__nav--previous" data-scroll-accounts="previous" type="button" aria-label="Contas anteriores" aria-controls="account-tabs-scroll" hidden>‹</button>
         <div class="account-tabs__scroll" id="account-tabs-scroll" data-account-tabs-scroll role="region" aria-label="Contas configuradas" tabindex="0">
-          ${this.configuredAccounts.map((account) => {
+          ${this.tabAccounts().map((account) => {
             const active = this.permissionService.isSessionActive(account.id)
             const resting = active && this.backgroundAccountIds.has(account.id)
             const proxyState = this.accountProxyStates.get(account.id)
@@ -2974,6 +2988,7 @@ export class AuthApp {
                     <small><i class="account-tab__indicator ${active ? 'is-online' : ''}" aria-hidden="true"></i>${escapeHtml(this.gameNameFor(account))} · ${resting ? 'Em descanso' : active ? (this.mobileSessionMode ? 'Conectada' : 'Conectado') : (this.mobileSessionMode ? 'Salva' : 'Offline')}</small>
                   </span>
                 </button>
+                <button class="account-pin ${account.pinned ? 'is-pinned' : ''}" data-pin-account data-account-id="${escapeHtml(account.id)}" aria-pressed="${account.pinned === true}" aria-label="${account.pinned ? 'Desafixar' : 'Fixar'} ${escapeHtml(account.displayName)}" title="${account.pinned ? 'Desafixar aba' : 'Manter aba quando fechada'}" type="button">⌖</button>
                 ${active
                   ? this.mobileSessionMode
                     ? `<div class="account-tab__actions">
@@ -2991,6 +3006,10 @@ export class AuthApp {
           }).join('')}
         </div>
         <button class="account-tabs__nav account-tabs__nav--next" data-scroll-accounts="next" type="button" aria-label="Próximas contas" aria-controls="account-tabs-scroll" hidden>›</button>
+        <details class="toolbar-menu inactive-accounts-menu" data-toolbar-menu>
+          <summary class="header-command-button inactive-accounts-trigger" aria-label="Ver contas inativas">${uiIcon('users')}<span class="inactive-accounts-trigger__label">Inativas</span><strong class="inactive-accounts-trigger__count">${this.configuredAccounts.filter((account) => !this.permissionService.isSessionActive(account.id)).length}</strong></summary>
+          <div class="inactive-accounts-popover">${this.renderSavedAccounts() || '<p>Nenhuma conta inativa.</p>'}</div>
+        </details>
         <button class="account-tab account-tab--add" data-add-account type="button">
           <span class="account-tab--add__icon" aria-hidden="true">${uiIcon('add')}</span>
           <span class="account-tab__copy"><strong>Nova conta</strong><small>Adicionar sessão</small></span>
@@ -3810,7 +3829,8 @@ export class AuthApp {
       .querySelectorAll<HTMLElement>('[data-account-order-id]')
       .forEach((tab) => {
         const accountId = tab.dataset.accountOrderId
-        tab.hidden = filterToCurrentPage && (!accountId || !visible.has(accountId))
+        const pinned = this.configuredAccounts.some((account) => account.id === accountId && account.pinned)
+        tab.hidden = filterToCurrentPage && !pinned && (!accountId || !visible.has(accountId))
       })
 
     const scroller = this.root.querySelector<HTMLElement>('[data-account-tabs-scroll]')
@@ -4151,6 +4171,7 @@ export class AuthApp {
             </details>`}
           </header>
           <p data-user-content>${escapeHtml(message.message)}</p>
+          <button class="chat-reply-action" data-reply-chat-message="${escapeHtml(message.id)}" type="button" aria-label="Responder a ${escapeHtml(message.display_name || 'Jogador')}"><span aria-hidden="true">↩</span> Responder</button>
         </div>
       </article>
     `
@@ -4225,7 +4246,8 @@ export class AuthApp {
           : ''}
         ${state.error ? `<p class="chat-error" role="alert">${escapeHtml(state.error)}</p>` : ''}
         <form class="chat-composer" id="chat-form">
-          <textarea name="message" maxlength="500" rows="2" placeholder="${currentChannel?.type === 'direct' ? `Mensagem para ${escapeHtml(currentChannel.name)}…` : 'Escreva uma mensagem…'}" aria-label="Mensagem" ${state.banned ? 'disabled' : ''}></textarea>
+          ${this.chatReply?.channel_id === state.selectedChannelId ? `<div class="chat-reply-preview"><span data-user-content>Respondendo a ${escapeHtml(this.chatReply.display_name)}: ${escapeHtml(this.chatReply.message.slice(0, 100))}</span><button type="button" data-cancel-chat-reply aria-label="Cancelar resposta">×</button></div>` : ''}
+          <textarea name="message" maxlength="500" rows="2" placeholder="${currentChannel?.type === 'direct' ? `Mensagem para ${escapeHtml(currentChannel.name)}…` : 'Escreva uma mensagem…'}" aria-label="Mensagem" ${state.banned ? 'disabled' : ''}>${escapeHtml(this.chatDrafts.get(state.selectedChannelId ?? '') ?? '')}</textarea>
           <button type="submit" aria-label="Enviar mensagem" ${state.sending || state.banned ? 'disabled' : ''}>➤</button>
         </form>
       </aside>
@@ -4244,6 +4266,7 @@ export class AuthApp {
     try {
       const response = await this.backendApi.updateProfile({ display_name: field.value })
       if (this.me) this.me = { ...this.me, profile: response.profile }
+      if (this.session) this.chatService?.watchMentions(this.session.user.id, response.profile.display_name ?? '', playMentionSound)
       this.nicknameOnboarding = false
       this.activeDialog = null
       if (openChatAfterSave) {
@@ -4577,6 +4600,7 @@ export class AuthApp {
                 <small>${escapeHtml(this.gameNameFor(account))}</small>
               </span>
               <button class="saved-account__open" data-open-account data-account-id="${escapeHtml(account.id)}" type="button">Abrir</button>
+              <button class="saved-account__open" data-pin-account data-account-id="${escapeHtml(account.id)}" aria-pressed="${account.pinned === true}" type="button">${account.pinned ? 'Desafixar' : 'Fixar'}</button>
               <details class="saved-account__menu" data-session-menu>
                 <summary aria-label="Opções de ${escapeHtml(account.displayName)}">⋯</summary>
                 <div class="menu-popover menu-popover--up" role="menu">
@@ -5760,7 +5784,7 @@ export class AuthApp {
               <section data-settings-panel="accounts" hidden><h3>Contas e desempenho</h3><p>Cookies, sessões e proxies ficam somente neste dispositivo, isolados por conta.</p><div class="resource-summary"><span><small>Uso das sessões</small><strong>${escapeHtml(formatMemoryKb(totalPrivateKb))} · ${totalCpu.toFixed(1)}% CPU</strong></span><button class="button button--secondary" data-refresh-resource-usage type="button" ${this.resourceUsageLoading ? 'disabled' : ''}>${this.resourceUsageLoading ? 'Medindo…' : 'Medir agora'}</button></div>${usageRows ? `<div class="resource-list">${usageRows}</div>` : '<p class="modal__note">Abra suas contas e clique em “Medir agora” para ver o consumo por sessão.</p>'}<p class="modal__note">O perfil de 10 FPS reduz trabalho de CPU/GPU das contas em segundo plano. Como cada jogo mantém um navegador isolado e ativo, a RAM só é totalmente liberada ao fechar a conta.</p></section>
               <section data-settings-panel="visual" hidden><h3>Visual</h3><p>O tema escuro premium acompanha automaticamente o AltGrid.</p></section>
               <section data-settings-panel="updates" hidden><h3>Atualizações</h3><p>Canal atual: <strong>${updateChannel}</strong> · instalada ${APP_VERSION}${this.configText('latest_version') ? ` · disponível ${escapeHtml(this.configText('latest_version')!)}` : ''}</p><button class="button button--secondary" data-check-update type="button">Verificar atualização</button></section>
-              <section data-settings-panel="notifications" hidden><h3>Notificações</h3><label class="setting-toggle"><span><strong>Avisos do AltGrid</strong><small>Atualizações, anúncios e alertas do sistema.</small></span><input data-preference="notifications" type="checkbox" ${notifications ? 'checked' : ''} /></label></section>
+              <section data-settings-panel="notifications" hidden><h3>Notificações</h3><label class="setting-toggle"><span><strong>Avisos do AltGrid</strong><small>Atualizações, anúncios e alertas do sistema.</small></span><input data-preference="notifications" type="checkbox" ${notifications ? 'checked' : ''} /></label><label class="setting-toggle"><span><strong>Som de menções no chat</strong><small>Avisa quando alguém mencionar seu nick.</small></span><input data-preference="chat-sound" type="checkbox" ${localStorage.getItem('altgrid.preference.chat-sound') !== 'false' ? 'checked' : ''} /></label></section>
               <section data-settings-panel="about" hidden><h3>Sobre</h3><p>AltGrid ${APP_VERSION}</p><p class="service-line"><i class="status-dot status-dot--small ${this.serviceStatusDotClass()}"></i> Serviços AltGrid: ${this.serviceStatusLabel()}</p></section>
             </div>
           </div>
@@ -6204,6 +6228,16 @@ export class AuthApp {
         })
       })
 
+    this.root.querySelectorAll<HTMLButtonElement>('[data-pin-account]').forEach((button) => {
+      this.bindButtonOnce(button, () => {
+        const account = this.accountFromAction(button)
+        if (!account || !this.session) return
+        this.accountService.setPinned(this.session.user.id, account.id, !account.pinned)
+        this.configuredAccounts = this.accountService.list(this.session.user.id)
+        this.render()
+      })
+    })
+
     this.root
       .querySelectorAll<HTMLButtonElement>('[data-account-tab]')
       .forEach((button) => {
@@ -6582,9 +6616,23 @@ export class AuthApp {
         })
       })
 
+    this.root.querySelectorAll<HTMLButtonElement>('[data-reply-chat-message]').forEach((button) => {
+      this.bindButtonOnce(button, () => {
+        this.chatReply = this.chatService?.getState().messages.find((message) => message.id === button.dataset.replyChatMessage) ?? null
+        this.render()
+        this.root.querySelector<HTMLTextAreaElement>('#chat-form textarea')?.focus()
+      })
+    })
+    const cancelReply = this.root.querySelector<HTMLButtonElement>('[data-cancel-chat-reply]')
+    if (cancelReply) this.bindButtonOnce(cancelReply, () => { this.chatReply = null; this.render() })
     const chatForm = this.root.querySelector<HTMLFormElement>('#chat-form')
     if (chatForm && chatForm.dataset.actionBound !== 'true') {
       chatForm.dataset.actionBound = 'true'
+      chatForm.addEventListener('input', () => {
+        const channelId = this.chatService?.getState().selectedChannelId
+        const field = chatForm.elements.namedItem('message')
+        if (channelId && field instanceof HTMLTextAreaElement) this.chatDrafts.set(channelId, field.value)
+      })
       chatForm.addEventListener('submit', (event) => {
         event.preventDefault()
         const channelId = this.chatService?.getState().selectedChannelId
@@ -6592,9 +6640,16 @@ export class AuthApp {
         if (!channelId || !(field instanceof HTMLTextAreaElement)) {
           return
         }
-        void this.chatService?.send(field.value)
+        const draft = field.value
+        const reply = this.chatReply?.channel_id === channelId ? this.chatReply : null
+        const text = reply ? `↪ @${reply.display_name}: “${reply.message.slice(0, 100)}” — ${field.value}` : field.value
+        if (!field.value.trim()) return
+        void this.chatService?.send(text)
           .then(() => {
+            if (this.chatDrafts.get(channelId) === draft) this.chatDrafts.delete(channelId)
+            if (this.chatReply === reply) this.chatReply = null
             field.value = ''
+            this.render()
           })
           .catch((error) => this.showSessionAlert(
             error instanceof Error ? error.message : 'Não foi possível enviar a mensagem.',

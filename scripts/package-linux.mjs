@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
+import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 
@@ -44,10 +44,13 @@ try {
 
   const files = await readdir(temporaryOutput)
   if (process.platform === 'win32') {
-    const unpackedDirectory = join(temporaryOutput, 'linux-unpacked')
+    const unpackedDirectory = join(temporaryOutput, architectureName === 'arm64' ? 'linux-arm64-unpacked' : 'linux-unpacked')
     const unpackedInfo = await stat(unpackedDirectory)
     if (!unpackedInfo.isDirectory()) throw new Error('Pacote Linux descompactado inválido.')
-    console.log('Linux x64: empacotamento descompactado validado no Windows.')
+    await mkdir(outputDirectory, { recursive: true })
+    const savedDirectory = await mkdtemp(join(outputDirectory, `preview-${architectureName}-${version}-`))
+    await cp(unpackedDirectory, savedDirectory, { recursive: true })
+    console.log(`Linux ${architectureName}: pacote preservado em ${savedDirectory}. Não é um instalador DEB/AppImage.`)
     console.log('AppImage e DEB serão gerados no runner Linux da publicação.')
   } else {
     const expected = targetNames.map((target) => (

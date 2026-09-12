@@ -31,6 +31,18 @@ class FailingWriteStorage extends MemoryStorage {
   }
 }
 
+it('persists pins separately for each user and allows unpinning', () => {
+  const storage = new MemoryStorage()
+  const service = new ConfiguredAccountService({ storage, createId: () => 'account' })
+  service.add('owner', { displayName: 'Main', gameSlug: 'huntera' })
+  service.setPinned('owner', 'account', true)
+  const restored = new ConfiguredAccountService({ storage })
+  expect(restored.list('owner')[0]?.pinned).toBe(true)
+  expect(restored.list('other')).toEqual([])
+  restored.setPinned('owner', 'account', false)
+  expect(restored.list('owner')[0]?.pinned).not.toBe(true)
+})
+
 const free: ResolvedEntitlements = {
   account_limit: 2,
   expires_at: null,

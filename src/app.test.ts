@@ -1142,7 +1142,8 @@ describe('AuthApp session lifecycle', () => {
     await permissions.openSession(configured[0]!.id, () => undefined)
     ;(app as unknown as { render(): void }).render()
 
-    expect(root.innerHTML.match(/data-account-tab\b/g)).toHaveLength(3)
+    expect(root.innerHTML.match(/data-account-tab\b/g)).toHaveLength(1)
+    expect(root.innerHTML).toContain('inactive-accounts-trigger__count">2</strong>')
     configured.forEach((account) => {
       expect(root.innerHTML).toContain(`data-account-id="${account.id}"`)
     })
@@ -1192,6 +1193,7 @@ describe('AuthApp session lifecycle', () => {
     })
     const configured = ['Conta A', 'Conta B', 'Conta C'].map((displayName) =>
       accounts.add(user.id, { displayName, gameSlug: 'huntera' }))
+    configured.forEach((account) => accounts.setPinned(user.id, account.id, true))
     const permissions = new PermissionService()
     let forwardShortcut: (digit: string) => void = () => undefined
     const app = new AuthApp(root, auth.service, {
@@ -1450,7 +1452,7 @@ describe('AuthApp session lifecycle', () => {
 
     expect(root.innerHTML).toContain('mobile-navigation')
     expect(root.innerHTML).toContain('data-native-session-host')
-    expect(root.innerHTML.match(/data-account-tab\b/g)).toHaveLength(2)
+    expect(root.innerHTML.match(/data-account-tab\b/g)).toHaveLength(1)
     expect(root.innerHTML).not.toContain('mobile-session-ready')
     expect(root.innerHTML).not.toContain('Retomar jogo')
     expect(root.innerHTML).not.toContain('data-toggle-grid')

@@ -4799,6 +4799,48 @@ form {
   font-size: 9.5px;
 }
 
+.account-pin { position: absolute; left: 2px; top: 3px; z-index: 2; color: var(--text-muted); background: transparent; cursor: pointer; }
+.account-pin.is-pinned { color: var(--green, #20d568); }
+.inactive-accounts-popover { position: fixed; top: 76px; right: 14px; z-index: 100; width: min(440px, calc(100vw - 28px)); max-height: 65vh; overflow-y: auto; padding: 12px; background: #111a20; border: 1px solid #2d443a; border-radius: 12px; }
+.inactive-accounts-popover .saved-accounts, .inactive-accounts-popover .saved-accounts__list { display: flex; flex-direction: column; align-items: stretch; overflow: visible; }
+.inactive-accounts-popover .saved-account__name { flex: 1; }
+.inactive-accounts-menu {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-width: 0;
+  height: 50px;
+}
+
+.inactive-accounts-trigger {
+  box-sizing: border-box;
+  gap: 6px;
+  width: auto;
+  height: 44px;
+  min-height: 44px;
+  padding: 6px 9px;
+  list-style: none;
+}
+
+.inactive-accounts-trigger::-webkit-details-marker { display: none; }
+.inactive-accounts-trigger__count {
+  display: grid;
+  place-items: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border: 1px solid rgba(51, 218, 103, 0.3);
+  border-radius: 999px;
+  color: var(--green-hover);
+  background: rgba(35, 201, 91, 0.1);
+  font-size: 9px;
+  line-height: 1;
+}
+.chat-reply-preview { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; border-left: 3px solid #20d568; padding: 8px; font-size: 12px; }
+.chat-reply-preview span { flex: 1; overflow-wrap: anywhere; }
+.chat-reply-preview button { background: transparent; color: inherit; cursor: pointer; }
+.chat-composer:has(.chat-reply-preview) { flex-wrap: wrap; }
+.chat-reply-preview { flex-basis: 100%; }
 .saved-accounts-region {
   min-width: 0;
   padding: 0 10px 9px;
@@ -5566,6 +5608,7 @@ form {
 }
 
 .account-tabs {
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   align-items: stretch;
@@ -5660,6 +5703,7 @@ form {
 }
 
 .account-tab-shell .account-tab {
+  padding-left: 28px;
   width: 100%;
 }
 
@@ -7774,8 +7818,8 @@ form {
   display: grid;
   grid-template-columns: 29px minmax(0, 1fr);
   gap: 7px;
-  width: min(94%, 350px);
-  max-width: 100%;
+  width: fit-content;
+  max-width: min(94%, 350px);
   color: var(--text-secondary);
   background: transparent;
 }
@@ -7798,6 +7842,8 @@ form {
 
 .chat-message__bubble {
   min-width: 0;
+  width: fit-content;
+  max-width: 100%;
   padding: 9px 10px;
   border: 1px solid var(--border-soft);
   border-radius: 8px 8px 8px 2px;
@@ -7844,6 +7890,30 @@ form {
   font-size: 12px;
   line-height: 1.45;
   white-space: pre-wrap;
+}
+
+.chat-reply-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 20px;
+  margin-top: 3px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  background: transparent;
+  font-size: 9.5px;
+  font-weight: 600;
+  cursor: pointer;
+  opacity: 0.78;
+}
+
+.chat-reply-action:hover,
+.chat-reply-action:focus-visible {
+  outline: none;
+  color: var(--green-hover);
+  background: rgba(35, 201, 91, 0.08);
+  opacity: 1;
 }
 
 .chat-message .plan-badge {
@@ -8423,6 +8493,12 @@ form {
 
   .header-command-button > span {
     display: none;
+  }
+
+  .inactive-accounts-trigger {
+    width: auto;
+    min-width: 58px;
+    padding-inline: 8px;
   }
 
   .session-shell {

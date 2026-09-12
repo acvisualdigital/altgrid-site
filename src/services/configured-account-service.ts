@@ -1,4 +1,5 @@
 export interface ConfiguredAccount {
+  pinned?: boolean
   id: string
   displayName: string
   gameSlug: string
@@ -91,6 +92,7 @@ export class ConfiguredAccountService {
             displayName: account.displayName,
             gameSlug: account.gameSlug,
             id: account.id,
+            ...(account.pinned === true ? { pinned: true } : {}),
           }))
         : []
     } catch {
@@ -132,6 +134,12 @@ export class ConfiguredAccountService {
     })
 
     return copy
+  }
+
+  setPinned(userId: string, accountId: string, pinned: boolean): void {
+    const accounts = this.list(userId).map((account) => account.id === accountId
+      ? { ...account, pinned } : account)
+    this.write(this.keyFor(userId), JSON.stringify(accounts))
   }
 
   rename(userId: string, accountId: string, displayName: string): ConfiguredAccount | null {

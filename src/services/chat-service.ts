@@ -6,6 +6,7 @@ import type {
 import type { BackendApi } from './backend-api'
 
 export const CHAT_MESSAGE_MAX_LENGTH = 500
+export const CHAT_HISTORY_LIMIT = 200
 const SEND_COOLDOWN_MS = 1_000
 const CHANNEL_REFRESH_MIN_INTERVAL_MS = 90_000
 const BLOCKED_USERS_KEY = 'altgrid.chat.blocked-users.v1'
@@ -27,6 +28,7 @@ interface ChatStorage {
 }
 
 export interface ChatRealtimeGateway {
+  subscribeIncoming?(onMessage: (message: Pick<ChatMessage, 'id' | 'channel_id' | 'user_id' | 'message'>) => void): () => void
   subscribe(
     channelId: string,
     onChange: () => void,
@@ -75,7 +77,7 @@ function mergeMessages(
   ;[...current, ...incoming].forEach((message) => byId.set(message.id, message))
   return [...byId.values()].sort(
     (left, right) => Date.parse(left.created_at) - Date.parse(right.created_at),
-  )
+  ).slice(-CHAT_HISTORY_LIMIT)
 }
 
 export class ChatService {
@@ -97,6 +99,24 @@ export class ChatService {
   private readonly listeners = new Set<(state: ChatState) => void>()
   private readonly blockedUserIds: Set<string>
   private unsubscribeRealtime: (() => void) | null = null
+  private unsubscribeIncoming: (() => void) | null = null
+
+  watchMentions(userId: string, nickname: string, onMention: () => void): void {
+    this.unsubscribeIncoming?.()
+    const seen = new Set<string>()
+    const escaped = nickname.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const mention = new RegExp(`(^|[^\\p{L}\\p{N}_])@${escaped}(?=$|[^\\p{L}\\p{N}_])`, 'iu')
+    this.unsubscribeIncoming = this.realtime?.subscribeIncoming?.((message) => {
+      const direct = this.state.channels.some((channel) => (
+        channel.id === message.channel_id && channel.type === 'direct'
+      ))
+      if (message.user_id === userId || this.blockedUserIds.has(message.user_id)
+        || seen.has(message.id) || (!direct && (!nickname.trim() || !mention.test(message.message)))) return
+      seen.add(message.id)
+      if (seen.size > 200) seen.delete(seen.values().next().value!)
+      onMention()
+    }) ?? null
+  }
   private revision = 0
   private lastSentAt = 0
   private refreshInFlight: Promise<void> | null = null
@@ -226,6 +246,8 @@ export class ChatService {
   }
 
   reset(): void {
+    this.unsubscribeIncoming?.()
+    this.unsubscribeIncoming = null
     this.revision += 1
     this.stopRealtime()
     this.lastChannelRefreshAt = null
@@ -261,6 +283,7 @@ export class ChatService {
       loading: true,
       messages: [],
       selectedChannelId: channelId,
+      sending: false,
       unread: { ...this.state.unread, [channelId]: 0 },
     })
 
@@ -272,9 +295,9 @@ export class ChatService {
       }
 
       this.patch({
-        hasMore: response.pagination.has_more,
+        hasMore: response.pagination.has_more && response.messages.length < CHAT_HISTORY_LIMIT,
         loading: false,
-        messages: response.messages,
+        messages: mergeMessages([], response.messages),
       })
 
       if (this.state.open) {
@@ -295,7 +318,7 @@ export class ChatService {
     const channelId = this.state.selectedChannelId
     const before = this.state.messages[0]?.created_at
 
-    if (!channelId || !before || !this.state.hasMore || this.state.loadingMore) {
+    if (!channelId || !before || !this.state.hasMore || this.state.loadingMore || this.state.messages.length >= CHAT_HISTORY_LIMIT) {
       return
     }
 
@@ -310,7 +333,7 @@ export class ChatService {
       }
 
       this.patch({
-        hasMore: response.pagination.has_more,
+        hasMore: response.pagination.has_more && response.messages.length + this.state.messages.length < CHAT_HISTORY_LIMIT,
         loadingMore: false,
         messages: mergeMessages(response.messages, this.state.messages),
       })
@@ -322,6 +345,7 @@ export class ChatService {
   }
 
   async send(message: string): Promise<void> {
+    if (this.state.sending) throw new Error('Aguarde o envio da mensagem anterior.')
     const channelId = this.state.selectedChannelId
     const normalized = message
       .replace(/[\t\r\n]+/g, ' ')
@@ -348,16 +372,18 @@ export class ChatService {
     }
 
     this.patch({ error: null, sending: true })
+    const revision = this.revision
 
     try {
       const response = await this.api.sendChatMessage(channelId, normalized)
+      if (revision !== this.revision || channelId !== this.state.selectedChannelId) return
       this.lastSentAt = this.now()
       this.patch({
         messages: mergeMessages(this.state.messages, [response.message]),
         sending: false,
       })
     } catch (error) {
-      this.patch({ error: 'Não foi possível enviar a mensagem.', sending: false })
+      if (revision === this.revision) this.patch({ error: 'Não foi possível enviar a mensagem.', sending: false })
       throw error
     }
   }

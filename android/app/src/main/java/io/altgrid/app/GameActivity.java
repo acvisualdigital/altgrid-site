@@ -14,10 +14,15 @@ import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
+import android.webkit.ConsoleMessage;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceResponse;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
+import android.webkit.ServiceWorkerClient;
+import android.webkit.ServiceWorkerController;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
@@ -610,6 +615,9 @@ public class GameActivity extends BridgeActivity {
     }
 
     private void configureWebView(WebView view, GameSession session, boolean popup) {
+        // Report engine/version only: never log account URLs, query strings or page messages.
+        android.content.pm.PackageInfo engine = WebViewCompat.getCurrentWebViewPackage(this);
+        Log.i(TAG, "Game engine: " + (engine == null ? "unknown" : engine.versionName));
         CookieManager cookies = profileCookieManager(view);
         cookies.setAcceptCookie(true);
         cookies.setAcceptThirdPartyCookies(view, true);
@@ -618,6 +626,23 @@ public class GameActivity extends BridgeActivity {
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
+        // Hunt Idle downloads its WASM/data packages through a Service Worker.
+        // Keep the worker on the normal HTTP cache and network path so a
+        // partial package can resume instead of ending at the first pause.
+        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        view.setNetworkAvailable(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            ServiceWorkerController serviceWorker = ServiceWorkerController.getInstance();
+            serviceWorker.getServiceWorkerWebSettings().setAllowContentAccess(true);
+            serviceWorker.getServiceWorkerWebSettings().setAllowFileAccess(false);
+            serviceWorker.getServiceWorkerWebSettings().setBlockNetworkLoads(false);
+            serviceWorker.setServiceWorkerClient(new ServiceWorkerClient() {
+                @Override
+                public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
+                    return null;
+                }
+            });
+        }
         settings.setAllowContentAccess(false);
         settings.setAllowFileAccess(false);
         settings.setAllowFileAccessFromFileURLs(false);
@@ -640,6 +665,13 @@ public class GameActivity extends BridgeActivity {
 
         view.setBackgroundColor(Color.rgb(8, 12, 17));
         view.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage message) {
+                if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                    Log.w(TAG, "Game script error at line " + message.lineNumber());
+                }
+                return true;
+            }
             @Override
             public boolean onCreateWindow(
                 WebView source,
@@ -686,6 +718,18 @@ public class GameActivity extends BridgeActivity {
         });
 
         view.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onReceivedError(WebView current, WebResourceRequest request, WebResourceError error) {
+                Log.w(TAG, "Game resource failed: code=" + error.getErrorCode()
+                    + " mainFrame=" + request.isForMainFrame());
+            }
+
+            @Override
+            public void onReceivedHttpError(WebView current, WebResourceRequest request, WebResourceResponse response) {
+                Log.w(TAG, "Game HTTP resource failed: status=" + response.getStatusCode()
+                    + " mainFrame=" + request.isForMainFrame());
+            }
+
             @Override
             public boolean shouldOverrideUrlLoading(WebView current, WebResourceRequest request) {
                 Uri destination = request.getUrl();

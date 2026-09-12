@@ -43,6 +43,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm release:preflight && pnpm test:run
       - run: pnpm linux:build
+      - name: Install graphical test dependencies
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgbm1 libasound2t64
       - name: Verify package contents
         env:
           VERSION: ${{ inputs.version }}
@@ -52,6 +54,10 @@ jobs:
           test -s "release/linux/AltGrid-linux-${ALTGRID_LINUX_ARCH}-${VERSION}.AppImage"
           dpkg-deb -x "release/linux/AltGrid-linux-${ALTGRID_LINUX_ARCH}-${VERSION}.deb" "$RUNNER_TEMP/altgrid-smoke"
           ELECTRON_RUN_AS_NODE=1 "$RUNNER_TEMP/altgrid-smoke/opt/AltGrid/altgrid" -e 'console.log(process.platform,process.arch)'
+      - name: Launch installed app with sandbox enabled
+        run: |
+          sudo dpkg -i "release/linux/AltGrid-linux-${ALTGRID_LINUX_ARCH}-${{ inputs.version }}.deb" || sudo apt-get -f install -y
+          xvfb-run -a node scripts/linux-launch-smoke.mjs /opt/AltGrid/altgrid
       - uses: actions/upload-artifact@v4
         with:
           name: AltGrid-Linux-${{ matrix.arch }}-${{ inputs.version }}
