@@ -1087,6 +1087,7 @@ export class AuthApp {
   private readonly workspaceMarkupCache = new Map<string, string>()
   private sessionLayoutQueue: Promise<void> = Promise.resolve()
   private sessionLayoutSuspended = false
+  private readonly closingAccountIds = new Set<string>()
   private sessionCleanupInFlight: Promise<boolean> | null = null
   private readonly sessionReleaseInFlight = new Map<string, Promise<void>>()
   private readonly failedSessionReleaseIds = new Set<string>()
@@ -1558,7 +1559,7 @@ export class AuthApp {
         'details[data-session-menu][open], details[data-toolbar-menu][open]',
       )
       .forEach((details) => {
-        if (details !== currentMenu) {
+        if (details !== currentMenu && !(currentMenu && details.contains(currentMenu))) {
           details.removeAttribute('open')
         }
       })
@@ -1795,6 +1796,17 @@ export class AuthApp {
 
   private prepareAuthenticatedSession(session: Session): void {
     this.locale = readPreferredLocale(session.user.id)
+    if (
+      this.session?.user.id === session.user.id
+      && this.session.access_token !== session.access_token
+    ) {
+      // A response started with the previous token must never invalidate a
+      // freshly refreshed session. Let the refresh start a new data load while
+      // the old request becomes stale through its captured revision.
+      this.backendStateRevision += 1
+      this.backendLoadInFlight = null
+      this.backendLoadStatus = 'idle'
+    }
     if (this.session?.user.id !== session.user.id || this.session?.user.email !== session.user.email) {
       this.ownerTools.revoke()
       this.permissionService.updateEntitlements(this.baseEntitlements)
@@ -2325,11 +2337,10 @@ export class AuthApp {
           && result.reason.status === 401,
       )
 
-      const adminUnauthorized = adminResult.status === 'rejected'
-        && adminResult.reason instanceof BackendApiError
-        && adminResult.reason.status === 401
-
-      if (unauthorized || adminUnauthorized) {
+      // The optional admin probe is not an authentication authority for the
+      // regular account. A denied/expired admin route only removes admin tools;
+      // the core profile and entitlement endpoints decide session validity.
+      if (unauthorized) {
         this.session = null
         this.clearAuthenticatedState()
         this.currentView = 'login'
@@ -2426,8 +2437,9 @@ export class AuthApp {
         ? backendErrorMessage(failures[0]?.reason)
         : null
       if (
-        this.backendLoadStatus === 'ready'
-        && !this.me?.profile.display_name?.trim()
+        meResult.status === 'fulfilled'
+        && Boolean(meResult.value)
+        && !meResult.value.profile.display_name?.trim()
       ) {
         this.nicknameOnboarding = true
         this.activeDialog = 'chat-nickname'
@@ -3008,7 +3020,10 @@ export class AuthApp {
         <button class="account-tabs__nav account-tabs__nav--next" data-scroll-accounts="next" type="button" aria-label="Próximas contas" aria-controls="account-tabs-scroll" hidden>›</button>
         <details class="toolbar-menu inactive-accounts-menu" data-toolbar-menu>
           <summary class="header-command-button inactive-accounts-trigger" aria-label="Ver contas inativas">${uiIcon('users')}<span class="inactive-accounts-trigger__label">Inativas</span><strong class="inactive-accounts-trigger__count">${this.configuredAccounts.filter((account) => !this.permissionService.isSessionActive(account.id)).length}</strong></summary>
-          <div class="inactive-accounts-popover">${this.renderSavedAccounts() || '<p>Nenhuma conta inativa.</p>'}</div>
+          <div class="inactive-accounts-popover" role="region" aria-label="Contas inativas">
+            <header class="inactive-accounts-popover__header"><div><strong>Contas inativas</strong><small>Suas contas salvas, prontas para abrir.</small></div><button class="inactive-accounts-popover__close" data-close-inactive-accounts type="button" aria-label="Fechar contas inativas" title="Fechar">${uiIcon('close')}</button></header>
+            ${this.renderSavedAccounts() || `<div class="inactive-accounts-empty">${uiIcon('users')}<strong>Nenhuma conta inativa.</strong><span>As contas encerradas aparecem aqui.</span></div>`}
+          </div>
         </details>
         <button class="account-tab account-tab--add" data-add-account type="button">
           <span class="account-tab--add__icon" aria-hidden="true">${uiIcon('add')}</span>
@@ -4425,6 +4440,7 @@ export class AuthApp {
             <strong data-session-name>${escapeHtml(account.displayName)}</strong>
             <span data-session-game>${escapeHtml(this.gameNameFor(account))}</span>
           </div>
+          <button class="session-card__close" data-close-account data-account-id="${escapeHtml(account.id)}" type="button" aria-label="Fechar sessão ${escapeHtml(account.displayName)}" title="Fechar sessão">${uiIcon('close')}</button>
           <details class="session-menu" data-session-menu>
             <summary class="session-menu__trigger" aria-label="Opções de ${escapeHtml(account.displayName)}">⋯</summary>
             <div class="menu-popover session-menu__popover" role="menu">
@@ -4591,10 +4607,11 @@ export class AuthApp {
 
     return `
       <div class="saved-accounts">
-        <span class="saved-accounts__label">Contas salvas</span>
+        <span class="saved-accounts__label">Contas salvas <strong>${inactiveAccounts.length}</strong></span>
         <div class="saved-accounts__list">
           ${inactiveAccounts.map((account) => `
             <div class="saved-account" data-saved-account data-account-id="${escapeHtml(account.id)}">
+              <span class="saved-account__icon">${this.renderAccountGameIcon(account)}</span>
               <span class="saved-account__name" title="${escapeHtml(account.displayName)} · ${escapeHtml(this.gameNameFor(account))}">
                 ${escapeHtml(account.displayName)}
                 <small>${escapeHtml(this.gameNameFor(account))}</small>
@@ -4871,7 +4888,7 @@ export class AuthApp {
   }
 
   private applyWorkspacePresentation(): void {
-    if (this.sessionLayoutSuspended) {
+    if (this.sessionLayoutSuspended || this.closingAccountIds.size > 0) {
       return
     }
 
@@ -6693,6 +6710,20 @@ export class AuthApp {
       })
 
     this.root
+      .querySelectorAll<HTMLButtonElement>('[data-close-inactive-accounts]')
+      .forEach((button) => {
+        this.bindButtonOnce(button, () => {
+          const menu = button.closest<HTMLDetailsElement>('.inactive-accounts-menu')
+          menu?.querySelectorAll<HTMLDetailsElement>('details[open]').forEach((child) => { child.open = false })
+          if (menu) {
+            menu.open = false
+            menu.querySelector<HTMLElement>('summary')?.focus()
+          }
+          this.scheduleWorkspaceLayout()
+        })
+      })
+
+    this.root
       .querySelectorAll<HTMLButtonElement>('[data-close-account]')
       .forEach((button) => {
         this.bindButtonOnce(button, () => {
@@ -7217,13 +7248,14 @@ export class AuthApp {
 
         details.dataset.menuBound = 'true'
         details.addEventListener('toggle', () => {
+          if (this.destroyed || !details.isConnected) return
           if (details.open) {
             this.root
               .querySelectorAll<HTMLDetailsElement>(
                 'details[data-session-menu][open], details[data-toolbar-menu][open]',
               )
               .forEach((other) => {
-                if (other !== details) {
+                if (other !== details && !other.contains(details)) {
                   other.removeAttribute('open')
                 }
               })
@@ -7235,7 +7267,7 @@ export class AuthApp {
 
           // Native WebContentsViews always sit above renderer HTML. Parking
           // them while a menu is open keeps notifications, Layout and ⋯ usable.
-          this.applyWorkspacePresentation()
+          this.scheduleWorkspaceLayout()
         })
       })
   }
@@ -7249,7 +7281,7 @@ export class AuthApp {
     }
 
     requestAnimationFrame(() => {
-      if (!details.open) {
+      if (this.destroyed || !details.isConnected || !details.open) {
         return
       }
 
@@ -9467,16 +9499,22 @@ export class AuthApp {
       (candidate) => candidate.id === accountId,
     )
 
-    if (!account) {
+    if (!account || this.closingAccountIds.has(accountId)) {
       return
     }
 
     const revision = this.backendStateRevision
     const userId = this.session?.user.id ?? null
+    const originalButtonMarkup = button.innerHTML
+    this.closingAccountIds.add(accountId)
     button.disabled = true
-    button.textContent = 'Encerrando…'
+    button.setAttribute('aria-busy', 'true')
 
     try {
+      // A menu toggle may have queued show/hide operations for the native view.
+      // Finish those operations before destroying it, and defer new layouts.
+      await this.sessionLayoutQueue.catch(() => undefined)
+      if (this.destroyed || revision !== this.backendStateRevision || this.session?.user.id !== userId) return
       await this.permissionService.closeSession(
         account.id,
         () => this.sessionLauncher.close(account),
@@ -9484,6 +9522,11 @@ export class AuthApp {
       this.mutedAccountIds.delete(account.id)
       this.sessionIssues.delete(account.id)
       this.backgroundAccountIds.delete(account.id)
+      if (this.maximizedAccountId === accountId) this.maximizedAccountId = null
+      if (this.getActiveAccounts().length === 0) {
+        this.screensOnly = false
+        this.setNativeFullscreen(false)
+      }
 
       if (this.focusedAccountId === accountId) {
         this.focusedAccountId = this.getActiveAccounts()[0]?.id ?? null
@@ -9520,7 +9563,14 @@ export class AuthApp {
       }
 
       button.disabled = false
-      button.textContent = 'Encerrar'
+      button.innerHTML = originalButtonMarkup
+    } finally {
+      this.closingAccountIds.delete(accountId)
+      button.removeAttribute('aria-busy')
+      if (!this.destroyed && revision === this.backendStateRevision && this.session?.user.id === userId) {
+        this.lastLayoutSignature = ''
+        this.scheduleWorkspaceLayout()
+      }
     }
   }
 

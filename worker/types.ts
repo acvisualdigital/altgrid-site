@@ -45,7 +45,17 @@ export interface RateLimitBinding {
   limit(options: { key: string }): Promise<{ success: boolean }>
 }
 
-export interface WorkerEnvironment extends Env {
+type OptionalGeneratedEnvironmentKey =
+  | 'MERCADOPAGO_CARD_FEE_PERCENT'
+  | 'STRIPE_SECRET_KEY'
+  | 'STRIPE_WEBHOOK_SECRET'
+  | 'STRIPE_PROCESSING_FEE_PERCENT'
+  | 'STRIPE_TEST_MODE'
+  | 'FIREBASE_PROJECT_ID'
+  | 'NOWPAYMENTS_WEBHOOK_URL'
+  | 'NOWPAYMENTS_PROCESSING_FEE_PERCENT'
+
+export type WorkerEnvironment = Omit<Env, OptionalGeneratedEnvironmentKey> & {
   MERCADOPAGO_CARD_FEE_PERCENT?: string
   STRIPE_SECRET_KEY?: string
   STRIPE_WEBHOOK_SECRET?: string

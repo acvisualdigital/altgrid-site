@@ -5,6 +5,16 @@ export const APP_LOCALE_STORAGE_KEY = 'altgrid.preference.language.v1'
 
 const translations: Record<Exclude<AppLocale, 'pt-BR'>, Record<string, string>> = {
   en: {
+    'Inativas': 'Inactive',
+    'Contas inativas': 'Inactive accounts',
+    'Ver contas inativas': 'View inactive accounts',
+    'Fechar contas inativas': 'Close inactive accounts',
+    'Contas salvas': 'Saved accounts',
+    'Suas contas salvas, prontas para abrir.': 'Your saved accounts, ready to open.',
+    'Nenhuma conta inativa.': 'No inactive accounts.',
+    'As contas encerradas aparecem aqui.': 'Closed accounts appear here.',
+    'Fixar': 'Pin',
+    'Desafixar': 'Unpin',
     'Acesso à conta': 'Account access',
     'Adicionar': 'Add',
     'Adicionar primeira conta': 'Add first account',
@@ -206,6 +216,16 @@ const translations: Record<Exclude<AppLocale, 'pt-BR'>, Record<string, string>> 
     'Salvar nova senha': 'Save new password',
   },
   es: {
+    'Inativas': 'Inactivas',
+    'Contas inativas': 'Cuentas inactivas',
+    'Ver contas inativas': 'Ver cuentas inactivas',
+    'Fechar contas inativas': 'Cerrar cuentas inactivas',
+    'Contas salvas': 'Cuentas guardadas',
+    'Suas contas salvas, prontas para abrir.': 'Tus cuentas guardadas, listas para abrir.',
+    'Nenhuma conta inativa.': 'No hay cuentas inactivas.',
+    'As contas encerradas aparecem aqui.': 'Las cuentas cerradas aparecen aquí.',
+    'Fixar': 'Fijar',
+    'Desafixar': 'Desfijar',
     'Acesso à conta': 'Acceso a la cuenta',
     'Adicionar': 'Añadir',
     'Adicionar primeira conta': 'Añadir primera cuenta',

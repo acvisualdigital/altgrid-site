@@ -4801,9 +4801,31 @@ form {
 
 .account-pin { position: absolute; left: 2px; top: 3px; z-index: 2; color: var(--text-muted); background: transparent; cursor: pointer; }
 .account-pin.is-pinned { color: var(--green, #20d568); }
-.inactive-accounts-popover { position: fixed; top: 76px; right: 14px; z-index: 100; width: min(440px, calc(100vw - 28px)); max-height: 65vh; overflow-y: auto; padding: 12px; background: #111a20; border: 1px solid #2d443a; border-radius: 12px; }
-.inactive-accounts-popover .saved-accounts, .inactive-accounts-popover .saved-accounts__list { display: flex; flex-direction: column; align-items: stretch; overflow: visible; }
-.inactive-accounts-popover .saved-account__name { flex: 1; }
+.inactive-accounts-popover { box-sizing: border-box; position: fixed; top: 76px; right: 14px; z-index: 100; width: min(460px, calc(100vw - 28px)); max-height: min(640px, calc(100dvh - 96px)); display: flex; flex-direction: column; padding: 0; background: #10191d; border: 1px solid #2d443a; border-radius: 16px; box-shadow: 0 18px 54px #0009; }
+.inactive-accounts-popover__header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; padding: 18px; border-bottom: 1px solid #25372f; }
+.inactive-accounts-popover__header > div { display: grid; gap: 5px; min-width: 0; }
+.inactive-accounts-popover__header strong { font-size: 15px; color: var(--text); }
+.inactive-accounts-popover__header small { font-size: 11px; color: var(--text-muted); }
+.inactive-accounts-popover__close, .session-card__close { display: grid; place-items: center; flex: 0 0 auto; width: 30px; height: 30px; padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-secondary); cursor: pointer; }
+.session-card__close { margin-left: auto; width: 28px; height: 28px; border-color: transparent; background: transparent; }
+.inactive-accounts-popover__close:hover, .session-card__close:hover { color: #ffc5c5; background: #51252a; }
+.inactive-accounts-popover__close:focus-visible, .session-card__close:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.session-card__close[aria-busy="true"] { opacity: .45; cursor: wait; }
+.inactive-accounts-popover .saved-accounts { display: flex; flex-direction: column; align-items: stretch; min-height: 0; gap: 12px; padding: 14px; background: transparent; border: 0; }
+.inactive-accounts-popover .saved-accounts__label { display: flex; align-items: center; justify-content: space-between; }
+.inactive-accounts-popover .saved-accounts__label strong { color: var(--green); font-size: 11px; }
+.inactive-accounts-popover .saved-accounts__list { display: flex; flex-direction: column; align-items: stretch; min-height: 0; gap: 8px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; padding-right: 3px; }
+.inactive-accounts-popover .saved-account { gap: 8px; padding: 10px 8px; min-height: 62px; border-radius: 10px; background: #151f25; }
+.saved-account__icon { display: grid; place-items: center; flex: 0 0 32px; width: 32px; height: 32px; overflow: hidden; border-radius: 9px; background: #0a1410; color: var(--green); font-size: 10px; }
+.saved-account__icon img { width: 100%; height: 100%; object-fit: contain; }
+.inactive-accounts-popover .saved-account__name { flex: 1; min-width: 0; max-width: none; display: grid; gap: 3px; font-size: 12px; }
+.inactive-accounts-popover .saved-account__name small { font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
+.inactive-accounts-popover .saved-account__open, .inactive-accounts-popover .saved-account__menu > summary { min-height: 32px; border-radius: 7px; }
+.inactive-accounts-popover [data-open-account] { color: #77edaa; background: #183b2a; font-weight: 700; }
+.inactive-accounts-popover [data-pin-account][aria-pressed="true"] { color: #77edaa; }
+.inactive-accounts-empty { display: grid; justify-items: center; gap: 10px; padding: 36px 18px; text-align: center; color: var(--text-muted); font-size: 12px; }
+.inactive-accounts-empty > .ui-icon { width: 30px; height: 30px; color: var(--green); }
+@media (max-width: 480px) { .inactive-accounts-popover .saved-account { gap: 5px; padding: 8px 5px; } .inactive-accounts-popover .saved-account__open { padding: 4px 5px; } }
 .inactive-accounts-menu {
   display: flex;
   flex: 0 0 auto;

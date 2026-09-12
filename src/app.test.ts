@@ -639,6 +639,171 @@ afterEach(() => {
 })
 
 describe('AuthApp session lifecycle', () => {
+  it.each([false, true])('closes after pending layout without deleting the saved account (pinned=%s)', async (pinned) => {
+    installBrowser('https://app.example.com/')
+    installLocalStorage()
+    const auth = createAuthServiceDouble()
+    auth.getSession.mockResolvedValue(session)
+    const accounts = new ConfiguredAccountService({ storage: null, createId: () => 'close-order' })
+    const account = accounts.add(user.id, { displayName: 'Conta', gameSlug: 'huntera' })
+    const permissions = new PermissionService()
+    const close = vi.fn()
+    const app = new AuthApp(createRoot(), auth.service, {
+      accountService: accounts, permissionService: permissions, sessionLauncher: { close },
+    })
+    await app.start()
+    await permissions.openSession(account.id, () => undefined)
+    const layout = deferred<void>()
+    const state = app as unknown as {
+      configuredAccounts: ConfiguredAccount[]
+      sessionLayoutQueue: Promise<void>
+      maximizedAccountId: string | null
+      screensOnly: boolean
+      tabAccounts(): ConfiguredAccount[]
+      closeConfiguredAccount(id: string, button: HTMLButtonElement): Promise<void>
+    }
+    state.configuredAccounts = [{ ...account, pinned }]
+    state.maximizedAccountId = account.id
+    state.screensOnly = true
+    state.sessionLayoutQueue = layout.promise
+    const button = { innerHTML: '×', disabled: false, setAttribute: vi.fn(), removeAttribute: vi.fn() } as unknown as HTMLButtonElement
+    try {
+      const closing = state.closeConfiguredAccount(account.id, button)
+      await state.closeConfiguredAccount(account.id, button)
+      expect(close).not.toHaveBeenCalled()
+      layout.resolve()
+      await closing
+      expect(close).toHaveBeenCalledOnce()
+      expect(permissions.isSessionActive(account.id)).toBe(false)
+      expect(accounts.list(user.id)).toHaveLength(1)
+      expect(state.tabAccounts()).toHaveLength(pinned ? 1 : 0)
+      expect(state.maximizedAccountId).toBeNull()
+      expect(state.screensOnly).toBe(false)
+    } finally {
+      app.destroy()
+    }
+  })
+
+  it.each([401, 429, 500, 0])('keeps a valid regular account signed in when the optional admin check returns %s', async (status) => {
+    installBrowser('https://app.example.com/')
+    installLocalStorage()
+    const auth = createAuthServiceDouble()
+    auth.signOut.mockResolvedValue(undefined)
+    const entitlements = {
+      account_limit: 6, expires_at: null, features: {},
+      founder_number: null, lifetime: true, plan: 'PRO' as const,
+    }
+    const backend = {
+      getMe: vi.fn().mockResolvedValue({
+        ...entitlements, user, license: null,
+        profile: { id: user.id, display_name: 'Hunter' },
+      }),
+      getEntitlements: vi.fn().mockResolvedValue(entitlements),
+      getAdminSession: vi.fn().mockRejectedValue(new BackendApiError('diagnostic_error', 'Simulated response', status)),
+    }
+    const app = new AuthApp(createRoot(), auth.service, { backendApi: backend as never })
+    const state = app as unknown as {
+      session: Session | null
+      backendUserId: string
+      currentView: string
+      render(): void
+      loadApplicationData(session: Session, force?: boolean): Promise<void>
+    }
+    vi.spyOn(state, 'render').mockImplementation(() => undefined)
+    state.session = session
+    state.backendUserId = user.id
+    state.currentView = 'authenticated'
+    try {
+      await state.loadApplicationData(session)
+      expect(backend.getMe).toHaveBeenCalledOnce()
+      expect(currentView(app)).toBe('authenticated')
+      expect(auth.signOut).not.toHaveBeenCalled()
+    } finally {
+      app.destroy()
+    }
+  })
+
+  it('does not let an old request log out a newly refreshed session for the same user', async () => {
+    installBrowser('https://app.example.com/')
+    installLocalStorage()
+    const auth = createAuthServiceDouble()
+    auth.signOut.mockResolvedValue(undefined)
+    const delayedAdmin = deferred<void>()
+    const backend = {
+      getMe: vi.fn().mockResolvedValue({ user, profile: { display_name: 'Hunter' } }),
+      getEntitlements: vi.fn().mockResolvedValue({
+        account_limit: 6, expires_at: null, features: {},
+        founder_number: null, lifetime: true, plan: 'PRO',
+      }),
+      getAdminSession: vi.fn(() => delayedAdmin.promise.then(() => {
+        throw new BackendApiError('invalid_token', 'Old request rejected', 401)
+      })),
+    }
+    const app = new AuthApp(createRoot(), auth.service, { backendApi: backend as never })
+    const state = app as unknown as {
+      session: Session | null
+      backendUserId: string
+      currentView: string
+      render(): void
+      handleAuthStateChange(event: AuthChangeEvent, session: Session | null): Promise<void>
+      loadApplicationData(session: Session, force?: boolean): Promise<void>
+    }
+    vi.spyOn(state, 'render').mockImplementation(() => undefined)
+    state.session = session
+    state.backendUserId = user.id
+    state.currentView = 'authenticated'
+    const refreshed = { ...session, access_token: 'refreshed-diagnostic-token' }
+    try {
+      const oldLoad = state.loadApplicationData(session)
+      await state.handleAuthStateChange('TOKEN_REFRESHED', refreshed)
+      expect(state.session?.access_token).toBe(refreshed.access_token)
+      await vi.waitFor(() => expect(backend.getMe).toHaveBeenCalledTimes(2))
+      delayedAdmin.resolve()
+      await oldLoad
+      await vi.waitFor(() => expect(backend.getAdminSession).toHaveBeenCalledTimes(2))
+      expect(currentView(app)).toBe('authenticated')
+      expect(auth.signOut).not.toHaveBeenCalled()
+      expect(state.session?.access_token).toBe(refreshed.access_token)
+    } finally {
+      app.destroy()
+    }
+  })
+
+  it('signs out when a current core profile request is unauthorized', async () => {
+    installBrowser('https://app.example.com/')
+    installLocalStorage()
+    const auth = createAuthServiceDouble()
+    auth.signOut.mockResolvedValue(undefined)
+    const backend = {
+      getMe: vi.fn().mockRejectedValue(new BackendApiError('invalid_token', 'Expired', 401)),
+      getEntitlements: vi.fn().mockResolvedValue({
+        account_limit: 6, expires_at: null, features: {},
+        founder_number: null, lifetime: true, plan: 'PRO',
+      }),
+      getAdminSession: vi.fn().mockResolvedValue(null),
+    }
+    const app = new AuthApp(createRoot(), auth.service, { backendApi: backend as never })
+    const state = app as unknown as {
+      session: Session | null
+      backendUserId: string
+      currentView: string
+      render(): void
+      loadApplicationData(session: Session, force?: boolean): Promise<void>
+    }
+    vi.spyOn(state, 'render').mockImplementation(() => undefined)
+    state.session = session
+    state.backendUserId = user.id
+    state.currentView = 'authenticated'
+    try {
+      await state.loadApplicationData(session)
+      expect(currentView(app)).toBe('login')
+      expect(auth.signOut).toHaveBeenCalledOnce()
+      expect(state.session).toBeNull()
+    } finally {
+      app.destroy()
+    }
+  })
+
   it('hides owner settings and rejects a forced toggle for another administrator', () => {
     installBrowser('https://app.example.com/')
     installLocalStorage()
@@ -1638,6 +1803,37 @@ describe('AuthApp session lifecycle', () => {
       expect(root.innerHTML).toContain('Continuar')
       expect(root.innerHTML).not.toContain('Conheça os planos')
     })
+    app.destroy()
+  })
+
+  it('does not ask for a nickname when the profile could not be loaded', async () => {
+    installBrowser('https://app.example.com/')
+    installLocalStorage()
+    const root = createRoot()
+    const auth = createAuthServiceDouble()
+    auth.getSession.mockResolvedValue(session)
+    const backend = {
+      getEntitlements: vi.fn().mockResolvedValue({
+        account_limit: 6,
+        expires_at: null,
+        features: {},
+        founder_number: null,
+        lifetime: true,
+        plan: 'PRO',
+      }),
+      getMe: vi.fn().mockRejectedValue(
+        new BackendApiError('connection_failed', 'Não foi possível carregar o perfil.', 0),
+      ),
+    }
+    const app = new AuthApp(root, auth.service, { backendApi: backend as never })
+
+    await app.start()
+    await vi.waitFor(() => expect(backend.getMe).toHaveBeenCalledOnce())
+
+    expect(currentView(app)).toBe('authenticated')
+    expect(root.innerHTML).not.toContain('CONFIGURE SEU PERFIL')
+    expect(root.innerHTML).not.toContain('data-chat-nickname-form')
+    expect(root.innerHTML).toContain('Não foi possível carregar o perfil.')
     app.destroy()
   })
 
