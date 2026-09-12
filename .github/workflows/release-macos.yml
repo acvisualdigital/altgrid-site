@@ -74,6 +74,7 @@ jobs:
 
       - name: Validate project
         run: |
+          pnpm site:build
           pnpm typecheck
           pnpm test:run
 

@@ -121,6 +121,7 @@ jobs:
       - name: Validate Android release
         run: |
           pnpm release:preflight
+          pnpm site:build
           pnpm typecheck
           pnpm test:run
 

@@ -41,7 +41,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm release:preflight && pnpm test:run
+      - run: pnpm release:preflight && pnpm site:build && pnpm test:run
       - run: pnpm linux:build
       - name: Install graphical test dependencies
         run: sudo apt-get update && sudo apt-get install -y xvfb libgbm1 libasound2t64
