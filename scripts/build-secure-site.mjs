@@ -1,8 +1,9 @@
 import { build } from 'esbuild'
-import { cp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 
 // Only public website files are copied; never package the repository or .env files.
+await rm('build/site', { force: true, recursive: true })
 await mkdir('build/site', { recursive: true })
 await cp('docs', 'build/site', { recursive: true })
 await build({
