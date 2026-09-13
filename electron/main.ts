@@ -62,7 +62,8 @@ protocol.registerSchemesAsPrivileged([{
 // heap: long-running games gradually approach that ceiling and V8 then spends
 // increasing amounts of CPU in repeated major collections. Chromium's normal
 // adaptive heap policy is a better fit for persistent game sessions. Expose GC
-// only for the staggered, infrequent cleanup of views that are actually parked.
+// for staggered, infrequent cleanup of parked views and growing high-memory
+// renderers. The native session factory serializes collections across accounts.
 app.commandLine.appendSwitch('js-flags', '--expose-gc')
 app.commandLine.appendSwitch('disable-features', 'BackForwardCache')
 // Chromium still keeps WebGL accelerated, but evicts discardable textures and

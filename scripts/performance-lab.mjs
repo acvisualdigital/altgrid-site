@@ -16,6 +16,7 @@ const value = (key, fallback) => args.includes(key) ? args[args.indexOf(key) + 1
 if (args.includes('--help')) {
   console.log('node scripts/performance-lab.mjs [--refs v1.5.2,HEAD,working] [--seconds 30] [--warmup 8] [--cycles 2] [--label name] [--timer-render] [--churn-only]')
   console.log('Default: 30 measured seconds per phase (3-grid, 4-grid, 1-active+3-parked, swapped, all-parked), plus lifecycle samples. --seconds 120 extends each phase. --churn-only tests repeated layout updates every 100 ms.')
+  console.log('--memory-pressure adds a four-session 832 MiB allocation/release test with 250 ms CPU sampling. --verify-collection holds that allocation until the real maintenance callback fires, isolating explicit GC from natural GC; use with --memory-pressure and --refs working.')
   process.exit(0)
 }
 const number = (key, fallback, min = 1) => {
@@ -61,6 +62,8 @@ for (const [index, ref] of refs.entries()) {
     seconds: number('--seconds', 30), warmup: number('--warmup', 8, 0),
     cycles: number('--cycles', 2, 0), timerRender: args.includes('--timer-render'),
     churnOnly: args.includes('--churn-only'),
+    memoryPressure: args.includes('--memory-pressure'),
+    verifyCollection: args.includes('--verify-collection'),
     sourceHashes: sourceFiles.get(ref),
     commit: execFileSync('git', ['rev-parse', ref === 'working' ? 'HEAD' : ref], { cwd: root, encoding: 'utf8' }).trim(),
   }

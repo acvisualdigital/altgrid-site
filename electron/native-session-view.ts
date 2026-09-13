@@ -26,6 +26,8 @@ const hardenedSessions = new WeakSet<Session>()
 const PARKED_COMPATIBILITY_FRAME_RATE = 2
 const PARKED_INITIAL_COLLECTION_DELAY_MS = 8_000
 const PARKED_COLLECTION_INTERVAL_MS = 5 * 60_000
+const PRESSURE_COLLECTION_MIN_KB = 768 * 1024
+const PRESSURE_COLLECTION_GROWTH_KB = 128 * 1024
 let cachedAppMetrics: Electron.ProcessMetric[] | null = null
 const sessionPreloadPath = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -113,6 +115,9 @@ export function createNativeSessionViewFactory(
   hostWindow: BrowserWindow,
   allowInsecureLoopback: boolean,
 ): NativeSessionViewFactory {
+  // Four simultaneous full collections can otherwise introduce stutter.
+  let collectionInFlight = false
+  let nextCollectionAt = 0
   return ({ accountId, onEvent, partition }): NativeSessionView => {
     const isolatedSession = session.fromPartition(partition, { cache: true })
 
@@ -134,6 +139,9 @@ export function createNativeSessionViewFactory(
     let presentationApplied = false
     let lastSentFrameRate: number | null = null
     let parkedCollectionTimer: NodeJS.Timeout | null = null
+    let pressureCollectionTimer: NodeJS.Timeout | null = null
+    let lastCollectionAt = 0
+    let lastPressureKb = 0
     const parkedCollectionOffsetMs = stableCollectionOffset(accountId)
     let currentBounds = { height: 720, width: 1_280, x: 0, y: 0 }
     let proxyCredentials: Pick<SessionProxyConfig, 'password' | 'username'> | null = null
@@ -256,6 +264,60 @@ export function createNativeSessionViewFactory(
       }
     }
 
+    const collectUnusedMemory = async (): Promise<boolean> => {
+      if (destroyed || view.webContents.isDestroyed()
+        || collectionInFlight || Date.now() < nextCollectionAt
+        || (lastCollectionAt > 0 && Date.now() - lastCollectionAt < PARKED_COLLECTION_INTERVAL_MS)) return false
+      collectionInFlight = true
+      lastCollectionAt = Date.now()
+      try {
+        // Request async major GC in an isolated world. Do not reload the game,
+        // clear storage/cache, or discard live game objects to lower the HUD.
+        await view.webContents.executeJavaScriptInIsolatedWorld(999, [{
+          code: "globalThis.gc?.({ type: 'major', execution: 'async' })",
+        }])
+        return true
+      } catch {
+        return false
+      } finally {
+        collectionInFlight = false
+        nextCollectionAt = Date.now() + 15_000
+      }
+    }
+
+    const considerMemoryPressure = (privateKb: number): void => {
+      // Re-arm after successful reclamation/natural GC. Keeping the old peak
+      // forever would make the trigger climb by 128 MiB on every cycle.
+      if (privateKb < PRESSURE_COLLECTION_MIN_KB) lastPressureKb = 0
+      if (destroyed || pressureCollectionTimer || privateKb < PRESSURE_COLLECTION_MIN_KB
+        || privateKb < lastPressureKb + PRESSURE_COLLECTION_GROWTH_KB
+        || Date.now() - lastCollectionAt < PARKED_COLLECTION_INTERVAL_MS) return
+      pressureCollectionTimer = setTimeout(() => {
+        pressureCollectionTimer = null
+        if (destroyed || view.webContents.isDestroyed()) return
+        const latest = currentAppMetrics().find((metric) => metric.pid === view.webContents.getOSProcessId())
+        if (finiteNonNegative(latest?.memory.privateBytes ?? latest?.memory.workingSetSize)
+          < PRESSURE_COLLECTION_MIN_KB) return
+        void collectUnusedMemory().then((collected) => {
+          // If live game data stays large, don't repeatedly force GC at the
+          // same level. Retry only after additional measured growth.
+          if (collected && !destroyed && !view.webContents.isDestroyed()) {
+            const after = currentAppMetrics().find((metric) => metric.pid === view.webContents.getOSProcessId())
+            lastPressureKb = finiteNonNegative(after?.memory.privateBytes ?? after?.memory.workingSetSize)
+          }
+        })
+      }, parkedCollectionOffsetMs)
+    }
+
+    // The shell pauses its HUD polling when minimized. Maintenance must still
+    // run for games kept online in that state, independently of the UI.
+    const memoryMonitorTimer = setInterval(() => {
+      if (destroyed || view.webContents.isDestroyed()) return
+      const metric = currentAppMetrics().find((item) => item.pid === view.webContents.getOSProcessId())
+      considerMemoryPressure(finiteNonNegative(metric?.memory.privateBytes ?? metric?.memory.workingSetSize))
+    }, 60_000)
+    memoryMonitorTimer.unref()
+
     const scheduleParkedCollection = (): void => {
       cancelParkedCollection()
       if (!parked || destroyed || view.webContents.isDestroyed()) {
@@ -267,9 +329,7 @@ export function createNativeSessionViewFactory(
       const collectAndReschedule = (): void => {
         parkedCollectionTimer = null
         if (parked && !destroyed && !view.webContents.isDestroyed()) {
-          void view.webContents.executeJavaScriptInIsolatedWorld(999, [{
-            code: 'globalThis.gc?.()',
-          }]).catch(() => undefined)
+          void collectUnusedMemory()
           parkedCollectionTimer = setTimeout(
             collectAndReschedule,
             PARKED_COLLECTION_INTERVAL_MS + parkedCollectionOffsetMs,
@@ -408,7 +468,12 @@ export function createNativeSessionViewFactory(
         }
 
         destroyed = true
+        clearInterval(memoryMonitorTimer)
         cancelParkedCollection()
+        if (pressureCollectionTimer) {
+          clearTimeout(pressureCollectionTimer)
+          pressureCollectionTimer = null
+        }
         view.setVisible(false)
 
         for (const popupWindow of popupWindows) {
@@ -463,6 +528,7 @@ export function createNativeSessionViewFactory(
           usage?.privateBytes ?? usage?.workingSetSize,
         )
         const workingSetKb = finiteNonNegative(usage?.workingSetSize)
+        considerMemoryPressure(privateKb)
         return {
           cpuPercent: finiteNonNegative(metric?.cpu?.percentCPUUsage),
           privateKb,

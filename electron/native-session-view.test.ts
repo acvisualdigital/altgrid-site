@@ -287,7 +287,7 @@ describe('createNativeSessionViewFactory', () => {
 
       expect(view.webContents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledWith(
         999,
-        [{ code: 'globalThis.gc?.()' }],
+        [{ code: "globalThis.gc?.({ type: 'major', execution: 'async' })" }],
       )
       expect(view.webContents.close).not.toHaveBeenCalled()
 
@@ -296,6 +296,131 @@ describe('createNativeSessionViewFactory', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('collects growing high-memory visible sessions without reloading them', async () => {
+    vi.useFakeTimers()
+    try {
+      const factory = createNativeSessionViewFactory(createHostWindow().hostWindow, false)
+      const nativeView = factory({ accountId: 'pressure', onEvent: vi.fn(), partition: 'persist:pressure' })
+      const contents = electronMocks.views[0]!.webContents
+      nativeView.setVisible(true)
+      await nativeView.getResourceUsage()
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(contents.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+      electronMocks.getAppMetrics.mockReturnValue([{
+        pid: 42, cpu: { percentCPUUsage: 8 }, memory: { privateBytes: 900 * 1024, workingSetSize: 900 * 1024 },
+      }])
+      await nativeView.getResourceUsage()
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(600_000)
+      await nativeView.getResourceUsage()
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+      expect(contents.reload).not.toHaveBeenCalled()
+      expect(contents.close).not.toHaveBeenCalled()
+      expect(contents.stop).not.toHaveBeenCalled()
+      nativeView.destroy(true)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('cancels pending pressure maintenance when the account closes', async () => {
+    vi.useFakeTimers()
+    try {
+      const factory = createNativeSessionViewFactory(createHostWindow().hostWindow, false)
+      const nativeView = factory({ accountId: 'pressure', onEvent: vi.fn(), partition: 'persist:pressure' })
+      nativeView.setVisible(true)
+      electronMocks.getAppMetrics.mockReturnValue([{
+        pid: 42, cpu: { percentCPUUsage: 8 }, memory: { privateBytes: 900 * 1024, workingSetSize: 900 * 1024 },
+      }])
+      await nativeView.getResourceUsage()
+      nativeView.destroy(true)
+      await vi.advanceTimersByTimeAsync(600_000)
+      expect(electronMocks.views[0]!.webContents.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('monitors memory without HUD polling and only retries after new growth', async () => {
+    vi.useFakeTimers()
+    try {
+      const factory = createNativeSessionViewFactory(createHostWindow().hostWindow, false)
+      const nativeView = factory({ accountId: 'pressure', onEvent: vi.fn(), partition: 'persist:pressure' })
+      const contents = electronMocks.views[0]!.webContents
+      nativeView.setVisible(true)
+      const metric = { pid: 42, cpu: { percentCPUUsage: 8 }, memory: { privateBytes: 900 * 1024, workingSetSize: 900 * 1024 } }
+      electronMocks.getAppMetrics.mockReturnValue([metric])
+      await vi.advanceTimersByTimeAsync(90_000)
+      expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(600_000)
+      expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+      metric.memory.privateBytes = 1100 * 1024
+      await vi.advanceTimersByTimeAsync(90_000)
+      expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(2)
+      metric.memory.privateBytes = 100 * 1024
+      await vi.advanceTimersByTimeAsync(600_000)
+      metric.memory.privateBytes = 900 * 1024
+      await vi.advanceTimersByTimeAsync(90_000)
+      expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(3)
+      nativeView.destroy(true)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('skips a queued collection if memory falls naturally before it runs', async () => {
+    vi.useFakeTimers()
+    try {
+      const factory = createNativeSessionViewFactory(createHostWindow().hostWindow, false)
+      const nativeView = factory({ accountId: 'pressure', onEvent: vi.fn(), partition: 'persist:pressure' })
+      nativeView.setVisible(true)
+      electronMocks.getAppMetrics.mockReturnValue([{
+        pid: 42, cpu: { percentCPUUsage: 8 }, memory: { privateBytes: 900 * 1024, workingSetSize: 900 * 1024 },
+      }])
+      await nativeView.getResourceUsage()
+      electronMocks.getAppMetrics.mockReturnValue([{
+        pid: 42, cpu: { percentCPUUsage: 8 }, memory: { privateBytes: 100 * 1024, workingSetSize: 100 * 1024 },
+      }])
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(electronMocks.views[0]!.webContents.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+      nativeView.destroy(true)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('does not overlap collections across accounts', async () => {
+    vi.useFakeTimers()
+    try {
+      const factory = createNativeSessionViewFactory(createHostWindow().hostWindow, false)
+      const first = factory({ accountId: 'a', onEvent: vi.fn(), partition: 'persist:a' })
+      const second = factory({ accountId: 'b', onEvent: vi.fn(), partition: 'persist:b' })
+      let finish!: () => void
+      electronMocks.views[0]!.webContents.executeJavaScriptInIsolatedWorld.mockImplementation(
+        () => new Promise<void>((resolve) => { finish = resolve }),
+      )
+      first.setVisible(false)
+      second.setVisible(false)
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(electronMocks.views[0]!.webContents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+      expect(electronMocks.views[1]!.webContents.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+      finish()
+      await vi.advanceTimersByTimeAsync(330_000)
+      first.destroy(true)
+      second.destroy(true)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('does not repeat GC when a user repeatedly parks the same session', async () => {
+    vi.useFakeTimers()
+    try {
+      const factory = createNativeSessionViewFactory(createHostWindow().hostWindow, false)
+      const nativeView = factory({ accountId: 'a', onEvent: vi.fn(), partition: 'persist:a' })
+      nativeView.setVisible(false)
+      await vi.advanceTimersByTimeAsync(30_000)
+      nativeView.setVisible(true)
+      nativeView.setVisible(false)
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(electronMocks.views[0]!.webContents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+      nativeView.destroy(true)
+    } finally { vi.useRealTimers() }
   })
 
   it('suppresses hidden media work without stopping the game renderer', () => {

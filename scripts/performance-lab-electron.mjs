@@ -51,6 +51,7 @@ const origin = `http://127.0.0.1:${server.address().port}`
 const samples = []
 const events = []
 const lifecycle = []
+let memoryPressureResult = null
 const allViews = new Set()
 let host
 const mean = (items) => items.length ? items.reduce((sum, n) => sum + n, 0) / items.length : 0
@@ -89,7 +90,11 @@ async function pageMetrics() {
 }
 
 async function sample(phase) {
+  // Read CPU before the HUD path: getAppMetrics computes deltas between calls;
+  // sampling it immediately after HUD polling produces a near-zero interval.
   const record = { phase, at: Date.now(), ...processMetrics(), accounts: await pageMetrics() }
+  // Exercise the same per-account sampling/maintenance path as the app HUD.
+  await Promise.all([...allViews].map((view) => view.getResourceUsage()))
   samples.push(record)
   return record
 }
@@ -148,6 +153,66 @@ try {
   lifecycle.push({ name: 'empty-before', ...await sample('empty-before') })
   const views = []
   for (let i = 0; i < 3; i++) views.push(await create(i))
+  if (config.memoryPressure) {
+    views.push(await create(3))
+    layout(views, 'grid')
+    console.log('LAB_MEMORY_PRESSURE: allocating and releasing 832 MiB in a visible synthetic session')
+    const target = webContents.getAllWebContents().find((contents) => contents.getURL().startsWith(origin))
+    if (!target) throw new Error('Missing memory fixture')
+    await target.executeJavaScript('globalThis.pressureGarbage = Array.from({length:104}, () => new Array(1048576).fill(17))')
+    const nativeExecute = target.executeJavaScriptInIsolatedWorld.bind(target)
+    const collections = []
+    if (config.verifyCollection) {
+      // Keep fixture data alive until the production pressure scheduler fires.
+      // Then release only this test allocation, to distinguish explicit GC
+      // from Chromium's normal automatic collection.
+      target.executeJavaScriptInIsolatedWorld = async (...args) => {
+        if (args[1].some((script) => script.code.includes('globalThis.gc'))) {
+          await target.executeJavaScript('globalThis.pressureGarbage = null')
+          const startedAt = Date.now()
+          const result = await nativeExecute(...args)
+          collections.push({ startedAt, durationMs: Date.now() - startedAt })
+          return result
+        }
+        return nativeExecute(...args)
+      }
+    }
+    const before = await sample('pressure-before')
+    if (!config.verifyCollection) await target.executeJavaScript('globalThis.pressureGarbage = null')
+    // Reset gap measurements after allocation: isolate maintenance from the
+    // deliberately expensive fixture setup and capture spikes, not just means.
+    await target.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => { labStats.maxFrameGapMs = 0; labStats.maxHeartbeatGapMs = 0; resolve() }))')
+    const cpuTrace = []
+    const until = Date.now() + 35_000
+    while (Date.now() < until) {
+      await sleep(250)
+      cpuTrace.push({ at: Date.now(), ...processMetrics() })
+    }
+    const after = await sample('pressure-after')
+    const intact = await target.executeJavaScript('labResources.length === 24 * 1024 * 1024 && labResources[0] === 17')
+    memoryPressureResult = { before, after, retainedDataIntact: intact, cpuTrace, collections,
+      meanCpu: mean(cpuTrace.map((entry) => entry.cpu)),
+      p95Cpu: percentile(cpuTrace.map((entry) => entry.cpu), 0.95),
+      peakCpu: Math.max(...cpuTrace.map((entry) => entry.cpu)),
+    }
+    console.log(JSON.stringify({ memoryPressure: {
+      reclaimedMb: before.privateMb - after.privateMb,
+      meanCpu: memoryPressureResult.meanCpu, p95Cpu: memoryPressureResult.p95Cpu,
+      peakCpu: memoryPressureResult.peakCpu, accounts: after.accounts, collections,
+    } }))
+    if (!intact) throw new Error('Live fixture data was lost')
+    if (config.verifyCollection && collections.length !== 1) throw new Error('Expected one production-triggered collection')
+    if (config.revision === 'working' && before.privateMb - after.privateMb < 400) {
+      throw new Error('Memory-pressure maintenance did not reclaim the released fixture allocation')
+    }
+    for (const account of after.accounts) {
+      const prior = before.accounts.find((item) => item.accountId === account.accountId)
+      if (account.sentHeartbeats - prior.sentHeartbeats < 25 || account.heartbeatErrors > prior.heartbeatErrors) {
+        throw new Error('Heartbeats interrupted during memory maintenance')
+      }
+    }
+    destroy(views.pop())
+  }
   if (config.churnOnly) {
     views.push(await create(3))
     const churn = setInterval(() => layout(views, 'focused'), 100)
@@ -175,7 +240,7 @@ try {
     await sleep(6000)
     lifecycle.push({ name: `closed-${cycle}`, ...await sample(`closed-${cycle}`) })
   }
-  const names = [...new Set(samples.map((s) => s.phase))].filter((name) => !name.includes('empty') && !name.includes('closed') && !name.includes('reopened'))
+  const names = [...new Set(samples.map((s) => s.phase))].filter((name) => !name.startsWith('pressure-') && !name.includes('empty') && !name.includes('closed') && !name.includes('reopened'))
   const summary = names.map((phaseName) => {
     const phaseSamples = samples.filter((s) => s.phase === phaseName)
     const measured = phaseSamples.slice(1)
@@ -205,7 +270,7 @@ try {
   const report = {
     config, environment: { electron: process.versions.electron, chrome: process.versions.chrome, platform: process.platform, cpu: cpus()[0]?.model, logicalCpus: cpus().length, totalMemoryMb: totalmem() / 1048576, gpu: await app.getGPUInfo('basic') },
     caveat: 'Synthetic canvas fixture measures scheduler/process overhead, not actual Huntera hunts or real account RAM. Same installed Electron/flags on every revision. CPU is summed Electron process usage; not calibrated to the app UI or Task Manager. Profile and raw samples are retained for inspection.',
-    summary, lifecycle, network: Object.fromEntries(network), events, samples,
+    summary, lifecycle, memoryPressureResult, network: Object.fromEntries(network), events, samples,
   }
   report.validationErrors = []
   for (const phase of summary) {

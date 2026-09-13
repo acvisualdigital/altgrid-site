@@ -21,7 +21,7 @@ if (!process.versions.electron) {
     `, resolveDir: process.cwd(), loader: 'ts' },
     outfile: join(out, 'fixture.js'), bundle: true, format: 'esm', platform: 'browser',
     loader: { '.png': 'dataurl', '.svg': 'dataurl' },
-    define: { '__APP_VERSION__': '"1.6.7-local"', 'import.meta.env.DEV': 'false' },
+    define: { '__APP_VERSION__': '"1.6.8-local"', 'import.meta.env.DEV': 'false' },
   })
   await writeFile(join(out, 'styles.css'), await readFile('src/styles.css'))
   await writeFile(join(out, 'index.html'), '<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="styles.css"></head><body><div id="app"></div><script type="module" src="fixture.js"></script></body></html>')

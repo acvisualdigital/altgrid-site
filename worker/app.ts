@@ -95,13 +95,13 @@ interface ApiOptions {
 // Platform releases can advance independently. Keep the worker pinned to the
 // verified desktop release so a platform-specific hotfix cannot break updates.
 const WINDOWS_RELEASE_BASE_URL =
-  'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.6.7/'
+  'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.6.8/'
 const ANDROID_RELEASE_BASE_URL =
-  'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.6.7/'
+  'https://github.com/acvisualdigital/altgrid-releases/releases/download/v1.6.8/'
 const WINDOWS_UPDATE_FEED = 'releases.win-x64.json'
 const WINDOWS_UPDATE_PACKAGE = /^AltGrid-[0-9A-Za-z.+-]+-win-x64-(?:full|delta)\.nupkg$/
 const ANDROID_DOWNLOAD_PATH = '/v1/downloads/android'
-const ANDROID_RELEASE_ASSET = 'AltGrid-Android-1.6.7.apk'
+const ANDROID_RELEASE_ASSET = 'AltGrid-Android-1.6.8.apk'
 
 function normalizedPath(url: string): string {
   const pathname = new URL(url).pathname
