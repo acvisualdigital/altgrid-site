@@ -87,8 +87,15 @@ try {
       ? () => Promise.resolve(mobile.getPlatform())
       : null
   const unsubscribeFromDeviceRegistration = deviceRegistrationService && resolvePlatform
-    ? authService.onAuthStateChange((_event, session) => {
-        if (!session) {
+    ? authService.onAuthStateChange((event, session) => {
+        // Device registration is a best-effort startup operation. Running it
+        // on every TOKEN_REFRESHED event can spam the legacy REST endpoint and
+        // turn a harmless 400 into noisy session churn. Register only when a
+        // session is initially established or after an explicit sign-in.
+        if (
+          !session
+          || (event !== 'INITIAL_SESSION' && event !== 'SIGNED_IN')
+        ) {
           return
         }
 
