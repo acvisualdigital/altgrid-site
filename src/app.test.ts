@@ -706,6 +706,7 @@ describe('AuthApp session lifecycle', () => {
       session: Session | null
       backendUserId: string
       currentView: string
+      coreAuthFailureCount: number
       render(): void
       loadApplicationData(session: Session, force?: boolean): Promise<void>
     }
@@ -713,6 +714,7 @@ describe('AuthApp session lifecycle', () => {
     state.session = session
     state.backendUserId = user.id
     state.currentView = 'authenticated'
+    state.coreAuthFailureCount = 2
     try {
       await state.loadApplicationData(session)
       expect(backend.getMe).toHaveBeenCalledOnce()
@@ -744,6 +746,7 @@ describe('AuthApp session lifecycle', () => {
       session: Session | null
       backendUserId: string
       currentView: string
+      coreAuthFailureCount: number
       render(): void
       handleAuthStateChange(event: AuthChangeEvent, session: Session | null): Promise<void>
       loadApplicationData(session: Session, force?: boolean): Promise<void>
@@ -752,6 +755,7 @@ describe('AuthApp session lifecycle', () => {
     state.session = session
     state.backendUserId = user.id
     state.currentView = 'authenticated'
+    state.coreAuthFailureCount = 2
     const refreshed = { ...session, access_token: 'refreshed-diagnostic-token' }
     try {
       const oldLoad = state.loadApplicationData(session)
@@ -787,6 +791,7 @@ describe('AuthApp session lifecycle', () => {
       session: Session | null
       backendUserId: string
       currentView: string
+      coreAuthFailureCount: number
       render(): void
       loadApplicationData(session: Session, force?: boolean): Promise<void>
     }
@@ -794,6 +799,7 @@ describe('AuthApp session lifecycle', () => {
     state.session = session
     state.backendUserId = user.id
     state.currentView = 'authenticated'
+    state.coreAuthFailureCount = 2
     try {
       await state.loadApplicationData(session)
       expect(currentView(app)).toBe('login')

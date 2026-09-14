@@ -992,6 +992,8 @@ export class AuthApp {
   private backendLoadInFlight: Promise<void> | null = null
   private backendStateRevision = 0
   private backendUserId: string | null = null
+  private coreAuthFailureCount = 0
+  private coreAuthRetryTimer: ReturnType<typeof setTimeout> | null = null
   private adminAccess = false
   private readonly ownerTools = new OwnerToolsService()
   private baseEntitlements: ResolvedEntitlements = SAFE_FREE_ENTITLEMENTS
@@ -1342,6 +1344,8 @@ export class AuthApp {
 
   destroy(): void {
     this.destroyed = true
+    if (this.coreAuthRetryTimer) clearTimeout(this.coreAuthRetryTimer)
+    this.coreAuthRetryTimer = null
     if (this.sessionAlertTimer) clearTimeout(this.sessionAlertTimer)
     this.sessionAlertTimer = null
     this.stopPaymentPolling()
@@ -1820,6 +1824,9 @@ export class AuthApp {
       }
     }
     if (this.backendUserId !== session.user.id) {
+      if (this.coreAuthRetryTimer) clearTimeout(this.coreAuthRetryTimer)
+      this.coreAuthRetryTimer = null
+      this.coreAuthFailureCount = 0
       this.backendStateRevision += 1
       void this.releaseTrackedSessions()
       this.backendUserId = session.user.id
@@ -2349,6 +2356,28 @@ export class AuthApp {
       // regular account. A denied/expired admin route only removes admin tools;
       // the core profile and entitlement endpoints decide session validity.
       if (unauthorized) {
+        this.coreAuthFailureCount += 1
+        if (this.coreAuthFailureCount < 3) {
+          this.backendLoadStatus = 'error'
+          this.backendLoadError = 'Conexão com o servidor perdida. Tentando reconectar…'
+          this.render()
+          if (!this.coreAuthRetryTimer) {
+            const retrySession = session
+            const delay = this.coreAuthFailureCount * 1_500
+            this.coreAuthRetryTimer = setTimeout(() => {
+              this.coreAuthRetryTimer = null
+              if (
+                !this.destroyed
+                && this.session?.user.id === retrySession.user.id
+                && this.session?.access_token === retrySession.access_token
+              ) {
+                void this.loadApplicationData(retrySession, true)
+              }
+            }, delay)
+          }
+          return
+        }
+
         this.session = null
         this.clearAuthenticatedState()
         this.currentView = 'login'
@@ -2356,6 +2385,13 @@ export class AuthApp {
         this.render()
         void this.authService.signOut().catch(() => undefined)
         return
+      }
+
+      if (
+        meResult.status === 'fulfilled'
+        && entitlementsResult.status === 'fulfilled'
+      ) {
+        this.coreAuthFailureCount = 0
       }
 
       if (meResult.status === 'fulfilled' && meResult.value) {
