@@ -994,6 +994,8 @@ export class AuthApp {
   private backendUserId: string | null = null
   private coreAuthFailureCount = 0
   private coreAuthRetryTimer: ReturnType<typeof setTimeout> | null = null
+  private authRecoveryTimer: ReturnType<typeof setTimeout> | null = null
+  private intentionalSignOut = false
   private adminAccess = false
   private readonly ownerTools = new OwnerToolsService()
   private baseEntitlements: ResolvedEntitlements = SAFE_FREE_ENTITLEMENTS
@@ -1346,6 +1348,8 @@ export class AuthApp {
     this.destroyed = true
     if (this.coreAuthRetryTimer) clearTimeout(this.coreAuthRetryTimer)
     this.coreAuthRetryTimer = null
+    if (this.authRecoveryTimer) clearTimeout(this.authRecoveryTimer)
+    this.authRecoveryTimer = null
     if (this.sessionAlertTimer) clearTimeout(this.sessionAlertTimer)
     this.sessionAlertTimer = null
     this.stopPaymentPolling()
@@ -1750,6 +1754,50 @@ export class AuthApp {
     }
 
     if (event === 'SIGNED_OUT') {
+      if (!this.intentionalSignOut && this.session && navigator.onLine) {
+        const previousUserId = this.session.user.id
+        // Release native game windows while the auth client recovers. Keeping
+        // them alive after a transient SIGNED_OUT event can leave stale
+        // sessions running and makes the renderer appear frozen.
+        void this.releaseTrackedSessions()
+        this.sessionCheckError = 'Conexão com o servidor perdida. Tentando restaurar a sessão…'
+        this.currentView = 'authenticated'
+        this.render()
+        if (this.authRecoveryTimer) clearTimeout(this.authRecoveryTimer)
+        this.authRecoveryTimer = setTimeout(() => {
+          this.authRecoveryTimer = null
+          void this.authService.getSession().then((restored) => {
+            if (
+              this.destroyed
+              || this.session?.user.id !== previousUserId
+              || !restored
+            ) {
+              if (!this.destroyed && this.session?.user.id === previousUserId) {
+                this.session = null
+                this.clearAuthenticatedState()
+                this.currentView = 'login'
+                this.initialAlert = 'Sua sessão expirou. Entre novamente.'
+                this.render()
+              }
+              return
+            }
+            this.sessionCheckError = null
+            this.prepareAuthenticatedSession(restored)
+            this.render()
+            void this.loadApplicationData(restored, true)
+          }).catch(() => {
+            if (!this.destroyed && this.session?.user.id === previousUserId) {
+              this.session = null
+              this.clearAuthenticatedState()
+              this.currentView = 'login'
+              this.initialAlert = 'Sua sessão expirou. Entre novamente.'
+              this.render()
+            }
+          })
+        }, 3_000)
+        return
+      }
+      this.intentionalSignOut = false
       this.retrySessionOnReconnect = false
       this.sessionCheckError = null
       this.recoveryMode = false
@@ -2383,6 +2431,7 @@ export class AuthApp {
         this.currentView = 'login'
         this.initialAlert = 'Sua sessão expirou. Entre novamente.'
         this.render()
+        this.intentionalSignOut = true
         void this.authService.signOut().catch(() => undefined)
         return
       }
@@ -9891,6 +9940,7 @@ export class AuthApp {
       button.textContent = 'Saindo…'
 
       try {
+        this.intentionalSignOut = true
         await this.authService.signOut()
         const sessionsReleased = await this.releaseTrackedSessions()
         this.session = null
