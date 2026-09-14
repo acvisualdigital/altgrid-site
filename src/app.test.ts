@@ -804,6 +804,43 @@ describe('AuthApp session lifecycle', () => {
     }
   })
 
+  it('keeps the workspace when optional startup data returns unauthorized', async () => {
+    installBrowser('https://app.example.com/')
+    installLocalStorage()
+    const auth = createAuthServiceDouble()
+    auth.signOut.mockResolvedValue(undefined)
+    const backend = {
+      getMe: vi.fn().mockResolvedValue({ user, profile: { display_name: 'Hunter' } }),
+      getEntitlements: vi.fn().mockResolvedValue({
+        account_limit: 6, expires_at: null, features: {},
+        founder_number: null, lifetime: true, plan: 'PRO',
+      }),
+      getAnnouncements: vi.fn().mockRejectedValue(new BackendApiError('invalid_token', 'Optional data rejected', 401)),
+      getAppConfig: vi.fn().mockRejectedValue(new BackendApiError('invalid_token', 'Optional data rejected', 401)),
+      getAdminSession: vi.fn().mockResolvedValue(null),
+    }
+    const app = new AuthApp(createRoot(), auth.service, { backendApi: backend as never })
+    const state = app as unknown as {
+      session: Session | null
+      backendUserId: string
+      currentView: string
+      render(): void
+      loadApplicationData(session: Session, force?: boolean): Promise<void>
+    }
+    vi.spyOn(state, 'render').mockImplementation(() => undefined)
+    state.session = session
+    state.backendUserId = user.id
+    state.currentView = 'authenticated'
+    try {
+      await state.loadApplicationData(session)
+      expect(currentView(app)).toBe('authenticated')
+      expect(auth.signOut).not.toHaveBeenCalled()
+      expect(state.session?.user.id).toBe(user.id)
+    } finally {
+      app.destroy()
+    }
+  })
+
   it('hides owner settings and rejects a forced toggle for another administrator', () => {
     installBrowser('https://app.example.com/')
     installLocalStorage()

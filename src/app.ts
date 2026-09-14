@@ -2321,6 +2321,14 @@ export class AuthApp {
         return
       }
 
+      // Only the authenticated profile and entitlement endpoints establish
+      // whether the AltGrid session is still valid. Optional startup data
+      // (catalog, announcements, ads, products, health and config) may be
+      // unavailable or return 401 during a deploy/token race; that must not
+      // throw the user back to the login screen after the workspace rendered.
+      const coreFailures = [meResult, entitlementsResult]
+        .filter((result): result is PromiseRejectedResult =>
+          result.status === 'rejected')
       const failures = [
         meResult,
         entitlementsResult,
@@ -2331,7 +2339,7 @@ export class AuthApp {
         configResult,
       ].filter((result): result is PromiseRejectedResult =>
         result.status === 'rejected')
-      const unauthorized = failures.find(
+      const unauthorized = coreFailures.find(
         (result) =>
           result.reason instanceof BackendApiError
           && result.reason.status === 401,
