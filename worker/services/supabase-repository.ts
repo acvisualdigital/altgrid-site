@@ -3,6 +3,7 @@ import {
   type PostgrestError,
   type SupabaseClient,
 } from '@supabase/supabase-js'
+import type { RuntimeDiagnostics } from '../../src/types/runtime-diagnostics'
 
 import type {
   AppMetricsResponse,
@@ -231,6 +232,13 @@ export class SupabaseRepository implements
     })
     this.presenceRequests.set(requestKey, request)
     return request
+  }
+
+  async recordRuntimeDiagnostics(userId: string, summary: RuntimeDiagnostics): Promise<void> {
+    const { error } = await this.client.rpc('record_runtime_diagnostics', {
+      p_user_id: userId, p_summary: { ...summary },
+    })
+    if (error) throwDataError(error)
   }
 
   async getProfile(userId: string): Promise<SafeProfile | null> {

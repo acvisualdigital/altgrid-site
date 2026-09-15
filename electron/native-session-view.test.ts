@@ -386,6 +386,25 @@ describe('createNativeSessionViewFactory', () => {
     } finally { vi.useRealTimers() }
   })
 
+  it('defers memory collection while CPU is busy and retries after pressure eases', async () => {
+    vi.useFakeTimers()
+    try {
+      const view = createNativeSessionViewFactory(createHostWindow().hostWindow, false)({ accountId: 'busy', onEvent: vi.fn(), partition: 'persist:busy' })
+      view.setVisible(false)
+      electronMocks.getAppMetrics.mockReturnValue([{
+        pid: 42, cpu: { percentCPUUsage: 40 }, memory: { privateBytes: 900 * 1024, workingSetSize: 900 * 1024 },
+      }])
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(electronMocks.views[0]!.webContents.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+      electronMocks.getAppMetrics.mockReturnValue([{
+        pid: 42, cpu: { percentCPUUsage: 5 }, memory: { privateBytes: 900 * 1024, workingSetSize: 900 * 1024 },
+      }])
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(electronMocks.views[0]!.webContents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+      view.destroy(true)
+    } finally { vi.useRealTimers() }
+  })
+
   it('does not overlap collections across accounts', async () => {
     vi.useFakeTimers()
     try {
@@ -405,6 +424,43 @@ describe('createNativeSessionViewFactory', () => {
       await vi.advanceTimersByTimeAsync(330_000)
       first.destroy(true)
       second.destroy(true)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('queues manual cleanup once per session and staggers accounts without clearing logins', async () => {
+    vi.useFakeTimers()
+    try {
+      const factory = createNativeSessionViewFactory(createHostWindow().hostWindow, false)
+      const first = factory({ accountId: 'a', onEvent: vi.fn(), partition: 'persist:manual-a' })
+      const second = factory({ accountId: 'b', onEvent: vi.fn(), partition: 'persist:manual-b' })
+      first.setVisible(true); second.setVisible(true)
+      expect(first.requestMemoryCleanup?.()).toBe(true)
+      expect(first.requestMemoryCleanup?.()).toBe(false)
+      expect(second.requestMemoryCleanup?.()).toBe(true)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(electronMocks.views[0]!.webContents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+      expect(electronMocks.views[1]!.webContents.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(electronMocks.views[1]!.webContents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+      for (const partition of electronMocks.partitions.values()) {
+        expect(partition.clearStorageData).not.toHaveBeenCalled()
+        expect(partition.clearCache).not.toHaveBeenCalled()
+      }
+      for (const view of electronMocks.views) expect(view.webContents.reload).not.toHaveBeenCalled()
+      first.destroy(true); second.destroy(true)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('cancels pending manual cleanup on destruction', async () => {
+    vi.useFakeTimers()
+    try {
+      const view = createNativeSessionViewFactory(createHostWindow().hostWindow, false)({ accountId: 'a', onEvent: vi.fn(), partition: 'persist:manual-destroy' })
+      view.setVisible(true)
+      expect(view.requestMemoryCleanup?.()).toBe(true)
+      view.destroy(true)
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(electronMocks.views[0]!.webContents.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+      expect(view.requestMemoryCleanup?.()).toBe(false)
     } finally { vi.useRealTimers() }
   })
 

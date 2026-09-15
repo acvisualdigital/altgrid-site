@@ -29,6 +29,28 @@ function chatApi(getChatChannels = vi.fn(async () => ({ channels: [channel] })))
 }
 
 describe('ChatService resource usage', () => {
+  it('suspends chat subscriptions and history without requests until resumed', async () => {
+    const api = chatApi()
+    const unsubscribe = vi.fn()
+    const incoming = vi.fn(() => unsubscribe)
+    const service = new ChatService(api, { subscribeIncoming: incoming, subscribe: vi.fn(() => vi.fn()) }, null)
+    await service.open()
+    service.watchMentions('me', 'Nick', vi.fn())
+    service.suspend()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+    expect(service.getState()).toMatchObject({ open: false, messages: [], channels: [] })
+    api.getChatChannels.mockClear()
+    await service.open()
+    await service.start()
+    await service.refreshUnread()
+    service.watchMentions('me', 'Nick', vi.fn())
+    expect(api.getChatChannels).not.toHaveBeenCalled()
+    expect(incoming).toHaveBeenCalledTimes(1)
+    service.resume()
+    await service.open()
+    expect(api.getChatChannels).toHaveBeenCalledTimes(1)
+  })
+
   it('sounds only new mentions or direct messages from other unblocked users and releases its listener', async () => {
     let receive: Parameters<NonNullable<ChatRealtimeGateway['subscribeIncoming']>>[0] = () => undefined
     const unsubscribe = vi.fn()

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { RuntimeDiagnostics } from '../src/types/runtime-diagnostics'
 
 import type {
   AppMetricsResponse,
@@ -128,6 +129,7 @@ export interface EntitlementRecord {
 export interface BackendRepository {
   getAppMetrics(): Promise<AppMetricsResponse>
   heartbeatPresence(userId: string, activeGameSlugs: readonly string[]): Promise<void>
+  recordRuntimeDiagnostics?(userId: string, summary: RuntimeDiagnostics): Promise<void>
   getProfile(userId: string): Promise<SafeProfile | null>
   updateProfile?(userId: string, displayName: string): Promise<SafeProfile>
   getPlans(): Promise<PlanRecord[]>

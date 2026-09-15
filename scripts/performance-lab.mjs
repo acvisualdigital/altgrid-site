@@ -64,6 +64,7 @@ for (const [index, ref] of refs.entries()) {
     churnOnly: args.includes('--churn-only'),
     memoryPressure: args.includes('--memory-pressure'),
     verifyCollection: args.includes('--verify-collection'),
+    queuedRender: args.includes('--queued-render'),
     sourceHashes: sourceFiles.get(ref),
     commit: execFileSync('git', ['rev-parse', ref === 'working' ? 'HEAD' : ref], { cwd: root, encoding: 'utf8' }).trim(),
   }

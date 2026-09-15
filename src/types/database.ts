@@ -236,6 +236,8 @@ export interface Database {
     }
     Views: { [_ in never]: never }
     Functions: {
+      record_runtime_diagnostics: { Args: { p_user_id: string; p_summary: Json }; Returns: undefined }
+      get_runtime_diagnostics: { Args: { p_user_id: string }; Returns: Json }
       is_current_user_admin: {
         Args: { [_ in never]: never }
         Returns: boolean

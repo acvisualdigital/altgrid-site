@@ -5,6 +5,19 @@
   const storageKey = 'altgrid.site-language.v1'
   const translations = {
     en: {
+      'Baixar 1.7': 'Download 1.7', 'AltGrid 1.7 disponível para Windows, macOS, Linux e Android': 'AltGrid 1.7 available for Windows, macOS, Linux and Android',
+      'Baixar AltGrid 1.7': 'Download AltGrid 1.7', 'Versão 1.7.0 · Windows': 'Version 1.7.0 · Windows', 'APK 1.7.0': 'APK 1.7.0',
+      'Destaques da versão 1.7': 'Version 1.7 highlights', 'Desempenho máximo. Menos distrações.': 'Maximum performance. Fewer distractions.',
+      'AltGrid 1.7.0 · Atualização': 'AltGrid 1.7.0 · Update', 'Foco total em desempenho.': 'Total focus on performance.',
+      'O novo modo Ultra prioriza o jogo em uso, mantém as outras contas conectadas e retira painéis desnecessários da tela.': 'The new Ultra mode prioritizes the game in use, keeps other accounts connected and removes unnecessary panels from the screen.',
+      'ULTRA': 'ULTRA', 'Somente o essencial.': 'Only the essentials.', 'Uma conta fica em foco enquanto as outras continuam abertas, com troca rápida e grade opcional no desktop.': 'One account stays in focus while the others remain open, with quick switching and an optional desktop grid.',
+      'Manutenção escalonada.': 'Staggered maintenance.', 'O AltGrid evita limpezas simultâneas e adia o trabalho quando a CPU está ocupada.': 'AltGrid avoids simultaneous cleanups and postpones the work while the CPU is busy.',
+      'ESTABILIDADE': 'STABILITY', 'Sessões preservadas.': 'Sessions preserved.', 'Falhas transitórias do login do AltGrid não encerram imediatamente as contas dos jogos.': 'Transient AltGrid sign-in failures no longer immediately close game accounts.',
+      'DIAGNÓSTICO': 'DIAGNOSTICS', 'Relatórios mais claros.': 'Clearer reports.', 'CPU, RAM e processo gráfico podem ser analisados sem incluir logins, cookies ou credenciais.': 'CPU, RAM and the graphics process can be analyzed without including logins, cookies or credentials.',
+      'Novidades da versão 1.7': 'What’s new in version 1.7', 'Uma atualização feita para rodar por mais tempo.': 'An update built to run longer.',
+      'Modo Ultra, diagnóstico aprimorado e mais proteção contra desconexões no Windows, macOS, Linux, Android e Microsoft Store.': 'Ultra mode, improved diagnostics and stronger disconnection protection on Windows, macOS, Linux, Android and Microsoft Store.',
+      'Abra o chat, ative o modo Ultra, descanse sessões, acompanhe CPU e RAM ou altere o limite do Eco Mode sem sair dos jogos.': 'Open chat, enable Ultra mode, rest sessions, monitor CPU and RAM or change the Eco Mode limit without leaving your games.',
+      'Modo Ultra': 'Ultra mode', 'Baixe o AltGrid 1.7.': 'Download AltGrid 1.7.', 'AltGrid 1.7.0 · Windows 10/11': 'AltGrid 1.7.0 · Windows 10/11',
       'Ir para o conteúdo': 'Skip to content', 'Abrir menu': 'Open menu', 'Navegação principal': 'Main navigation',
       'Novidades': 'What’s new', 'Recursos': 'Features', 'Jogos idle': 'Idle games', 'Planos': 'Plans', 'visitantes': 'visitors',
       'Entrar': 'Sign in', 'Baixar 1.6': 'Download 1.6', 'Idioma do site': 'Site language', 'Idioma': 'Language',
@@ -81,6 +94,19 @@
   }
 
   translations.es = Object.assign({}, translations.en, {
+    'Baixar 1.7': 'Descargar 1.7', 'AltGrid 1.7 disponível para Windows, macOS, Linux e Android': 'AltGrid 1.7 disponible para Windows, macOS, Linux y Android',
+    'Baixar AltGrid 1.7': 'Descargar AltGrid 1.7', 'Versão 1.7.0 · Windows': 'Versión 1.7.0 · Windows', 'APK 1.7.0': 'APK 1.7.0',
+    'Destaques da versão 1.7': 'Novedades de la versión 1.7', 'Desempenho máximo. Menos distrações.': 'Máximo rendimiento. Menos distracciones.',
+    'AltGrid 1.7.0 · Atualização': 'AltGrid 1.7.0 · Actualización', 'Foco total em desempenho.': 'Enfoque total en el rendimiento.',
+    'O novo modo Ultra prioriza o jogo em uso, mantém as outras contas conectadas e retira painéis desnecessários da tela.': 'El nuevo modo Ultra prioriza el juego en uso, mantiene conectadas las demás cuentas y retira paneles innecesarios de la pantalla.',
+    'Somente o essencial.': 'Solo lo esencial.', 'Uma conta fica em foco enquanto as outras continuam abertas, com troca rápida e grade opcional no desktop.': 'Una cuenta queda enfocada mientras las demás siguen abiertas, con cambio rápido y cuadrícula opcional en escritorio.',
+    'Manutenção escalonada.': 'Mantenimiento escalonado.', 'O AltGrid evita limpezas simultâneas e adia o trabalho quando a CPU está ocupada.': 'AltGrid evita limpiezas simultáneas y aplaza el trabajo cuando la CPU está ocupada.',
+    'ESTABILIDADE': 'ESTABILIDAD', 'Sessões preservadas.': 'Sesiones preservadas.', 'Falhas transitórias do login do AltGrid não encerram imediatamente as contas dos jogos.': 'Los fallos transitorios del inicio de sesión de AltGrid ya no cierran inmediatamente las cuentas de los juegos.',
+    'DIAGNÓSTICO': 'DIAGNÓSTICO', 'Relatórios mais claros.': 'Informes más claros.', 'CPU, RAM e processo gráfico podem ser analisados sem incluir logins, cookies ou credenciais.': 'La CPU, la RAM y el proceso gráfico pueden analizarse sin incluir inicios de sesión, cookies ni credenciales.',
+    'Novidades da versão 1.7': 'Novedades de la versión 1.7', 'Uma atualização feita para rodar por mais tempo.': 'Una actualización creada para funcionar durante más tiempo.',
+    'Modo Ultra, diagnóstico aprimorado e mais proteção contra desconexões no Windows, macOS, Linux, Android e Microsoft Store.': 'Modo Ultra, diagnóstico mejorado y mayor protección contra desconexiones en Windows, macOS, Linux, Android y Microsoft Store.',
+    'Abra o chat, ative o modo Ultra, descanse sessões, acompanhe CPU e RAM ou altere o limite do Eco Mode sem sair dos jogos.': 'Abre el chat, activa el modo Ultra, descansa sesiones, supervisa CPU y RAM o cambia el límite del modo Eco sin salir de los juegos.',
+    'Modo Ultra': 'Modo Ultra', 'Baixe o AltGrid 1.7.': 'Descarga AltGrid 1.7.', 'AltGrid 1.7.0 · Windows 10/11': 'AltGrid 1.7.0 · Windows 10/11',
     'Ir para o conteúdo': 'Ir al contenido', 'Abrir menu': 'Abrir menú', 'Navegação principal': 'Navegación principal', 'Novidades': 'Novedades', 'Recursos': 'Funciones', 'Jogos idle': 'Juegos idle', 'Planos': 'Planes', 'visitantes': 'visitantes', 'Entrar': 'Entrar', 'Baixar 1.6': 'Descargar 1.6', 'Idioma do site': 'Idioma del sitio', 'Idioma': 'Idioma',
     'AltGrid 1.6 disponível para Windows, macOS, Linux e Android': 'AltGrid 1.6 disponible para Windows, macOS, Linux y Android', 'Seu universo idle.': 'Tu universo idle.', 'Sob controle.': 'Bajo control.',
     'Uma central criada para quem gerencia muitas contas. Organize sessões em páginas de grades, reduza consumo e controle cada jogo sem transformar seu PC em um labirinto de janelas.': 'Una central creada para quienes administran muchas cuentas. Organiza sesiones en páginas de cuadrículas, reduce el consumo y controla cada juego sin convertir tu PC en un laberinto de ventanas.',

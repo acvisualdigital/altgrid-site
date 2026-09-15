@@ -119,6 +119,8 @@ export interface AltgridDesktopApi {
     openExternal(url: string): Promise<boolean>
   }
   sessions: {
+    requestMemoryCleanup?(): Promise<number>
+    getDiagnostics?(): Promise<DesktopDiagnostics>
     chooseExtension(accountId: string): Promise<SessionExtensionSummary | null>
     installHunteraDps?(accountId: string): Promise<SessionExtensionSummary>
     clearData(accountId: string): Promise<boolean>
@@ -175,6 +177,8 @@ export const IPC_CHANNELS = Object.freeze({
     openExternal: 'altgrid:app:open-external',
   }),
   sessions: Object.freeze({
+    requestMemoryCleanup: 'altgrid:sessions:request-memory-cleanup',
+    getDiagnostics: 'altgrid:sessions:get-diagnostics',
     chooseExtension: 'altgrid:sessions:choose-extension',
     installHunteraDps: 'altgrid:sessions:install-huntera-dps',
     clearData: 'altgrid:sessions:clear-data',
@@ -216,3 +220,12 @@ export const IPC_CHANNELS = Object.freeze({
 export const SESSION_PRELOAD_CHANNELS = Object.freeze({
   setFrameRateLimit: 'altgrid:session-preload:set-frame-rate-limit',
 })
+
+export interface DesktopDiagnostics {
+  generatedAt: string
+  version: string
+  platform: string
+  uptimeSeconds: number
+  processes: { type: string; cpuPercent: number; privateKb: number }[]
+  sessions: { label: string; status: SessionStatus; visible: boolean; frameRate: number }[]
+}

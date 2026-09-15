@@ -66,9 +66,9 @@ protocol.registerSchemesAsPrivileged([{
 // renderers. The native session factory serializes collections across accounts.
 app.commandLine.appendSwitch('js-flags', '--expose-gc')
 app.commandLine.appendSwitch('disable-features', 'BackForwardCache')
-// Chromium still keeps WebGL accelerated, but evicts discardable textures and
-// raster resources before the shared GPU process grows without a useful bound
-// across large grids. One GiB leaves ample room for smooth idle-game rendering.
+// This is a discardable compositor-resource budget, not a hard cap on the GPU
+// process or live WebGL textures. Real games can exceed it; diagnostics must
+// report the shared GPU process separately from JavaScript renderer memory.
 app.commandLine.appendSwitch('force-gpu-mem-available-mb', '1024')
 // The development shell is rebuilt in place by Vite. Chromium's persistent
 // cache can otherwise keep a stale asset response under a TypeScript module
@@ -400,6 +400,25 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.sessions.getAll, (event) => (
     requireSessionManager(event).getSessions()
   ))
+  ipcMain.handle(IPC_CHANNELS.sessions.requestMemoryCleanup, (event) => (
+    requireSessionManager(event).requestMemoryCleanup()
+  ))
+  ipcMain.handle(IPC_CHANNELS.sessions.getDiagnostics, (event) => {
+    const manager = requireSessionManager(event)
+    return {
+      generatedAt: new Date().toISOString(), version: app.getVersion(),
+      platform: process.platform, uptimeSeconds: Math.round(process.uptime()),
+      processes: app.getAppMetrics().map((metric) => ({
+        type: metric.type, cpuPercent: metric.cpu.percentCPUUsage,
+        privateKb: metric.memory.privateBytes ?? metric.memory.workingSetSize,
+      })),
+      // No cookies, tokens, device hashes, URLs, nicknames or account identifiers.
+      sessions: manager.getSessions().map((session, index) => ({
+        label: `Session ${index + 1}`, status: session.status,
+        visible: session.visible, frameRate: session.frameRate,
+      })),
+    }
+  })
   ipcMain.handle(IPC_CHANNELS.sessions.getResourceUsage, (event) => (
     requireSessionManager(event).getResourceUsage()
   ))

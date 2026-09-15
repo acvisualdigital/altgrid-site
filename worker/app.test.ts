@@ -156,6 +156,24 @@ describe('Cloudflare Worker API', () => {
     expect(userRateLimit).toHaveBeenCalledWith({ key: USER_ID })
   })
 
+  it('accepts only authenticated, validated runtime summaries for the token user', async () => {
+    const summary = { mode: 'ultra', version: '1.7.0', platform: 'Win32', activeSessions: 4,
+      savedSessions: 5, issueCount: 0, privateKb: 4500000, gpuKb: 1600000,
+      cpuPercent: 23, peakPrivateKb: 4700000 }
+    const success = await api.fetch(jsonRequest('/v1/diagnostics/runtime', summary))
+    expect(success.status).toBe(200)
+    expect(repository.lastRuntimeDiagnostics).toEqual({ userId: USER_ID, summary })
+
+    const forged = await api.fetch(jsonRequest('/v1/diagnostics/runtime', { ...summary, userId: 'another-user' }))
+    expect(forged.status).toBe(400)
+    expect(repository.lastRuntimeDiagnostics).toEqual({ userId: USER_ID, summary })
+
+    const unauthenticated = await api.fetch(new Request('https://api.example.com/v1/diagnostics/runtime', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(summary),
+    }))
+    expect(unauthenticated.status).toBe(401)
+  })
+
   it('keeps the bodyless heartbeat used by installed AltGrid clients compatible', async () => {
     const response = await api.fetch(new Request(
       'https://api.example.com/v1/presence/heartbeat',

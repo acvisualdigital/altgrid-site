@@ -111,6 +111,7 @@ export type NativeSessionEvent =
   | { type: 'switch-account'; detail: string }
 
 export interface NativeSessionView {
+  requestMemoryCleanup?(): boolean
   attach(): void
   destroy(force: boolean): void
   focus(): void
@@ -603,6 +604,14 @@ export class SessionManager {
 
   getSessions(): SessionSnapshot[] {
     return [...this.records.values()].map(snapshot)
+  }
+
+  requestMemoryCleanup(): number {
+    let queued = 0
+    for (const record of this.records.values()) {
+      if (record.view.requestMemoryCleanup?.()) queued++
+    }
+    return queued
   }
 
   async getResourceUsage(): Promise<SessionResourceUsage[]> {

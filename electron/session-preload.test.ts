@@ -25,6 +25,62 @@ vi.mock('electron', () => ({
 await import('./session-preload.js')
 
 describe('session frame-budget preload', () => {
+  it.each([20, 30])('keeps a %i FPS budget near its target despite vsync rounding', async (fps) => {
+    vi.useFakeTimers()
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => Date.now())
+    vi.stubGlobal('document', { hidden: false, addEventListener: vi.fn() })
+    vi.stubGlobal('requestAnimationFrame', (callback: (timestamp: number) => void) => (
+      setTimeout(() => callback(performance.now()), 16) as unknown as number
+    ))
+    vi.stubGlobal('cancelAnimationFrame', (handle: number) => clearTimeout(handle))
+    try {
+      electronMocks.listeners.get('altgrid:session-preload:set-frame-rate-limit')?.(null, fps)
+      electronMocks.executeInMainWorld.mock.calls.at(-1)![0].func(fps)
+      let frames = 0
+      const render = (): void => { frames++; requestAnimationFrame(render) }
+      requestAnimationFrame(render)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(frames).toBeGreaterThanOrEqual(fps * 5 - 5)
+      expect(frames).toBeLessThanOrEqual(fps * 5 + 1)
+    } finally {
+      now.mockRestore()
+      delete (globalThis as typeof globalThis & { __altgridFrameBudget?: unknown }).__altgridFrameBudget
+      vi.clearAllTimers(); vi.unstubAllGlobals(); vi.useRealTimers()
+    }
+  })
+  it('drains hidden-page callbacks at a bounded cadence when native rAF is suspended', async () => {
+    vi.useFakeTimers()
+    const nativeRequest = vi.fn(() => 1)
+    const listeners = new Map<string, () => void>()
+    const doc = { hidden: false, addEventListener: (name: string, fn: () => void) => listeners.set(name, fn) }
+    vi.stubGlobal('document', doc)
+    vi.stubGlobal('requestAnimationFrame', nativeRequest)
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => Date.now())
+    try {
+      electronMocks.executeInMainWorld.mockClear()
+      electronMocks.listeners.get('altgrid:session-preload:set-frame-rate-limit')?.(null, 2)
+      electronMocks.executeInMainWorld.mock.calls[0]![0].func(2)
+      let dispatched = 0
+      // Producers retain callbacks while waiting for a hidden native frame.
+      const producer = setInterval(() => requestAnimationFrame(() => { dispatched++ }), 50)
+      await vi.advanceTimersByTimeAsync(100)
+      doc.hidden = true
+      listeners.get('visibilitychange')?.()
+      await vi.advanceTimersByTimeAsync(10_000)
+      const state = (globalThis as unknown as { __altgridFrameBudget: { callbacks: Map<number, unknown> } }).__altgridFrameBudget
+      expect(dispatched).toBeGreaterThan(180)
+      expect(state.callbacks.size).toBeLessThanOrEqual(11)
+      expect(nativeRequest).toHaveBeenCalledOnce()
+      clearInterval(producer)
+    } finally {
+      now.mockRestore()
+      delete (globalThis as typeof globalThis & { __altgridFrameBudget?: unknown }).__altgridFrameBudget
+      vi.clearAllTimers()
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
   beforeEach(() => {
     electronMocks.executeInMainWorld.mockClear()
     electronMocks.invoke.mockClear()

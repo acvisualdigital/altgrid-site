@@ -6,6 +6,7 @@ import type {
   SafeProfile,
 } from '../../src/types/backend-api'
 import type { Json } from '../../src/types/database'
+import type { RuntimeDiagnostics } from '../../src/types/runtime-diagnostics'
 import type {
   BackendRepository,
   EntitlementRecord,
@@ -21,6 +22,7 @@ export class FakeRepository implements BackendRepository {
   }
   lastPresenceUserId: string | null = null
   lastPresenceGameSlugs: readonly string[] = []
+  lastRuntimeDiagnostics: { userId: string; summary: RuntimeDiagnostics } | null = null
   profile: SafeProfile | null = {
     id: '10000000-0000-4000-8000-000000000001',
     display_name: 'Hunter',
@@ -47,6 +49,10 @@ export class FakeRepository implements BackendRepository {
   async heartbeatPresence(userId: string, activeGameSlugs: readonly string[] = []): Promise<void> {
     this.lastPresenceUserId = userId
     this.lastPresenceGameSlugs = activeGameSlugs
+  }
+
+  async recordRuntimeDiagnostics(userId: string, summary: RuntimeDiagnostics): Promise<void> {
+    this.lastRuntimeDiagnostics = { userId, summary }
   }
 
   async getProfile(): Promise<SafeProfile | null> {

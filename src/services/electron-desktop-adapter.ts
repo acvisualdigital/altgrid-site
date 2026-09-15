@@ -1,5 +1,6 @@
 import type {
   AltgridDesktopApi,
+  DesktopDiagnostics,
   SessionBounds,
   SessionEvent,
   SessionExtensionSummary,
@@ -164,6 +165,15 @@ export class ElectronSessionLauncher {
 
   getResourceUsage(): Promise<SessionResourceUsage[]> {
     return this.api.getResourceUsage()
+  }
+
+  requestMemoryCleanup(): Promise<number> {
+    return this.api.requestMemoryCleanup?.() ?? Promise.resolve(0)
+  }
+
+  getDiagnostics(): Promise<DesktopDiagnostics> {
+    if (!this.api.getDiagnostics) return Promise.reject(new Error('Atualize o aplicativo para gerar o diagnóstico.'))
+    return this.api.getDiagnostics()
   }
 
   async open(

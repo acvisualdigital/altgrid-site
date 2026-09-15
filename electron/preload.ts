@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import {
   IPC_CHANNELS,
   type AltgridDesktopApi,
+  type DesktopDiagnostics,
   type SessionBounds,
   type SessionEvent,
   type SessionExtensionSummary,
@@ -27,6 +28,8 @@ const api: AltgridDesktopApi = Object.freeze({
     ),
   }),
   sessions: Object.freeze({
+    requestMemoryCleanup: () => invoke<number>(IPC_CHANNELS.sessions.requestMemoryCleanup),
+    getDiagnostics: () => invoke<DesktopDiagnostics>(IPC_CHANNELS.sessions.getDiagnostics),
     chooseExtension: (accountId: string) => (
       invoke<SessionExtensionSummary | null>(IPC_CHANNELS.sessions.chooseExtension, accountId)
     ),

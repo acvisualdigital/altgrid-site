@@ -26,6 +26,7 @@ import {
   readPixInput,
   readNowPaymentsInput,
   readPresenceHeartbeat,
+  readRuntimeDiagnostics,
 } from './lib/platform-validation'
 import { EntitlementService } from './services/entitlement-service'
 import type {
@@ -151,6 +152,7 @@ function allowedMethods(pathname: string): string[] | null {
   if (
     pathname === '/v1/devices/register'
     || pathname === '/v1/presence/heartbeat'
+    || pathname === '/v1/diagnostics/runtime'
     || /^\/v1\/devices\/[^/]+\/revoke$/.test(pathname)
     || pathname === '/v1/payments/pix'
     || pathname === '/v1/payments/mercadopago/checkout'
@@ -468,6 +470,13 @@ export function createApi(
       await dependencies.repository.heartbeatPresence(user.id, await readPresenceHeartbeat(request))
       const body: PresenceHeartbeatResponse = { ok: true }
       return jsonResponse(body)
+    }
+
+    if (pathname === '/v1/diagnostics/runtime') {
+      const summary = await readRuntimeDiagnostics(request)
+      if (!dependencies.repository.recordRuntimeDiagnostics) throw new ApiError(503, 'diagnostics_unavailable', 'Diagnóstico indisponível.')
+      await dependencies.repository.recordRuntimeDiagnostics(user.id, summary)
+      return jsonResponse({ ok: true })
     }
 
     if (pathname === '/v1/me/profile') {

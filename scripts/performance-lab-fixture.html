@@ -43,6 +43,15 @@ function frame(timestamp) {
   requestAnimationFrame(frame)
 }
 requestAnimationFrame(frame)
+if (new URL(location.href).searchParams.get('queued') === '1') {
+  // Model asset updates produced by network/timers and consumed on a frame.
+  // A suspended hidden rAF must not retain each update indefinitely.
+  setInterval(() => {
+    const update = new Uint8Array(100 * 1024)
+    update.fill(31)
+    requestAnimationFrame(() => { stats.consumedUpdates = (stats.consumedUpdates || 0) + update[0] })
+  }, 50)
+}
 if (timerRender) setInterval(() => { stats.timerFrames++; render(performance.now()) }, 16)
 setInterval(() => { stats.timerTicks++ }, 50)
 setInterval(async () => {

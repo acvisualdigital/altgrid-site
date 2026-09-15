@@ -120,7 +120,7 @@ try {
     view.setBounds({ x: 0, y: 30, width: 1280, height: 720 })
     view.setVisible(true)
     view.setFrameRateLimit(30)
-    await view.loadURL(`${origin}/?id=${accountId}&timer=${config.timerRender ? '1' : '0'}`)
+    await view.loadURL(`${origin}/?id=${accountId}&timer=${config.timerRender ? '1' : '0'}&queued=${config.queuedRender ? '1' : '0'}`)
     return view
   }
 

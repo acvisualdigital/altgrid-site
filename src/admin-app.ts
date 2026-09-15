@@ -779,6 +779,10 @@ export class AdminApp {
           <div><dt>Lifetime</dt><dd>${user.lifetime ? 'Sim' : 'Não'}</dd></div>
           <div><dt>Founder</dt><dd>${escapeHtml(user.founder_number ?? '—')}</dd></div>
           <div><dt>Cadastro</dt><dd>${escapeHtml(formatDate(user.created_at))}</dd></div>
+          <div><dt>Dispositivos autorizados</dt><dd>${user.devices.filter((device) => !device.revoked_at).length}</dd></div>
+          <div><dt>Dispositivos revogados</dt><dd>${user.devices.filter((device) => device.revoked_at).length}</dd></div>
+          <div><dt>Licenças ativas</dt><dd>${activeLicenses.length}</dd></div>
+          <div><dt>Pagamentos registrados</dt><dd>${user.payments.length}</dd></div>
         </dl>
         <div class="admin-action-grid">
           <form data-user-action="grant-days" data-user-id="${escapeHtml(user.id)}">
@@ -799,22 +803,35 @@ export class AdminApp {
           </form>
         </div>
         <section class="admin-detail-section">
-          <h3>Licenças</h3>
-          ${activeLicenses.length > 0
-            ? activeLicenses.map((license) => `
+          <h3>Diagnóstico de desempenho</h3>
+          ${user.runtime_diagnostics ? `<p class="admin-empty">Último resumo enviado pelo app (não é monitoramento em tempo real): ${escapeHtml(formatDate(user.runtime_diagnostics.receivedAt))}</p>
+            <dl class="admin-facts">
+              <div><dt>Modo</dt><dd>${user.runtime_diagnostics.mode === 'ultra' ? 'Ultra · somente jogos' : 'Padrão'}</dd></div>
+              <div><dt>Plataforma / versão</dt><dd>${escapeHtml(user.runtime_diagnostics.platform)} · ${escapeHtml(user.runtime_diagnostics.version)}</dd></div>
+              <div><dt>Contas ativas / salvas</dt><dd>${user.runtime_diagnostics.activeSessions} / ${user.runtime_diagnostics.savedSessions}</dd></div>
+              <div><dt>Falhas de sessão reportadas</dt><dd>${user.runtime_diagnostics.issueCount}</dd></div>
+              <div><dt>RAM privada / pico (MiB)</dt><dd>${user.runtime_diagnostics.privateKb === null ? 'Indisponível' : (user.runtime_diagnostics.privateKb / 1024).toFixed(0)} / ${user.runtime_diagnostics.peakPrivateKb === null ? '—' : (user.runtime_diagnostics.peakPrivateKb / 1024).toFixed(0)}</dd></div>
+              <div><dt>RAM GPU (MiB)</dt><dd>${user.runtime_diagnostics.gpuKb === null ? 'Indisponível' : (user.runtime_diagnostics.gpuKb / 1024).toFixed(0)}</dd></div>
+              <div><dt>CPU do app</dt><dd>${user.runtime_diagnostics.cpuPercent === null ? 'Indisponível' : `${user.runtime_diagnostics.cpuPercent.toFixed(1)}%`}</dd></div>
+            </dl>` : '<p class="admin-empty">Ainda sem resumo de diagnóstico desta conta.</p>'}
+        </section>
+        <section class="admin-detail-section">
+          <h3>Histórico de licenças</h3>
+          ${user.licenses.length > 0
+            ? user.licenses.map((license) => `
                 <div class="admin-record">
-                  <span>${escapeHtml(license.plan)} · ${escapeHtml(license.status)} · ${escapeHtml(formatDate(license.expires_at))}</span>
-                  <button class="text-button admin-danger" data-revoke-license="${escapeHtml(license.id)}" type="button">Revogar</button>
+                  <span><strong>${escapeHtml(license.plan)} · ${escapeHtml(license.status)}</strong><small>Início: ${escapeHtml(formatDate(license.starts_at))}</small><small>${license.lifetime ? 'Vitalícia' : `Expira: ${escapeHtml(formatDate(license.expires_at))}`}</small></span>
+                  ${license.status === 'active' ? `<button class="text-button admin-danger" data-revoke-license="${escapeHtml(license.id)}" type="button">Revogar</button>` : ''}
                 </div>
               `).join('')
             : '<p class="admin-empty">Nenhuma licença ativa.</p>'}
         </section>
         <section class="admin-detail-section">
-          <h3>Devices</h3>
+          <h3>Dispositivos e versões</h3>
           ${user.devices.length > 0
             ? user.devices.map((device) => `
                 <div class="admin-record">
-                  <span>${escapeHtml(device.display_name ?? device.platform ?? 'Dispositivo')} · ${escapeHtml(formatDate(device.last_seen_at))}${device.revoked_at ? ' · revogado' : ''}</span>
+                  <span><strong>${escapeHtml(device.display_name ?? 'Dispositivo')}</strong><small>${escapeHtml(device.platform ?? 'Plataforma não informada')} · v${escapeHtml(device.app_version ?? '—')}</small><small>Primeiro acesso: ${escapeHtml(formatDate(device.first_seen_at))}</small><small>Último registro: ${escapeHtml(formatDate(device.last_seen_at))}</small>${device.revoked_at ? `<small>Revogado: ${escapeHtml(formatDate(device.revoked_at))}</small>` : ''}</span>
                   <span>
                     ${device.revoked_at ? '' : `<button class="text-button admin-danger" data-revoke-device="${escapeHtml(device.id)}" type="button">Revogar</button>`}
                     <button class="text-button" data-reset-device="${escapeHtml(device.id)}" type="button">Resetar</button>
@@ -840,7 +857,7 @@ export class AdminApp {
           <h3>Pagamentos</h3>
           ${user.payments.length > 0
             ? user.payments.map((payment) => `
-                <div class="admin-record"><span>${escapeHtml(payment.product_code)} · ${escapeHtml(formatMoney(payment.amount, payment.currency))} · ${escapeHtml(payment.status)}</span><small>${escapeHtml(formatDate(payment.created_at))}</small></div>
+                <div class="admin-record"><span><strong>${escapeHtml(payment.product_code)} · ${escapeHtml(formatMoney(payment.amount, payment.currency))}</strong><small>${escapeHtml(payment.provider)} · ${escapeHtml(payment.status)}</small><small>Criado: ${escapeHtml(formatDate(payment.created_at))}</small>${payment.paid_at ? `<small>Pago: ${escapeHtml(formatDate(payment.paid_at))}</small>` : ''}${payment.fulfilled_at ? `<small>Plano liberado: ${escapeHtml(formatDate(payment.fulfilled_at))}</small>` : ''}</span></div>
               `).join('')
             : '<p class="admin-empty">Nenhum pagamento.</p>'}
         </section>

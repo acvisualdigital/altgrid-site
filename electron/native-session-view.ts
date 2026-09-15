@@ -28,6 +28,7 @@ const PARKED_INITIAL_COLLECTION_DELAY_MS = 8_000
 const PARKED_COLLECTION_INTERVAL_MS = 5 * 60_000
 const PRESSURE_COLLECTION_MIN_KB = 768 * 1024
 const PRESSURE_COLLECTION_GROWTH_KB = 128 * 1024
+const COLLECTION_MAX_APP_CPU_PERCENT = 25
 let cachedAppMetrics: Electron.ProcessMetric[] | null = null
 const sessionPreloadPath = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -140,6 +141,8 @@ export function createNativeSessionViewFactory(
     let lastSentFrameRate: number | null = null
     let parkedCollectionTimer: NodeJS.Timeout | null = null
     let pressureCollectionTimer: NodeJS.Timeout | null = null
+    let manualCollectionTimer: NodeJS.Timeout | null = null
+    let manualCollectionPending = false
     let lastCollectionAt = 0
     let lastPressureKb = 0
     const parkedCollectionOffsetMs = stableCollectionOffset(accountId)
@@ -268,6 +271,13 @@ export function createNativeSessionViewFactory(
       if (destroyed || view.webContents.isDestroyed()
         || collectionInFlight || Date.now() < nextCollectionAt
         || (lastCollectionAt > 0 && Date.now() - lastCollectionAt < PARKED_COLLECTION_INTERVAL_MS)) return false
+      // Never add a major collection to an already busy frame/network cycle.
+      // A skipped request leaves the cooldown untouched and can be reconsidered
+      // by normal maintenance; collections still remain serialized globally.
+      const cpuPercent = currentAppMetrics().reduce(
+        (sum, metric) => sum + finiteNonNegative(metric.cpu?.percentCPUUsage), 0,
+      )
+      if (cpuPercent > COLLECTION_MAX_APP_CPU_PERCENT) return false
       collectionInFlight = true
       lastCollectionAt = Date.now()
       try {
@@ -462,12 +472,33 @@ export function createNativeSessionViewFactory(
         attached = true
       },
 
+      requestMemoryCleanup(): boolean {
+        if (destroyed || view.webContents.isDestroyed() || manualCollectionPending) return false
+        manualCollectionPending = true
+        // Queue, never run collections concurrently or reload authenticated games.
+        // Busy sessions have up to five minutes to settle before abandoning a request.
+        let attempts = 0
+        const attempt = async (): Promise<void> => {
+          manualCollectionTimer = null
+          if (destroyed || view.webContents.isDestroyed()) { manualCollectionPending = false; return }
+          if (await collectUnusedMemory()) { manualCollectionPending = false; return }
+          if (++attempts < 20 && !destroyed) {
+            manualCollectionTimer = setTimeout(() => void attempt(), 15_000)
+          } else manualCollectionPending = false
+        }
+        manualCollectionTimer = setTimeout(() => void attempt(), parkedCollectionOffsetMs)
+        return true
+      },
+
       destroy(force): void {
         if (destroyed) {
           return
         }
 
         destroyed = true
+        if (manualCollectionTimer) clearTimeout(manualCollectionTimer)
+        manualCollectionTimer = null
+        manualCollectionPending = false
         clearInterval(memoryMonitorTimer)
         cancelParkedCollection()
         if (pressureCollectionTimer) {

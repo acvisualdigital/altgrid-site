@@ -82,6 +82,7 @@ export interface AdminLicense {
 }
 
 export interface AdminUserDetail extends AdminUserSummary {
+  runtime_diagnostics?: import('./runtime-diagnostics').RuntimeDiagnosticsSnapshot | null
   devices: AdminDevice[]
   payments: AdminPayment[]
   licenses: AdminLicense[]

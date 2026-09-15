@@ -1,4 +1,5 @@
 import type { Session } from '@supabase/supabase-js'
+import type { RuntimeDiagnostics } from '../types/runtime-diagnostics'
 
 import {
   AuthService,
@@ -221,6 +222,17 @@ export class BackendApi {
   getAnnouncements(): Promise<PublicAnnouncementsResponse> {
     return this.deduplicate('public:/v1/app/announcements', () =>
       this.publicRequest<PublicAnnouncementsResponse>('/v1/app/announcements'))
+  }
+
+  async sendRuntimeDiagnostics(summary: RuntimeDiagnostics, expectedUserId: string): Promise<{ ok: true }> {
+    const session = await this.getSessionOrThrow()
+    if (session.user.id !== expectedUserId) {
+      throw new BackendApiError('authentication_required', 'A conta mudou durante o diagnóstico.', 401)
+    }
+    // Optional reporting must never rotate a refresh token or change login state.
+    return this.authenticatedRequest('/v1/diagnostics/runtime', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(summary),
+    }, session)
   }
 
   getAppAds(): Promise<PublicAppAdsResponse> {
@@ -763,6 +775,16 @@ export class BackendApi {
     let refreshed: Session | null
 
     try {
+      // A slow 401 may belong to the previous token while another request
+      // already completed renewal. Reuse that session instead of rotating
+      // the refresh token again for each late response.
+      const current = await this.withTimeout(this.options.authService.getSession())
+      if (current && current.user.id !== session.user.id) {
+        throw new BackendApiError('authentication_required', 'Entre novamente para continuar.', 401)
+      }
+      if (current && current.access_token !== session.access_token) {
+        return await this.authenticatedRequest<ResponseBody>(path, init, current)
+      }
       refreshed = await this.withTimeout(
         this.options.authService.refreshSession(),
       )

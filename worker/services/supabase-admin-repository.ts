@@ -215,6 +215,8 @@ export class SupabaseAdminRepository implements AdminRepository {
       { p_user_id: userId },
     )
     if (chatStatusError) dataError(chatStatusError)
+    // Optional during rollout: absence must not break user details on old databases.
+    const runtime = await this.client.rpc('get_runtime_diagnostics', { p_user_id: userId })
     const access = result.current_access
     const profile = result.profile
     const devices = (result.devices ?? []).map((device) => ({
@@ -248,6 +250,7 @@ export class SupabaseAdminRepository implements AdminRepository {
       lifetime: access.lifetime,
       founder_number: access.founder_number,
       devices,
+      runtime_diagnostics: runtime.error ? null : runtime.data as unknown as AdminUserDetail['runtime_diagnostics'],
       payments: (result.payments ?? []).map((payment) => ({
         id: payment.id,
         provider: payment.provider,

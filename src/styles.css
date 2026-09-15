@@ -7914,6 +7914,101 @@ form {
   white-space: pre-wrap;
 }
 
+.chat-message__quote {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  margin: 7px 0 0;
+  padding: 6px 8px;
+  border-left: 2px solid var(--green-hover);
+  border-radius: 0 5px 5px 0;
+  background: rgba(128, 160, 150, 0.07);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.chat-message__quote strong {
+  color: var(--green-hover);
+  font-size: 10px;
+}
+
+.chat-message__quote span {
+  white-space: pre-wrap;
+}
+
+/* Ultra removes auxiliary DOM and realtime chat; no extra animations/compositing. */
+.app-frame.is-ultra-mode::before,
+.app-frame.is-ultra-mode .session-empty,
+.app-frame.is-ultra-mode .session-card__header,
+.app-frame.is-ultra-mode .session-frame-placeholder {
+  display: none;
+}
+
+.is-ultra-mode .screens-only-exit {
+  display: none !important;
+}
+
+.ultra-controls {
+  display: none;
+}
+
+.session-shell.is-ultra-mode .ultra-controls {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  z-index: 50;
+  display: flex;
+  gap: 6px;
+  transform: translateX(-50%);
+}
+
+.ultra-controls button {
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid #285a3b;
+  border-radius: 6px;
+  background: #101c17;
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ultra-controls button:hover,
+.ultra-controls button:focus-visible {
+  border-color: var(--green-hover);
+  outline: none;
+}
+
+.ultra-controls [data-ultra-account] {
+  min-width: 32px;
+  padding-inline: 7px;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.ultra-controls button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+@media (max-width: 520px) {
+  .session-shell.is-ultra-mode .ultra-controls {
+    top: 4px;
+    gap: 3px;
+  }
+  .ultra-controls button {
+    padding-inline: 6px;
+    font-size: 10px;
+  }
+}
+
+.session-shell.is-ultra-mode .workspace-column {
+  padding-top: 48px;
+  box-sizing: border-box;
+}
+
 .chat-reply-action {
   display: inline-flex;
   align-items: center;
@@ -7956,6 +8051,22 @@ form {
 
 .app-frame.is-eco-mode .plan-badge--founder::after {
   animation: none;
+}
+
+/* Keep games untouched: only disable decorative shell compositing in Eco Mode. */
+.app-frame.is-eco-mode .modal-backdrop,
+.app-frame.is-eco-mode .sidebar-profile-popover,
+.app-frame.is-eco-mode .chat-panel,
+.app-frame.is-eco-mode .sidebar-advertising,
+.app-frame.is-eco-mode .session-menu {
+  backdrop-filter: none;
+}
+
+.admin-record > span > small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted, #9aa8b7);
+  overflow-wrap: anywhere;
 }
 
 .app-frame.is-eco-mode .chat-unread-badge,
@@ -10486,7 +10597,7 @@ form {
   background: rgba(9, 19, 14, 0.72);
 }
 
-.session-shell:not(.is-mobile-session) {
+.session-shell:not(.is-mobile-session):not(.is-screens-only) {
   grid-template-columns: 264px minmax(0, 1fr);
   background: transparent;
 }

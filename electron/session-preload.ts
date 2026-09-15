@@ -19,6 +19,7 @@ interface FrameBudgetState {
 }
 
 type FrameBudgetGlobal = typeof globalThis & {
+  document?: { hidden: boolean; addEventListener(type: string, callback: () => void): void }
   __altgridFrameBudget?: FrameBudgetState
   cancelAnimationFrame?: (id: number) => void
   requestAnimationFrame?: (callback: (timestamp: number) => void) => number
@@ -81,7 +82,14 @@ function applyFrameRateLimit(frameRate: number): void {
               return
             }
 
-            state.lastDispatch = timestamp
+            // Preserve the target clock across vsync rounding. Anchoring every
+            // budget to the actual (late) frame turns 30 FPS into ~20 FPS on a
+            // 60 Hz display, especially when the game also has its own limiter.
+            const elapsed = timestamp - state.lastDispatch
+            state.lastDispatch = interval > 0 && state.lastDispatch > 0
+              && elapsed < interval * 3
+              ? state.lastDispatch + Math.max(1, Math.floor((elapsed + 0.5) / interval)) * interval
+              : timestamp
             // Match browser rAF semantics: a callback may cancel another one
             // in this same frame. Clearing the map before dispatch made those
             // cancellations ineffective and could leave duplicate game loops.
@@ -108,6 +116,22 @@ function applyFrameRateLimit(frameRate: number): void {
             if (!state) return
             state.scheduledTimer = null
             if (state.callbacks.size === 0) return
+            // Chromium suspends native rAF in hidden WebContentsViews even
+            // with background timer throttling disabled. Timer-driven games
+            // can keep queuing closures/assets forever while waiting for rAF.
+            // Drain that work at the same low budget, without changing sockets
+            // or the game's timers.
+            if (page.document?.hidden) {
+              const hiddenNow = page.performance?.now?.() ?? Date.now()
+              const hiddenDelay = interval > 0 && state.lastDispatch > 0
+                ? Math.max(1, interval - (hiddenNow - state.lastDispatch))
+                : interval > 0 ? 1 : 500
+              state.scheduledTimer = state.nativeSetTimeout(() => {
+                state!.scheduledTimer = null
+                dispatch(page.performance?.now?.() ?? Date.now())
+              }, hiddenDelay)
+              return
+            }
             state.scheduledFrame = state.nativeRequest(dispatch)
           }
 
@@ -152,6 +176,19 @@ function applyFrameRateLimit(frameRate: number): void {
           }
         }
         state.schedule = schedule
+        if (page.document) {
+          page.document.addEventListener('visibilitychange', () => {
+            if (state!.scheduledFrame !== null) {
+              state!.nativeCancel(state!.scheduledFrame)
+              state!.scheduledFrame = null
+            }
+            if (state!.scheduledTimer !== null) {
+              state!.nativeClearTimeout(state!.scheduledTimer)
+              state!.scheduledTimer = null
+            }
+            state!.schedule()
+          })
+        }
       }
 
       const normalizedFrameRate = Number.isInteger(nextFrameRate)

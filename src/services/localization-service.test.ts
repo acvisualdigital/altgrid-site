@@ -27,6 +27,9 @@ describe('localization service', () => {
     expect(translateUiText('Mensagem para Caco…', 'en')).toBe('Message to Caco…')
     expect(translateUiText('4/10 sessões abertas', 'es')).toBe('4/10 sesiones abiertas')
     expect(translateUiText('Ativos nos últimos 5 minutos', 'en')).toBe('Active in the last 5 minutes')
+    expect(translateUiText('Ver grade', 'en')).toBe('View grid')
+    expect(translateUiText('Voltar ao AltGrid', 'es')).toBe('Volver a AltGrid')
+    expect(translateUiText('Próxima conta', 'es')).toBe('Cuenta siguiente')
   })
 
   it('provides regional tags for formatting and accessibility', () => {

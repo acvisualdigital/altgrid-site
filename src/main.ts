@@ -1,7 +1,6 @@
 import './styles.css'
 import altgridLogoUrl from './assets/altgrid-mark.png'
 
-import { AuthApp } from './app'
 import { createSupabaseClient } from './lib/supabase'
 import { AuthService } from './services/auth-service'
 import { BackendApi } from './services/backend-api'
@@ -47,6 +46,7 @@ function renderStartupError(): void {
 }
 
 try {
+  const adminRoute = /^\/admin(?:\/|$)/.test(window.location.pathname)
   const supabase = createSupabaseClient({
     SUPABASE_ANON_KEY: __SUPABASE_ANON_KEY__,
     SUPABASE_URL: __SUPABASE_URL__,
@@ -64,7 +64,7 @@ try {
   const adminPushNotifications = backendApi && mobile
     ? new AdminPushNotificationService(backendApi)
     : null
-  const chatService = backendApi
+  const chatService = backendApi && !adminRoute
     ? new ChatService(
         backendApi,
         new SupabaseChatRealtimeGateway(supabase),
@@ -116,7 +116,6 @@ try {
         }
       })
     : null
-  const adminRoute = /^\/admin(?:\/|$)/.test(window.location.pathname)
   if (adminRoute && !backendApi) {
     throw new Error('ALTGRID_API_BASE_URL is required for admin')
   }
@@ -124,7 +123,7 @@ try {
     ? import('./admin-app').then(({ AdminApp }) => (
         new AdminApp(root, authService, backendApi!)
       ))
-    : Promise.resolve(new AuthApp(root, authService, {
+    : import('./app').then(({ AuthApp }) => new AuthApp(root, authService, {
         accountService: new ConfiguredAccountService(),
         backendApi: backendApi ?? undefined,
         chatService: chatService ?? undefined,

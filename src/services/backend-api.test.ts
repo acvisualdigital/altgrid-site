@@ -53,6 +53,30 @@ afterEach(() => {
 })
 
 describe('BackendApi', () => {
+  it('sends diagnostics only for the captured account identity', async () => {
+    const auth = authDouble()
+    const fetcher = vi.fn().mockResolvedValue(json({ ok: true }))
+    const api = new BackendApi({ authService: auth.service, baseUrl: 'https://api.example.com', fetch: fetcher })
+    const summary = { mode: 'ultra' as const, version: '1.7.0', platform: 'Win32', activeSessions: 4,
+      savedSessions: 4, issueCount: 0, privateKb: null, gpuKb: null, cpuPercent: null, peakPrivateKb: null }
+    await expect(api.sendRuntimeDiagnostics(summary, 'different-account')).rejects.toMatchObject({ status: 401 })
+    expect(fetcher).not.toHaveBeenCalled()
+    await expect(api.sendRuntimeDiagnostics(summary, user.id)).resolves.toEqual({ ok: true })
+    expect(fetcher).toHaveBeenCalledOnce()
+    expect(fetcher.mock.calls[0]![0]).toBe('https://api.example.com/v1/diagnostics/runtime')
+    expect(JSON.parse((fetcher.mock.calls[0]![1] as RequestInit).body as string)).toEqual(summary)
+  })
+
+  it('reuses an already-renewed token after a delayed 401 without rotating refresh tokens again', async () => {
+    const auth = authDouble(vi.fn().mockResolvedValueOnce(session).mockResolvedValue(refreshedSession))
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(json({ error: { code: 'invalid_token', message: 'Expired' } }, 401))
+      .mockResolvedValueOnce(json({ user: { id: user.id } }))
+    const api = new BackendApi({ authService: auth.service, baseUrl: 'https://api.example.com', fetch: fetcher })
+    await api.getMe()
+    expect(auth.refreshSession).not.toHaveBeenCalled()
+    expect(new Headers(fetcher.mock.calls[1]![1].headers).get('Authorization')).toBe('Bearer new-access-token')
+  })
   it('uses API_BASE_URL and adds the Supabase bearer token', async () => {
     const auth = authDouble()
     const fetcher = vi.fn().mockResolvedValue(json({

@@ -1,5 +1,7 @@
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js'
 import altgridLogoUrl from './assets/altgrid-mark.png'
+import type { DesktopDiagnostics } from '../electron/contracts'
+import { PerformanceReportService } from './services/performance-report-service'
 import planFounderBadgeUrl from './assets/plans/plan-founder.png'
 import planFreeBadgeUrl from './assets/plans/plan-free.png'
 import planProBadgeUrl from './assets/plans/plan-pro.png'
@@ -258,7 +260,7 @@ const PLAN_PRESENTATION: Record<PlanCode, PlanPresentation> = {
   FREE: {
     benefits: [
       'Grades básicas para organizar suas telas',
-      'Tela cheia e modo Somente telas',
+      'Tela cheia e modo Ultra para focar nos jogos',
       'Presets de jogos e contas isoladas',
       'Dados e logins dos jogos mantidos localmente',
     ],
@@ -377,6 +379,7 @@ type ApplicationBackend = Pick<BackendApi, 'getEntitlements' | 'getGames' | 'get
     | 'getProducts'
     | 'recordAppAdEvent'
     | 'sendPresenceHeartbeat'
+    | 'sendRuntimeDiagnostics'
     | 'updateProfile'
   >>
 
@@ -404,6 +407,8 @@ export interface AccountSessionLauncher {
   installHunteraDps?(account: ConfiguredAccount): Promise<SessionExtensionSummary>
   getProxy?(account: ConfiguredAccount): Promise<SessionProxySummary | null>
   getResourceUsage?(): Promise<SessionResourceUsage[]>
+  requestMemoryCleanup?(): Promise<number>
+  getDiagnostics?(): Promise<DesktopDiagnostics>
   open(
     account: ConfiguredAccount,
     target: AccountSessionLaunchTarget | null,
@@ -1058,6 +1063,7 @@ export class AuthApp {
   private extensionSaving = false
   private resourceUsage: SessionResourceUsage[] = []
   private resourceUsageLoading = false
+  private lastResourceUsageAt = 0
   private resourceUsageTimer: ReturnType<typeof setInterval> | null = null
   private sessionAlertTimer: ReturnType<typeof setTimeout> | null = null
   private readonly backgroundAccountIds = new Set<string>()
@@ -1080,6 +1086,10 @@ export class AuthApp {
   private resolvedGridMode: ConcreteGridMode = '1x1'
   private previousAutoMode: ConcreteGridMode | undefined
   private screensOnly = false
+  private ultraMode = false
+  private presentationBeforeUltra: { screensOnly: boolean; workspaceMode: WorkspaceMode; maximizedAccountId: string | null; chatWasOpen: boolean } | null = null
+  private runtimeDiagnosticsPending = false
+  private lastRuntimeDiagnosticsAt = 0
   private sidebarCollapsed = false
   private utilityBarCollapsed = false
   private maximizedAccountId: string | null = null
@@ -1099,6 +1109,7 @@ export class AuthApp {
   private readonly sessionIssues = new Map<string, string>()
   private readonly mutedAccountIds = new Set<string>()
   private readonly sessionFrameRates = new Map<string, number>()
+  private readonly performanceHistory = new PerformanceReportService()
   private readonly sessionInterfaceScales = new Map<string, number>()
   private sessionSurfaceManager: SessionSurfaceManager | null = null
   private focusedAccountId: string | null = null
@@ -1205,6 +1216,10 @@ export class AuthApp {
         sessionLauncher?.setEcoMode?.(enabled, backgroundFps) ?? false
       ),
       setFrameRate: (account, fps) => sessionLauncher?.setFrameRate?.(account, fps),
+      requestMemoryCleanup: sessionLauncher?.requestMemoryCleanup
+        ? () => sessionLauncher.requestMemoryCleanup!() : undefined,
+      getDiagnostics: sessionLauncher?.getDiagnostics
+        ? () => sessionLauncher.getDiagnostics!() : undefined,
       setInterfaceScale: sessionLauncher?.setInterfaceScale
         ? (account, scale) => sessionLauncher.setInterfaceScale!(account, scale)
         : undefined,
@@ -1612,10 +1627,23 @@ export class AuthApp {
       return false
     }
 
-    const button = this.root.querySelector<HTMLButtonElement>(
+    const button = this.ultraMode ? null : this.root.querySelector<HTMLButtonElement>(
       `[data-account-tab][data-account-id="${CSS.escape(account.id)}"]`,
     )
-    button?.click()
+    if (button) {
+      button.click()
+    } else if (this.ultraMode && this.permissionService.isSessionActive(account.id)) {
+      // The full toolbar is intentionally unloaded in Ultra. Keep native game
+      // instances alive while allowing Ctrl+1…9 to select the visible game.
+      this.focusedAccountId = account.id
+      this.workspaceMode = 'account'
+      this.maximizedAccountId = null
+      this.gridPageIndex = 0
+      this.lastLayoutSignature = ''
+      this.applyWorkspacePresentation()
+    } else {
+      return false
+    }
     return true
   }
 
@@ -1706,6 +1734,10 @@ export class AuthApp {
   }
 
   private exitPresentationLayer(): boolean {
+    if (this.ultraMode) {
+      this.setUltraMode(false)
+      return true
+    }
     if (this.activeDialog) {
       this.closeDialog()
       return true
@@ -1756,10 +1788,8 @@ export class AuthApp {
     if (event === 'SIGNED_OUT') {
       if (!this.intentionalSignOut && this.session && navigator.onLine) {
         const previousUserId = this.session.user.id
-        // Release native game windows while the auth client recovers. Keeping
-        // them alive after a transient SIGNED_OUT event can leave stale
-        // sessions running and makes the renderer appear frozen.
-        void this.releaseTrackedSessions()
+        // Game partitions have independent authentication. A recoverable
+        // AltGrid auth event must not disconnect healthy game sockets.
         this.sessionCheckError = 'Conexão com o servidor perdida. Tentando restaurar a sessão…'
         this.currentView = 'authenticated'
         this.render()
@@ -1847,6 +1877,8 @@ export class AuthApp {
   }
 
   private prepareAuthenticatedSession(session: Session): void {
+    if (this.authRecoveryTimer) clearTimeout(this.authRecoveryTimer)
+    this.authRecoveryTimer = null
     this.locale = readPreferredLocale(session.user.id)
     if (
       this.session?.user.id === session.user.id
@@ -1943,6 +1975,10 @@ export class AuthApp {
   }
 
   private clearAuthenticatedState(): void {
+    this.ultraMode = false
+    this.presentationBeforeUltra = null
+    this.lastRuntimeDiagnosticsAt = 0
+    this.performanceHistory.clear()
     this.ownerTools.revoke()
     this.baseEntitlements = SAFE_FREE_ENTITLEMENTS
     this.stopPresenceTracking()
@@ -2097,7 +2133,8 @@ export class AuthApp {
 
     this.presenceRefreshPending = true
     try {
-      const shouldRefreshVisibleData = !this.root.ownerDocument?.hidden
+      const shouldRefreshVisibleData = !this.ultraMode && !this.root.ownerDocument?.hidden
+      void this.uploadRuntimeDiagnostics()
       if (shouldRefreshVisibleData) {
         void this.chatService?.refreshUnread()
       }
@@ -3158,6 +3195,7 @@ export class AuthApp {
   }
 
   private renderWorkspaceToolbar(): string {
+    if (this.ultraMode) return ''
     const active = this.permissionService.getActiveSessionCount()
 
     return `
@@ -3424,11 +3462,12 @@ export class AuthApp {
       ?? normalizeSafeGameUrl(game.icon_url)
 
     return iconUrl
-      ? `<img src="${escapeHtml(iconUrl)}" alt="" loading="lazy" />`
+      ? `<img src="${escapeHtml(iconUrl)}" alt="" loading="lazy" decoding="async" />`
       : `<span aria-hidden="true">${escapeHtml(game.name.slice(0, 2).toUpperCase())}</span>`
   }
 
   private renderSidebar(): string {
+    if (this.ultraMode) return '<aside class="game-sidebar" data-sidebar-region></aside>'
     const activeAccount = this.configuredAccounts.find(
       (account) => account.id === this.focusedAccountId,
     )
@@ -3535,6 +3574,7 @@ export class AuthApp {
   }
 
   private renderMobileNavigation(): string {
+    if (this.ultraMode) return '<nav data-mobile-navigation-region hidden></nav>'
     const chatState = this.chatService?.getState()
     const chatOpen = Boolean(chatState?.open)
     const chatUnread = Object.values(chatState?.unread ?? {}).reduce(
@@ -3594,6 +3634,7 @@ export class AuthApp {
   }
 
   private renderGridControls(): string {
+    if (this.ultraMode) return ''
     if (this.workspaceMode !== 'grid') {
       return ''
     }
@@ -3665,7 +3706,7 @@ export class AuthApp {
     return `
       <section class="sidebar-advertising" aria-label="Conteúdo patrocinado">
         <span class="sidebar-advertising__label">Patrocinado</span>
-        ${ad.image_url ? `<img src="${escapeHtml(ad.image_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '<span class="sidebar-advertising__art" aria-hidden="true">AD</span>'}
+        ${ad.image_url ? `<img src="${escapeHtml(ad.image_url)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" />` : '<span class="sidebar-advertising__art" aria-hidden="true">AD</span>'}
         <div class="sidebar-advertising__copy">
           <small>${escapeHtml(ad.advertiser_name)}</small>
           <strong>${escapeHtml(ad.title)}</strong>
@@ -4260,6 +4301,12 @@ export class AuthApp {
     const badge = renderPlanBadge(message.plan, message.founder_number,
       own && this.ownerTools.isEnabled(this.session?.user, 'creator-tag'))
 
+    // Preserve the existing wire format; render replies as a separate quotation.
+    const reply = /^↪ @([^:\r\n]{1,64}): “([\s\S]{0,100})” — ([\s\S]+)$/.exec(message.message)
+    const content = reply
+      ? `<blockquote class="chat-message__quote" data-user-content><strong>@${escapeHtml(reply[1])}</strong><span>${escapeHtml(reply[2])}</span></blockquote><p data-user-content>${escapeHtml(reply[3])}</p>`
+      : `<p data-user-content>${escapeHtml(message.message)}</p>`
+
     return `
       <article class="chat-message ${own ? 'is-own' : ''}" data-chat-message-channel="${escapeHtml(message.channel_id)}">
         <span class="chat-message__avatar" title="${escapeHtml(channel?.name ?? 'Chat AltGrid')}">${this.renderChatChannelIcon(channel)}</span>
@@ -4278,7 +4325,7 @@ export class AuthApp {
               </div>
             </details>`}
           </header>
-          <p data-user-content>${escapeHtml(message.message)}</p>
+          ${content}
           <button class="chat-reply-action" data-reply-chat-message="${escapeHtml(message.id)}" type="button" aria-label="Responder a ${escapeHtml(message.display_name || 'Jogador')}"><span aria-hidden="true">↩</span> Responder</button>
         </div>
       </article>
@@ -4286,6 +4333,7 @@ export class AuthApp {
   }
 
   private renderChat(): string {
+    if (this.ultraMode) return ''
     if (!this.chatService) {
       return ''
     }
@@ -4432,6 +4480,12 @@ export class AuthApp {
         ${this.mobileSessionMode ? this.renderMobileNavigation() : ''}
         <div class="form-alert" id="session-alert" role="alert" aria-live="polite"></div>
         <button class="screens-only-exit" data-exit-screens-only type="button">Sair</button>
+        <div class="ultra-controls" role="group" aria-label="Controles do modo Ultra">
+          <button class="ultra-controls__exit" data-exit-screens-only type="button">Voltar ao AltGrid</button>
+          <button class="ultra-controls__previous" data-ultra-account="previous" type="button" aria-label="Conta anterior">‹</button>
+          <button class="ultra-controls__next" data-ultra-account="next" type="button" aria-label="Próxima conta">›</button>
+          ${this.mobileSessionMode ? '' : `<button class="ultra-controls__layout" data-ultra-layout type="button" aria-pressed="${this.workspaceMode === 'grid'}">${this.workspaceMode === 'grid' ? 'Focar uma' : 'Ver grade'}</button>`}
+        </div>
       </section>
     `
   }
@@ -4463,6 +4517,7 @@ export class AuthApp {
   }
 
   private renderBackendStatus(): string {
+    if (this.ultraMode) return ''
     if (this.backendLoadStatus === 'loading') {
       return `
         <div class="data-notice" role="status" aria-live="polite">
@@ -4660,12 +4715,13 @@ export class AuthApp {
           <button class="utility-refresh" data-refresh-resource-usage type="button" aria-label="Atualizar dados de desempenho" title="Atualizar agora" ${this.resourceUsageLoading ? 'disabled' : ''}>${uiIcon('refresh')}</button>
         </div>
         <div class="workspace-utility__actions" role="group" aria-label="Utilitários das sessões">
+          ${this.sessionLauncher.requestMemoryCleanup ? `<button class="utility-action" data-clean-memory type="button" aria-label="Limpar RAM" title="Solicitar limpeza escalonada, sem desconectar contas">${uiIcon('memory')}</button>` : ''}
           <button class="utility-action ${chatOpen ? 'is-active' : ''}" data-open-chat type="button" aria-label="${chatOpen ? 'Fechar chat' : 'Abrir chat'}${chatUnread ? `, ${chatUnread} ${chatUnread === 1 ? 'mensagem não lida' : 'mensagens não lidas'}` : ''}" aria-pressed="${chatOpen}">${uiIcon('chat')}<span>Chat</span>${chatUnread ? `<b class="chat-unread-badge" aria-hidden="true">${Math.min(chatUnread, 99)}</b>` : ''}</button>
           <button class="utility-action" data-open-rmt type="button" aria-label="Abrir RMT no Discord"><strong>RMT</strong></button>
-          <button class="utility-action ${this.screensOnly ? 'is-active' : ''}" data-toggle-screens-only type="button" aria-label="${this.screensOnly ? 'Sair de Somente telas' : 'Ativar Somente telas'}" aria-pressed="${this.screensOnly}">${uiIcon('screens')}<span>Somente telas</span></button>
           <button class="utility-action utility-action--rest ${wakesTargets ? 'is-resting' : ''}" data-toggle-workspace-rest type="button" ${restTargets.length > 0 ? '' : 'disabled'} aria-label="${wakesTargets ? 'Despertar' : 'Descansar'} ${this.workspaceMode === 'grid' ? 'contas da grade' : 'conta atual'}">
             ${uiIcon('moon')}<span>${wakesTargets ? 'Despertar' : 'Descanso'}</span>
           </button>
+          <button class="utility-action" data-toggle-ultra type="button" title="Prioriza um jogo na tela, mantém os outros conectados e suspende painéis e chat.">${uiIcon('leaf')}<span>Ultra</span></button>
           <div class="utility-eco ${this.ecoModeEffective ? 'is-active' : ''}">
             <button data-toggle-eco-mode type="button" role="switch" aria-label="${this.ecoModeEffective ? 'Desligar Eco Mode' : 'Ligar Eco Mode'}" aria-checked="${this.ecoModeEffective}" ${ecoAvailable ? '' : 'disabled'}>
               ${uiIcon('leaf')}<span><small>Eco Mode</small><strong>${this.ecoModeEffective ? 'Ligado' : 'Desligado'}</strong></span><i aria-hidden="true"></i>
@@ -4679,6 +4735,7 @@ export class AuthApp {
   }
 
   private renderWorkspaceStatusbar(): string {
+    if (this.ultraMode) return ''
     if (this.mobileSessionMode) {
       return ''
     }
@@ -4980,7 +5037,84 @@ export class AuthApp {
     this.render()
   }
 
+  private setUltraMode(enabled: boolean): void {
+    if (enabled === this.ultraMode || (enabled && (!this.session || this.activeDialog))) return
+    this.ultraMode = enabled
+    if (enabled) {
+      this.presentationBeforeUltra = { screensOnly: this.screensOnly, workspaceMode: this.workspaceMode, maximizedAccountId: this.maximizedAccountId, chatWasOpen: Boolean(this.chatService?.getState().open) }
+      this.screensOnly = true
+      // Render only the focused game by default. Other native sessions,
+      // network connections and timers stay alive and can return instantly.
+      this.workspaceMode = 'account'
+      this.maximizedAccountId = null
+      this.chatDrafts.clear()
+      this.chatReply = null
+      this.chatService?.suspend()
+    } else {
+      const previous = this.presentationBeforeUltra
+      this.screensOnly = previous?.screensOnly ?? false
+      this.workspaceMode = previous?.workspaceMode ?? 'grid'
+      this.maximizedAccountId = previous?.maximizedAccountId && this.permissionService.isSessionActive(previous.maximizedAccountId)
+        ? previous.maximizedAccountId : null
+      this.presentationBeforeUltra = null
+      this.chatService?.resume()
+      if (this.session) this.chatService?.watchMentions(this.session.user.id, this.me?.profile.display_name ?? '', playMentionSound)
+      if (previous?.chatWasOpen) void this.chatService?.open(this.focusedGameId())
+      else void this.chatService?.start(this.focusedGameId())
+    }
+    this.workspaceMarkupCache.clear()
+    this.lastLayoutSignature = ''
+    this.render()
+    void this.uploadRuntimeDiagnostics(true)
+  }
+
+  private toggleUltraLayout(): void {
+    if (!this.ultraMode || this.mobileSessionMode) return
+    this.workspaceMode = this.workspaceMode === 'grid' ? 'account' : 'grid'
+    this.maximizedAccountId = null
+    this.gridPageIndex = 0
+    this.lastLayoutSignature = ''
+    this.applyWorkspacePresentation()
+  }
+
+  private cycleUltraAccount(direction: 'previous' | 'next'): void {
+    if (!this.ultraMode) return
+    const active = this.getActiveAccounts()
+    if (active.length < 2) return
+    const current = active.findIndex((account) => account.id === this.focusedAccountId)
+    const index = (Math.max(current, 0) + (direction === 'previous' ? -1 : 1) + active.length) % active.length
+    this.focusedAccountId = active[index]!.id
+    this.workspaceMode = 'account'
+    this.maximizedAccountId = null
+    this.gridPageIndex = 0
+    this.lastLayoutSignature = ''
+    this.applyWorkspacePresentation()
+  }
+
+  private async uploadRuntimeDiagnostics(force = false): Promise<void> {
+    if (!this.session || !this.backendApi?.sendRuntimeDiagnostics || this.runtimeDiagnosticsPending
+      || (!force && Date.now() - this.lastRuntimeDiagnosticsAt < 60_000)) return
+    this.runtimeDiagnosticsPending = true
+    this.lastRuntimeDiagnosticsAt = Date.now()
+    const expectedUserId = this.session.user.id
+    const summary = this.performanceHistory.summary()
+    try {
+      await this.backendApi.sendRuntimeDiagnostics({
+        mode: this.ultraMode ? 'ultra' : 'standard', version: APP_VERSION,
+        platform: this.mobileSessionMode ? 'android' : navigator.platform.slice(0, 40),
+        activeSessions: this.getActiveAccounts().length, savedSessions: this.configuredAccounts.length,
+        issueCount: this.sessionIssues.size,
+        privateKb: summary.sampleCount ? summary.privateKb : null,
+        gpuKb: summary.sampleCount ? summary.gpuKb : null,
+        cpuPercent: summary.sampleCount ? summary.cpuPercent : null,
+        peakPrivateKb: summary.sampleCount ? summary.peakPrivateKb : null,
+      }, expectedUserId)
+    } catch { /* Optional telemetry is never an authentication authority. */ }
+    finally { this.runtimeDiagnosticsPending = false }
+  }
+
   private applyWorkspacePresentation(): void {
+    if (this.ultraMode) this.screensOnly = true
     if (this.sessionLayoutSuspended || this.closingAccountIds.size > 0) {
       return
     }
@@ -4995,8 +5129,17 @@ export class AuthApp {
     }
 
     frame.classList.toggle('is-screens-only', this.screensOnly)
+    frame.classList.toggle('is-ultra-mode', this.ultraMode)
     frame.classList.toggle('is-eco-mode', this.ecoModeEffective)
     shell.classList.toggle('is-screens-only', this.screensOnly)
+    shell.classList.toggle('is-ultra-mode', this.ultraMode)
+    const ultraLayout = shell.querySelector<HTMLButtonElement>('[data-ultra-layout]')
+    if (ultraLayout) {
+      ultraLayout.textContent = translateUiText(this.workspaceMode === 'grid' ? 'Focar uma' : 'Ver grade', this.locale)
+      ultraLayout.setAttribute('aria-pressed', String(this.workspaceMode === 'grid'))
+    }
+    shell.querySelectorAll<HTMLButtonElement>('[data-ultra-account]')
+      .forEach((button) => { button.disabled = this.getActiveAccounts().length < 2 })
     shell.classList.toggle('is-sidebar-collapsed', this.sidebarCollapsed)
     shell.classList.toggle('is-utility-collapsed', this.utilityBarCollapsed)
     shell.classList.toggle('has-maximized-session', Boolean(this.maximizedAccountId))
@@ -5134,12 +5277,6 @@ export class AuthApp {
       layoutLabel.textContent = this.gridMode === 'auto' ? 'Auto' : this.gridMode
     }
 
-    const screensOnlyButton = this.root.querySelector<HTMLButtonElement>(
-      '[data-toggle-screens-only]',
-    )
-    screensOnlyButton?.classList.toggle('is-active', this.screensOnly)
-    screensOnlyButton?.setAttribute('aria-pressed', String(this.screensOnly))
-
     // Measure the actual surface rectangles after CSS layout. Native WebViews
     // receive content bounds—not the card bounds—so headers and gaps stay clear.
     const slots = (suppressNativeSessions ? [] : layout.slots).flatMap((slot) => {
@@ -5207,6 +5344,7 @@ export class AuthApp {
   }
 
   private renderDialog(): string {
+    if (this.ultraMode) return ''
     if (!this.activeDialog) {
       return ''
     }
@@ -5892,6 +6030,7 @@ export class AuthApp {
                 <label class="setting-toggle"><span><strong>Confirmar antes de fechar</strong><small>Evita encerrar sessões por acidente.</small></span><input data-preference="confirm-close" type="checkbox" ${confirmClose ? 'checked' : ''} /></label>
               </section>
               <section data-settings-panel="accounts" hidden><h3>Contas e desempenho</h3><p>Cookies, sessões e proxies ficam somente neste dispositivo, isolados por conta.</p><div class="resource-summary"><span><small>Uso das sessões</small><strong>${escapeHtml(formatMemoryKb(totalPrivateKb))} · ${totalCpu.toFixed(1)}% CPU</strong></span><button class="button button--secondary" data-refresh-resource-usage type="button" ${this.resourceUsageLoading ? 'disabled' : ''}>${this.resourceUsageLoading ? 'Medindo…' : 'Medir agora'}</button></div>${usageRows ? `<div class="resource-list">${usageRows}</div>` : '<p class="modal__note">Abra suas contas e clique em “Medir agora” para ver o consumo por sessão.</p>'}<p class="modal__note">O perfil de 10 FPS reduz trabalho de CPU/GPU das contas em segundo plano. Como cada jogo mantém um navegador isolado e ativo, a RAM só é totalmente liberada ao fechar a conta.</p></section>
+              <section data-settings-panel="accounts" hidden><h3>Diagnóstico local</h3><p>O relatório não inclui logins, cookies ou credenciais.</p>${this.renderPerformanceSummary()}<div class="resource-summary">${this.sessionLauncher.requestMemoryCleanup ? '<button class="button button--secondary" data-clean-memory type="button">Limpar RAM</button>' : ''}${this.sessionLauncher.getDiagnostics ? '<button class="button button--secondary" data-export-diagnostics type="button">Salvar relatório</button>' : ''}</div></section>
               <section data-settings-panel="visual" hidden><h3>Visual</h3><p>O tema escuro premium acompanha automaticamente o AltGrid.</p></section>
               <section data-settings-panel="updates" hidden><h3>Atualizações</h3><p>Canal atual: <strong>${updateChannel}</strong> · instalada ${APP_VERSION}${this.configText('latest_version') ? ` · disponível ${escapeHtml(this.configText('latest_version')!)}` : ''}</p><button class="button button--secondary" data-check-update type="button">Verificar atualização</button></section>
               <section data-settings-panel="notifications" hidden><h3>Notificações</h3><label class="setting-toggle"><span><strong>Avisos do AltGrid</strong><small>Atualizações, anúncios e alertas do sistema.</small></span><input data-preference="notifications" type="checkbox" ${notifications ? 'checked' : ''} /></label><label class="setting-toggle"><span><strong>Som de menções no chat</strong><small>Avisa quando alguém mencionar seu nick.</small></span><input data-preference="chat-sound" type="checkbox" ${localStorage.getItem('altgrid.preference.chat-sound') !== 'false' ? 'checked' : ''} /></label></section>
@@ -5907,7 +6046,7 @@ export class AuthApp {
       return `
         <dialog class="modal" id="app-dialog" aria-labelledby="dialog-title">
           <div class="modal__header"><p class="eyebrow">Produtividade</p><h2 id="dialog-title">Atalhos</h2><p>Atalhos ativos no AltGrid.</p></div>
-          <dl class="shortcut-list"><div><dt>Trocar para a conta 1–9</dt><dd><kbd>Ctrl</kbd> + <kbd>1…9</kbd></dd></div><div><dt>Sair de maximizado ou Somente telas</dt><dd><kbd>Esc</kbd></dd></div><div><dt>Abrir ou fechar chat</dt><dd><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd></dd></div></dl>
+          <dl class="shortcut-list"><div><dt>Trocar para a conta 1–9</dt><dd><kbd>Ctrl</kbd> + <kbd>1…9</kbd></dd></div><div><dt>Sair do Ultra ou da tela cheia</dt><dd><kbd>Esc</kbd></dd></div><div><dt>Abrir ou fechar chat</dt><dd><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd></dd></div></dl>
           <div class="modal__actions modal__actions--end"><button class="button button--secondary" data-close-dialog type="button">Fechar</button></div>
         </dialog>
       `
@@ -6945,13 +7084,16 @@ export class AuthApp {
       })
 
     this.root
-      .querySelectorAll<HTMLButtonElement>('[data-toggle-screens-only]')
-      .forEach((button) => {
-        this.bindButtonOnce(button, () => {
-          this.screensOnly = !this.screensOnly
-          this.applyWorkspacePresentation()
-        })
-      })
+      .querySelectorAll<HTMLButtonElement>('[data-toggle-ultra]')
+      .forEach((button) => this.bindButtonOnce(button, () => this.setUltraMode(!this.ultraMode)))
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-ultra-layout]')
+      .forEach((button) => this.bindButtonOnce(button, () => this.toggleUltraLayout()))
+
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-ultra-account]')
+      .forEach((button) => this.bindButtonOnce(button, () => this.cycleUltraAccount(button.dataset.ultraAccount === 'previous' ? 'previous' : 'next')))
 
     this.root
       .querySelectorAll<HTMLButtonElement>('[data-toggle-sidebar]')
@@ -6975,6 +7117,10 @@ export class AuthApp {
       .querySelectorAll<HTMLButtonElement>('[data-exit-screens-only]')
       .forEach((button) => {
         this.bindButtonOnce(button, () => {
+          if (this.ultraMode) {
+            this.setUltraMode(false)
+            return
+          }
           if (this.mobileSessionMode) {
             this.maximizedAccountId = null
             this.setNativeFullscreen(false)
@@ -8388,6 +8534,21 @@ export class AuthApp {
         })
       })
 
+    this.root.querySelectorAll<HTMLButtonElement>('[data-clean-memory]').forEach((button) => {
+      this.bindButtonOnce(button, () => {
+        button.disabled = true
+        void this.sessionLauncher.requestMemoryCleanup?.().then((queued) => {
+          this.showSessionAlert(queued > 0
+            ? `Limpeza solicitada para ${queued} sessão(ões). Ela será escalonada quando a CPU estiver livre, sem apagar logins. Objetos em uso não podem ser liberados.`
+            : 'Nenhuma nova limpeza solicitada. Há sessões sem suporte ou uma limpeza já está pendente.')
+        }).catch(() => this.showSessionAlert('Não foi possível solicitar a limpeza.'))
+          .finally(() => { button.disabled = false })
+      })
+    })
+    this.root.querySelectorAll<HTMLButtonElement>('[data-export-diagnostics]').forEach((button) => {
+      this.bindButtonOnce(button, () => { void this.exportPerformanceDiagnostics(button) })
+    })
+
     this.root
       .querySelectorAll<HTMLButtonElement>('[data-open-rmt]')
       .forEach((button) => {
@@ -9320,6 +9481,10 @@ export class AuthApp {
     this.updateUtilityMetrics()
     try {
       this.resourceUsage = await this.sessionLauncher.getResourceUsage()
+      if (this.sessionLauncher.getDiagnostics) {
+        try { this.performanceHistory.capture(await this.sessionLauncher.getDiagnostics()) }
+        catch { /* Optional diagnostics must not interrupt resource monitoring. */ }
+      }
       this.dialogError = null
     } catch {
       if (this.activeDialog === 'settings') {
@@ -9327,6 +9492,7 @@ export class AuthApp {
       }
     } finally {
       this.resourceUsageLoading = false
+      this.lastResourceUsageAt = Date.now()
       this.updateUtilityMetrics()
       if (this.activeDialog === 'settings') {
         this.render()
@@ -9346,10 +9512,37 @@ export class AuthApp {
 
     void this.refreshResourceUsage()
     this.resourceUsageTimer = setInterval(() => {
-      if (this.currentView === 'authenticated' && !this.root.ownerDocument?.hidden) {
+      if (this.currentView === 'authenticated' && !this.root.ownerDocument?.hidden
+        && (!this.ultraMode || Date.now() - this.lastResourceUsageAt >= 300_000)) {
         void this.refreshResourceUsage()
       }
     }, RESOURCE_USAGE_REFRESH_INTERVAL_MS)
+  }
+
+  private async exportPerformanceDiagnostics(button: HTMLButtonElement): Promise<void> {
+    if (!this.sessionLauncher.getDiagnostics) return
+    button.disabled = true
+    try {
+      const report = await this.sessionLauncher.getDiagnostics()
+      this.performanceHistory.capture(report)
+      const blob = new Blob([JSON.stringify(this.performanceHistory.exportReport(), null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = this.root.ownerDocument.createElement('a')
+      link.href = url
+      link.download = `altgrid-diagnostico-${report.generatedAt.replace(/[:.]/g, '-')}.json`
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1_000)
+    } catch {
+      this.showSessionAlert('Não foi possível gerar o relatório de desempenho.')
+    } finally {
+      button.disabled = false
+    }
+  }
+
+  private renderPerformanceSummary(): string {
+    const summary = this.performanceHistory.summary()
+    if (!summary.sampleCount) return ''
+    return `<dl class="admin-facts"><div><dt>RAM total do app</dt><dd>${escapeHtml(formatMemoryKb(summary.privateKb))}</dd></div><div><dt>Processo gráfico</dt><dd>${escapeHtml(formatMemoryKb(summary.gpuKb))}</dd></div><div><dt>CPU total do app</dt><dd>${summary.cpuPercent.toFixed(1)}%</dd></div><div><dt>Pico de RAM observado</dt><dd>${escapeHtml(formatMemoryKb(summary.peakPrivateKb))}</dd></div></dl>`
   }
 
   private stopResourceMonitoring(): void {

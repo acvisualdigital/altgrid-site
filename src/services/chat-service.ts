@@ -81,6 +81,14 @@ function mergeMessages(
 }
 
 export class ChatService {
+  private suspended = false
+
+  suspend(): void {
+    this.reset()
+    this.suspended = true
+  }
+
+  resume(): void { this.suspended = false }
   private state: ChatState = {
     banned: false,
     channels: [],
@@ -102,6 +110,7 @@ export class ChatService {
   private unsubscribeIncoming: (() => void) | null = null
 
   watchMentions(userId: string, nickname: string, onMention: () => void): void {
+    if (this.suspended) return
     this.unsubscribeIncoming?.()
     const seen = new Set<string>()
     const escaped = nickname.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -149,6 +158,7 @@ export class ChatService {
   }
 
   async start(preferredGameId: string | null = null): Promise<void> {
+    if (this.suspended) return
     const revision = ++this.revision
     this.patch({ error: null, loading: true })
     const [channelsResult, statusResult] = await Promise.allSettled([
@@ -193,6 +203,7 @@ export class ChatService {
   }
 
   async open(preferredGameId: string | null = null): Promise<void> {
+    if (this.suspended) return
     this.patch({ open: true })
     await this.start(preferredGameId)
   }
@@ -203,6 +214,7 @@ export class ChatService {
   }
 
   refreshUnread(): Promise<void> {
+    if (this.suspended) return Promise.resolve()
     if (this.state.loading || this.channelRefreshInFlight) {
       return this.channelRefreshInFlight
         ?? Promise.resolve()
@@ -246,6 +258,7 @@ export class ChatService {
   }
 
   reset(): void {
+    this.suspended = false
     this.unsubscribeIncoming?.()
     this.unsubscribeIncoming = null
     this.revision += 1
@@ -270,6 +283,7 @@ export class ChatService {
   }
 
   async selectChannel(channelId: string): Promise<void> {
+    if (this.suspended) return
     const selectedChannel = this.state.channels.find((channel) => channel.id === channelId)
     if (!selectedChannel) {
       return

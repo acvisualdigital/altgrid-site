@@ -1,4 +1,23 @@
 import { ApiError } from './api-error'
+import type { RuntimeDiagnostics } from '../../src/types/runtime-diagnostics'
+
+export async function readRuntimeDiagnostics(request: Request): Promise<RuntimeDiagnostics> {
+  const body = await readJsonObject(request, new Set(['mode', 'version', 'platform', 'activeSessions', 'savedSessions', 'issueCount', 'privateKb', 'gpuKb', 'cpuPercent', 'peakPrivateKb']))
+  if (body.mode !== 'ultra' && body.mode !== 'standard') throw validationError('Modo inválido.')
+  const count = (key: string, max: number, nullable = false): number | null => {
+    const value = body[key]
+    if (nullable && value === null) return null
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > max
+      || (!nullable && !Number.isInteger(value))) throw validationError(`${key} inválido.`)
+    return value
+  }
+  return {
+    mode: body.mode, version: requiredText(body.version, 'version', 32), platform: requiredText(body.platform, 'platform', 40),
+    activeSessions: count('activeSessions', 10000)!, savedSessions: count('savedSessions', 10000)!, issueCount: count('issueCount', 10000)!,
+    privateKb: count('privateKb', 1073741824, true), gpuKb: count('gpuKb', 1073741824, true),
+    peakPrivateKb: count('peakPrivateKb', 1073741824, true), cpuPercent: count('cpuPercent', 10000, true),
+  }
+}
 import type { CreateAppAdRequestInput } from '../../src/types/backend-api'
 
 const MAX_BODY_SIZE = 8_192
