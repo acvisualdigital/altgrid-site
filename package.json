@@ -1,6 +1,6 @@
 {
   "name": "altgrid",
-  "version": "1.7.0",
+  "version": "1.7.5",
   "description": "Gerenciador desktop multissessão para jogos e sites suportados.",
   "desktopName": "AltGrid",
   "author": "AltGrid",
@@ -32,6 +32,7 @@
     "site:deploy": "wrangler deploy --config wrangler.site.jsonc",
     "test": "vitest",
     "test:run": "vitest run",
+    "performance:analyze": "node scripts/performance-benchmark/analyze-report.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit && tsc -p tsconfig.electron.test.json",
     "worker:dev": "wrangler dev",
     "worker:build": "wrangler deploy --dry-run --outdir .wrangler/dist",

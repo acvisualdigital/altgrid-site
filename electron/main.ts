@@ -1,8 +1,10 @@
 import './velopack-bootstrap.js'
 
 import { existsSync } from 'node:fs'
+import { createWriteStream } from 'node:fs'
 import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { writeHeapSnapshot } from 'node:v8'
 
 import {
   app,
@@ -32,6 +34,8 @@ import { ProxyConfigStore } from './proxy-config-store.js'
 import { ExtensionConfigStore } from './extension-config-store.js'
 import { configureShellSecurity } from './shell-security.js'
 import { UpdaterService } from './updater-service.js'
+import { sampleProcessMetrics } from './process-metrics-sampler.js'
+import { classifyProcessMetrics } from './performance-diagnostics.js'
 import {
   findTrustedRecoveryDeepLink,
   isSafeExternalUrl,
@@ -64,12 +68,17 @@ protocol.registerSchemesAsPrivileged([{
 // adaptive heap policy is a better fit for persistent game sessions. Expose GC
 // for staggered, infrequent cleanup of parked views and growing high-memory
 // renderers. The native session factory serializes collections across accounts.
-app.commandLine.appendSwitch('js-flags', '--expose-gc')
-app.commandLine.appendSwitch('disable-features', 'BackForwardCache')
-// This is a discardable compositor-resource budget, not a hard cap on the GPU
-// process or live WebGL textures. Real games can exceed it; diagnostics must
-// report the shared GPU process separately from JavaScript renderer memory.
-app.commandLine.appendSwitch('force-gpu-mem-available-mb', '1024')
+// Non-default Chromium experiments require an explicit development flag and
+// must be benchmarked separately. Production keeps Chromium defaults.
+if (!app.isPackaged && process.env.ALTGRID_EXPERIMENTAL_EXPOSE_GC === 'true') {
+  app.commandLine.appendSwitch('js-flags', '--expose-gc')
+}
+if (!app.isPackaged && process.env.ALTGRID_EXPERIMENTAL_DISABLE_BFCACHE === 'true') {
+  app.commandLine.appendSwitch('disable-features', 'BackForwardCache')
+}
+if (!app.isPackaged && /^\d{2,5}$/.test(process.env.ALTGRID_EXPERIMENTAL_GPU_MEMORY_MB ?? '')) {
+  app.commandLine.appendSwitch('force-gpu-mem-available-mb', process.env.ALTGRID_EXPERIMENTAL_GPU_MEMORY_MB!)
+}
 // The development shell is rebuilt in place by Vite. Chromium's persistent
 // cache can otherwise keep a stale asset response under a TypeScript module
 // URL, leaving the local app on a black screen until its profile is cleared.
@@ -92,6 +101,64 @@ let updaterService: UpdaterService | null = null
 let shellEntryUrl: string | null = null
 let pendingRecoveryDeepLink = findTrustedRecoveryDeepLink(process.argv)
 let forcedExitTimer: NodeJS.Timeout | null = null
+const ipcDebugStats = new Map<string, { count: number; bytes: number; maxBytes: number; firstAt: number; lastAt: number }>()
+
+function estimateIpcBytes(args: unknown[]): number {
+  try { return Buffer.byteLength(JSON.stringify(args), 'utf8') } catch { return 0 }
+}
+
+function enableDevelopmentIpcInstrumentation(): void {
+  if (process.env.ALTGRID_PERFORMANCE_DEBUG !== 'true') return
+  const nativeHandle = ipcMain.handle.bind(ipcMain)
+  ipcMain.handle = ((channel: string, listener: Parameters<typeof ipcMain.handle>[1]) => {
+    nativeHandle(channel, (event, ...args) => {
+      const now = Date.now()
+      const bytes = estimateIpcBytes(args)
+      const current = ipcDebugStats.get(channel) ?? {
+        count: 0, bytes: 0, maxBytes: 0, firstAt: now, lastAt: now,
+      }
+      current.count++
+      current.bytes += bytes
+      current.maxBytes = Math.max(current.maxBytes, bytes)
+      current.lastAt = now
+      ipcDebugStats.set(channel, current)
+      return listener(event, ...args)
+    })
+  }) as typeof ipcMain.handle
+}
+
+function ipcDiagnosticsSnapshot() {
+  return [...ipcDebugStats.entries()].map(([channel, value]) => ({
+    channel, count: value.count,
+    callsPerSecond: value.count / Math.max(1, (value.lastAt - value.firstAt) / 1_000),
+    averageBytes: value.count ? Math.round(value.bytes / value.count) : 0,
+    maxBytes: value.maxBytes,
+  })).sort((left, right) => right.callsPerSecond - left.callsPerSecond)
+}
+
+async function captureRendererHeapSnapshot(filePath: string, browserWindow: BrowserWindow): Promise<void> {
+  const debuggerApi = browserWindow.webContents.debugger
+  const stream = createWriteStream(filePath, { encoding: 'utf8' })
+  const attachedHere = !debuggerApi.isAttached()
+  const onMessage = (_event: Electron.Event, method: string, params: Record<string, unknown>) => {
+    if (method === 'HeapProfiler.addHeapSnapshotChunk' && typeof params.chunk === 'string') {
+      stream.write(params.chunk)
+    }
+  }
+  if (attachedHere) debuggerApi.attach('1.3')
+  debuggerApi.on('message', onMessage)
+  try {
+    await debuggerApi.sendCommand('HeapProfiler.enable')
+    await debuggerApi.sendCommand('HeapProfiler.takeHeapSnapshot', { reportProgress: false })
+  } finally {
+    debuggerApi.removeListener('message', onMessage)
+    await new Promise<void>((resolveStream, reject) => {
+      stream.once('error', reject)
+      stream.end(resolveStream)
+    })
+    if (attachedHere && debuggerApi.isAttached()) debuggerApi.detach()
+  }
+}
 
 function bundledHunteraDpsPath(): string {
   return app.isPackaged
@@ -391,6 +458,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.sessions.setEcoMode, (event, enabled, secondaryFps) => (
     requireSessionManager(event).setEcoMode(enabled, secondaryFps)
   ))
+  ipcMain.handle(IPC_CHANNELS.sessions.setUltraMode, (event, enabled) => (
+    requireSessionManager(event).setUltraMode(enabled)
+  ))
   ipcMain.handle(IPC_CHANNELS.sessions.setFrameRate, (event, accountId, fps) => (
     requireSessionManager(event).setFrameRate(accountId, fps)
   ))
@@ -405,19 +475,46 @@ function registerIpcHandlers(): void {
   ))
   ipcMain.handle(IPC_CHANNELS.sessions.getDiagnostics, (event) => {
     const manager = requireSessionManager(event)
+    const sessions = manager.getDiagnosticSessions()
+    const gamePids = new Set(sessions.flatMap((session) => session.pid ? [session.pid] : []))
+    const shellPid = mainWindow?.webContents.isDestroyed() === false
+      ? mainWindow.webContents.getOSProcessId() : null
+    const classified = classifyProcessMetrics(sampleProcessMetrics(
+      process.env.ALTGRID_PERFORMANCE_DEBUG === 'true' ? 1_500 : 30_000,
+    ).metrics, gamePids, process.pid, shellPid)
     return {
       generatedAt: new Date().toISOString(), version: app.getVersion(),
       platform: process.platform, uptimeSeconds: Math.round(process.uptime()),
-      processes: app.getAppMetrics().map((metric) => ({
-        type: metric.type, cpuPercent: metric.cpu.percentCPUUsage,
-        privateKb: metric.memory.privateBytes ?? metric.memory.workingSetSize,
-      })),
-      // No cookies, tokens, device hashes, URLs, nicknames or account identifiers.
-      sessions: manager.getSessions().map((session, index) => ({
-        label: `Session ${index + 1}`, status: session.status,
-        visible: session.visible, frameRate: session.frameRate,
-      })),
+      performanceMode: manager.getPerformanceMode(),
+      activeSession: sessions.find((session) => session.visualState === 'ACTIVE')?.label ?? null,
+      performanceDebugEnabled: process.env.ALTGRID_PERFORMANCE_DEBUG === 'true',
+      // The shell never disables Chromium background throttling. Account views
+      // report their own runtime value and application count separately.
+      shellBackgroundThrottling: true,
+      ipc: process.env.ALTGRID_PERFORMANCE_DEBUG === 'true' ? ipcDiagnosticsSnapshot() : undefined,
+      totals: classified.totals,
+      processes: classified.processes,
+      // The live local monitor may map account IDs. The export service removes
+      // identifiers, partition and origin before creating a report file.
+      sessions,
     }
+  })
+  ipcMain.handle(IPC_CHANNELS.sessions.captureHeapSnapshot, async (event, target) => {
+    requireShellSender(event)
+    if (process.env.ALTGRID_PERFORMANCE_DEBUG !== 'true' || app.isPackaged) {
+      throw new Error('Heap snapshot está disponível somente no diagnóstico de desenvolvimento.')
+    }
+    if (target !== 'main' && target !== 'shell') throw new TypeError('Alvo de heap inválido.')
+    if (!mainWindow || mainWindow.isDestroyed()) return null
+    const selection = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: join(app.getPath('documents'), `altgrid-${target}-${Date.now()}.heapsnapshot`),
+      filters: [{ name: 'V8 Heap Snapshot', extensions: ['heapsnapshot'] }],
+      title: target === 'main' ? 'Capturar heap do processo principal' : 'Capturar heap da interface AltGrid',
+    })
+    if (selection.canceled || !selection.filePath) return null
+    if (target === 'main') writeHeapSnapshot(selection.filePath)
+    else await captureRendererHeapSnapshot(selection.filePath, mainWindow)
+    return selection.filePath
   })
   ipcMain.handle(IPC_CHANNELS.sessions.getResourceUsage, (event) => (
     requireSessionManager(event).getResourceUsage()
@@ -770,6 +867,7 @@ if (!singleInstanceLock) {
 
   void app.whenReady().then(async () => {
     await registerLocalShellProtocol()
+    enableDevelopmentIpcInstrumentation()
     registerIpcHandlers()
     await createMainWindow()
 

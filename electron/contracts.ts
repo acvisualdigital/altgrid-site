@@ -121,6 +121,7 @@ export interface AltgridDesktopApi {
   sessions: {
     requestMemoryCleanup?(): Promise<number>
     getDiagnostics?(): Promise<DesktopDiagnostics>
+    captureHeapSnapshot?(target: 'main' | 'shell'): Promise<string | null>
     chooseExtension(accountId: string): Promise<SessionExtensionSummary | null>
     installHunteraDps?(accountId: string): Promise<SessionExtensionSummary>
     clearData(accountId: string): Promise<boolean>
@@ -151,6 +152,7 @@ export interface AltgridDesktopApi {
       bounds: SessionBounds,
     ): Promise<SessionSnapshot>
     setEcoMode(enabled: boolean, secondaryFps?: number): Promise<boolean>
+    setUltraMode(enabled: boolean): Promise<boolean>
     setFrameRate(accountId: string, fps: number): Promise<SessionSnapshot>
     setInterfaceZoom(accountId: string, zoom: number | null): Promise<SessionSnapshot>
     setProxy(
@@ -179,6 +181,7 @@ export const IPC_CHANNELS = Object.freeze({
   sessions: Object.freeze({
     requestMemoryCleanup: 'altgrid:sessions:request-memory-cleanup',
     getDiagnostics: 'altgrid:sessions:get-diagnostics',
+    captureHeapSnapshot: 'altgrid:sessions:capture-heap-snapshot',
     chooseExtension: 'altgrid:sessions:choose-extension',
     installHunteraDps: 'altgrid:sessions:install-huntera-dps',
     clearData: 'altgrid:sessions:clear-data',
@@ -201,6 +204,7 @@ export const IPC_CHANNELS = Object.freeze({
     removeExtension: 'altgrid:sessions:remove-extension',
     resize: 'altgrid:sessions:resize',
     setEcoMode: 'altgrid:sessions:set-eco-mode',
+    setUltraMode: 'altgrid:sessions:set-ultra-mode',
     setFrameRate: 'altgrid:sessions:set-frame-rate',
     setInterfaceZoom: 'altgrid:sessions:set-interface-zoom',
     setProxy: 'altgrid:sessions:set-proxy',
@@ -217,6 +221,30 @@ export const IPC_CHANNELS = Object.freeze({
   }),
 })
 
+export interface PerformanceLabConfiguration {
+  mode: 'normal' | 'eco' | 'ultra'
+  parkingStrategy: 'ATTACHED_OFFSCREEN' | 'DETACHED_VIEW'
+  backgroundThrottlingMode: 'compatibility' | 'allow'
+}
+
+export interface PerformanceBenchmarkReport {
+  schemaVersion: 1
+  createdAt: string
+  accountCount: number
+  scenarios: Array<{
+    id: string
+    status: 'COMPLETED' | 'FAILED' | 'STOPPED'
+    configuration: PerformanceLabConfiguration
+    startedAt: string
+    endedAt: string
+    warmupSeconds: number
+    measurementSeconds: number
+    samples: DesktopDiagnostics[]
+    regressions: string[]
+    validation?: { ok: boolean; categories: string[] }
+  }>
+}
+
 export const SESSION_PRELOAD_CHANNELS = Object.freeze({
   setFrameRateLimit: 'altgrid:session-preload:set-frame-rate-limit',
 })
@@ -226,6 +254,58 @@ export interface DesktopDiagnostics {
   version: string
   platform: string
   uptimeSeconds: number
-  processes: { type: string; cpuPercent: number; privateKb: number }[]
-  sessions: { label: string; status: SessionStatus; visible: boolean; frameRate: number }[]
+  performanceMode?: 'normal' | 'eco' | 'ultra'
+  activeSession?: string | null
+  performanceDebugEnabled?: boolean
+  shellBackgroundThrottling?: boolean
+  ipc?: { channel: string; count: number; callsPerSecond: number; averageBytes: number; maxBytes: number }[]
+  totals?: {
+    electronKb: number
+    altgridOverheadKb: number
+    gameRenderersKb: number
+    gpuKb: number
+    chromiumServicesKb: number
+    unknownKb: number
+  }
+  processes: {
+    type: string
+    role?: 'MAIN' | 'SHELL' | 'GAME' | 'GPU' | 'SERVICE' | 'OTHER'
+    name?: string
+    serviceName?: string
+    classification?: 'ALTGRID_OVERHEAD' | 'GAME_RENDERER' | 'GPU' | 'CHROMIUM_SERVICES' | 'UNKNOWN'
+    cpuPercent: number
+    privateKb: number
+    workingSetKb?: number
+    peakWorkingSetKb?: number
+    idleWakeupsPerSecond?: number
+    pid?: number
+  }[]
+  sessions: {
+    label: string
+    accountId?: string
+    webContentsId?: number
+    partition?: string
+    origin?: string
+    status: SessionStatus
+    visible: boolean
+    parked?: boolean
+    attached?: boolean
+    parkingStrategy?: 'ATTACHED_OFFSCREEN' | 'DETACHED_VIEW'
+    parkingFallbackReason?: string | null
+    detachedDurationMs?: number
+    processRecreated?: boolean
+    unexpectedNavigation?: boolean
+    muted?: boolean
+    requestedMuted?: boolean
+    backgroundThrottling?: boolean
+    backgroundThrottlingApplyCount?: number
+    backgroundThrottlingLastReason?: string | null
+    backgroundThrottlingLastAppliedAt?: string | null
+    imageAnimationPolicy?: 'animate' | 'animateOnce' | 'noAnimation'
+    profileId?: string
+    performanceMode?: 'normal' | 'eco' | 'ultra'
+    frameRate: number
+    pid?: number | null
+    visualState?: 'ACTIVE' | 'BACKGROUND' | 'ULTRA_BACKGROUND'
+  }[]
 }

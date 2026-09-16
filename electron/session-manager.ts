@@ -8,6 +8,7 @@ import type {
   SessionStatus,
 } from './contracts.js'
 import { isAllowedSessionUrl } from './url-policy.js'
+import { AccountPerformanceManager, type AccountPerformanceMode } from './account-performance-manager.js'
 
 const ACCOUNT_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/
 const MAX_VIEW_DIMENSION = 8_192
@@ -27,8 +28,6 @@ const MAX_FRAME_RATE = 240
 // The shell is not visible while minimized, so rendering game frames above a
 // very small budget only burns CPU/GPU. Network traffic and page timers remain
 // active because this limit affects requestAnimationFrame only.
-const BACKGROUNDED_FRAME_RATE = 2
-const ECO_FOCUSED_FRAME_RATE = 30
 const DEFAULT_ECO_SECONDARY_FRAME_RATE = 20
 const MIN_ECO_SECONDARY_FRAME_RATE = 2
 const MAX_ECO_SECONDARY_FRAME_RATE = 30
@@ -116,6 +115,8 @@ export interface NativeSessionView {
   destroy(force: boolean): void
   focus(): void
   getResourceUsage(): Promise<Omit<SessionResourceUsage, 'accountId'>>
+  getProcessId?(): number | null
+  getDiagnostics?(): NativeSessionViewDiagnostics
   loadURL(url: string): Promise<void>
   reload(): void
   stop(): void
@@ -128,6 +129,29 @@ export interface NativeSessionView {
   testProxy(targetUrl: string): Promise<SessionProxyTestResult>
   setVisible(visible: boolean): void
   setZoomFactor(factor: number): void
+  setPerformanceMode?(mode: AccountPerformanceMode): void
+}
+
+export interface NativeSessionViewDiagnostics {
+  webContentsId: number
+  pid: number | null
+  origin: string
+  parked: boolean
+  attached: boolean
+  parkingStrategy: 'ATTACHED_OFFSCREEN' | 'DETACHED_VIEW'
+  parkingFallbackReason: string | null
+  detachedAt: number | null
+  detachedDurationMs: number
+  detachPid: number | null
+  urlChangedWhileDetached: boolean
+  muted: boolean
+  requestedMuted: boolean
+  backgroundThrottling: boolean
+  backgroundThrottlingApplyCount: number
+  backgroundThrottlingLastReason: string | null
+  backgroundThrottlingLastAppliedAt: string | null
+  imageAnimationPolicy: 'animate' | 'animateOnce' | 'noAnimation'
+  profileId: string
 }
 
 export interface NativeSessionViewContext {
@@ -246,8 +270,10 @@ export class SessionManager {
   private readonly listeners = new Set<(event: SessionEvent) => void>()
   private readonly loadTimeoutMs: number
   private readonly records = new Map<string, SessionRecord>()
+  private readonly performance = new AccountPerformanceManager()
   private appBackgrounded = false
   private ecoModeEnabled = false
+  private ultraModeEnabled = false
   private ecoSecondaryFrameRate = DEFAULT_ECO_SECONDARY_FRAME_RATE
   private focusedAccountId: string | null = null
 
@@ -275,6 +301,21 @@ export class SessionManager {
     // Leaving the background must also restore Auto/manual FPS when Eco is
     // off; a normal budget refresh otherwise skips this foreground state.
     this.refreshFrameRateBudgets(true)
+  }
+
+  getPerformanceMode(): AccountPerformanceMode { return this.performance.getMode() }
+
+  getActiveAccountId(): string | null { return this.focusedAccountId }
+
+  setUltraMode(enabled: unknown): boolean {
+    if (typeof enabled !== 'boolean') throw new TypeError('O estado do Modo Ultra deve ser booleano.')
+    if (this.ultraModeEnabled === enabled) return enabled
+    this.ultraModeEnabled = enabled
+    const mode = enabled ? 'ultra' : this.ecoModeEnabled ? 'eco' : 'normal'
+    this.performance.setMode(mode)
+    for (const record of this.records.values()) record.view.setPerformanceMode?.(mode)
+    this.refreshFrameRateBudgets(true)
+    return enabled
   }
 
   async createSession(
@@ -317,6 +358,7 @@ export class SessionManager {
       // Apply the current process-local preference before the remote page starts.
       // This preserves the WebContents and its persistent authenticated partition.
       view.setEcoMode(this.ecoModeEnabled)
+      view.setPerformanceMode?.(this.performance.getMode())
       view.setFrameRateLimit(this.effectiveFrameRate(record))
       await view.setProxy(proxyConfig?.enabled ? proxyConfig : null)
       await view.setExtension(extensionPath)
@@ -366,6 +408,7 @@ export class SessionManager {
 
     record.visible = true
     record.view.setVisible(true)
+    if (this.ultraModeEnabled) record.view.setFrameRateLimit(this.effectiveFrameRate(record))
     if (this.focusedAccountId === null) {
       this.updateFocusedAccount(record.accountId)
     }
@@ -381,6 +424,7 @@ export class SessionManager {
 
     record.visible = false
     record.view.setVisible(false)
+    if (this.ultraModeEnabled) record.view.setFrameRateLimit(this.effectiveFrameRate(record))
     if (this.focusedAccountId === record.accountId) {
       const replacement = [...this.records.values()].find((candidate) => (
         candidate.accountId !== record.accountId && candidate.visible
@@ -580,6 +624,9 @@ export class SessionManager {
 
     this.ecoModeEnabled = enabled
     this.ecoSecondaryFrameRate = secondaryFps
+    const mode = this.ultraModeEnabled ? 'ultra' : enabled ? 'eco' : 'normal'
+    this.performance.setMode(mode)
+    for (const record of this.records.values()) record.view.setPerformanceMode?.(mode)
     return this.ecoModeEnabled
   }
 
@@ -604,6 +651,57 @@ export class SessionManager {
 
   getSessions(): SessionSnapshot[] {
     return [...this.records.values()].map(snapshot)
+  }
+
+  getDiagnosticSessions(): Array<{
+    label: string; accountId: string; webContentsId?: number; partition: string; origin?: string;
+    status: SessionStatus; visible: boolean; frameRate: number; pid: number | null;
+    visualState: 'ACTIVE' | 'BACKGROUND' | 'ULTRA_BACKGROUND'; parked?: boolean;
+    attached?: boolean; parkingStrategy?: 'ATTACHED_OFFSCREEN' | 'DETACHED_VIEW';
+    parkingFallbackReason?: string | null; detachedDurationMs?: number;
+    processRecreated?: boolean; unexpectedNavigation?: boolean; muted?: boolean;
+    requestedMuted?: boolean; backgroundThrottling?: boolean;
+    backgroundThrottlingApplyCount?: number;
+    backgroundThrottlingLastReason?: string | null; backgroundThrottlingLastAppliedAt?: string | null;
+    imageAnimationPolicy?: 'animate' | 'animateOnce' | 'noAnimation'; profileId?: string;
+    performanceMode: AccountPerformanceMode
+  }> {
+    return [...this.records.values()].map((record, index) => {
+      const native = record.view.getDiagnostics?.()
+      return {
+        label: `Session ${index + 1}`,
+        accountId: record.accountId,
+        webContentsId: native?.webContentsId,
+        partition: record.partition,
+        origin: native?.origin,
+        status: record.status,
+        visible: record.visible,
+        frameRate: this.effectiveFrameRate(record),
+        pid: native?.pid ?? record.view.getProcessId?.() ?? null,
+        visualState: this.performance.budget({
+        accountId: record.accountId, activeAccountId: this.focusedAccountId,
+        accountCount: this.records.size, appBackgrounded: this.appBackgrounded,
+        desiredFrameRate: record.frameRate, ecoSecondaryFrameRate: this.ecoSecondaryFrameRate,
+        visible: record.visible,
+      }).state,
+        parked: native?.parked,
+        attached: native?.attached,
+        parkingStrategy: native?.parkingStrategy,
+        parkingFallbackReason: native?.parkingFallbackReason,
+        detachedDurationMs: native?.detachedDurationMs,
+        processRecreated: native ? native.detachPid !== null && native.detachPid !== native.pid : false,
+        unexpectedNavigation: native?.urlChangedWhileDetached,
+        muted: native?.muted,
+        requestedMuted: native?.requestedMuted,
+        backgroundThrottling: native?.backgroundThrottling,
+        backgroundThrottlingApplyCount: native?.backgroundThrottlingApplyCount,
+        backgroundThrottlingLastReason: native?.backgroundThrottlingLastReason,
+        backgroundThrottlingLastAppliedAt: native?.backgroundThrottlingLastAppliedAt,
+        imageAnimationPolicy: native?.imageAnimationPolicy,
+        profileId: native?.profileId,
+        performanceMode: this.performance.getMode(),
+      }
+    })
   }
 
   requestMemoryCleanup(): number {
@@ -727,31 +825,17 @@ export class SessionManager {
     ecoModeEnabled = this.ecoModeEnabled,
     ecoSecondaryFrameRate = this.ecoSecondaryFrameRate,
   ): number {
-    if (this.appBackgrounded) {
-      return desiredFrameRate === 0
-        ? BACKGROUNDED_FRAME_RATE
-        : Math.min(desiredFrameRate, BACKGROUNDED_FRAME_RATE)
-    }
-
-    if (!ecoModeEnabled) {
-      return desiredFrameRate
-    }
-
-    // Eco Mode must produce a measurable saving even when only one account is
-    // open. Previous releases left the focused renderer unlimited, so toggling
-    // Eco with a single game could make no difference at all. Thirty FPS keeps
-    // the active idle game responsive while bounding its visual work.
-    const adaptiveCeiling = record.accountId === this.focusedAccountId
-      ? ECO_FOCUSED_FRAME_RATE
-      : this.records.size >= 8
-        ? Math.min(ecoSecondaryFrameRate, 5)
-        : this.records.size >= 4
-          ? Math.min(ecoSecondaryFrameRate, 10)
-          : ecoSecondaryFrameRate
-
-    return desiredFrameRate === 0
-      ? adaptiveCeiling
-      : Math.min(desiredFrameRate, adaptiveCeiling)
+    const mode: AccountPerformanceMode = this.ultraModeEnabled
+      ? 'ultra' : ecoModeEnabled ? 'eco' : 'normal'
+    return this.performance.budget({
+      accountId: record.accountId,
+      activeAccountId: this.focusedAccountId,
+      accountCount: this.records.size,
+      appBackgrounded: this.appBackgrounded,
+      desiredFrameRate,
+      ecoSecondaryFrameRate,
+      visible: record.visible,
+    }, mode).frameRate
   }
 
   private effectiveInterfaceZoom(record: SessionRecord): number {
@@ -759,7 +843,7 @@ export class SessionManager {
   }
 
   private refreshFrameRateBudgets(force = false): void {
-    if (!force && !this.ecoModeEnabled && !this.appBackgrounded) {
+    if (!force && !this.ecoModeEnabled && !this.ultraModeEnabled && !this.appBackgrounded) {
       return
     }
     for (const record of this.records.values()) {

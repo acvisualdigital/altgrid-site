@@ -30,6 +30,9 @@ const api: AltgridDesktopApi = Object.freeze({
   sessions: Object.freeze({
     requestMemoryCleanup: () => invoke<number>(IPC_CHANNELS.sessions.requestMemoryCleanup),
     getDiagnostics: () => invoke<DesktopDiagnostics>(IPC_CHANNELS.sessions.getDiagnostics),
+    captureHeapSnapshot: (target: 'main' | 'shell') => (
+      invoke<string | null>(IPC_CHANNELS.sessions.captureHeapSnapshot, target)
+    ),
     chooseExtension: (accountId: string) => (
       invoke<SessionExtensionSummary | null>(IPC_CHANNELS.sessions.chooseExtension, accountId)
     ),
@@ -120,6 +123,9 @@ const api: AltgridDesktopApi = Object.freeze({
       secondaryFps === undefined
         ? invoke<boolean>(IPC_CHANNELS.sessions.setEcoMode, enabled)
         : invoke<boolean>(IPC_CHANNELS.sessions.setEcoMode, enabled, secondaryFps)
+    ),
+    setUltraMode: (enabled: boolean) => (
+      invoke<boolean>(IPC_CHANNELS.sessions.setUltraMode, enabled)
     ),
     setFrameRate: (accountId: string, fps: number) => (
       invoke<SessionSnapshot>(IPC_CHANNELS.sessions.setFrameRate, accountId, fps)

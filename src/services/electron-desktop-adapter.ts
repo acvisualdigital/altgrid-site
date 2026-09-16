@@ -176,6 +176,10 @@ export class ElectronSessionLauncher {
     return this.api.getDiagnostics()
   }
 
+  captureHeapSnapshot(target: 'main' | 'shell'): Promise<string | null> {
+    return this.api.captureHeapSnapshot?.(target) ?? Promise.resolve(null)
+  }
+
   async open(
     account: DesktopAccountReference,
     target: DesktopSessionLaunchTarget | null,
@@ -271,6 +275,10 @@ export class ElectronSessionLauncher {
     return secondaryFps === undefined
       ? this.api.setEcoMode(enabled)
       : this.api.setEcoMode(enabled, secondaryFps)
+  }
+
+  setUltraMode(enabled: boolean): Promise<boolean> {
+    return this.api.setUltraMode(enabled)
   }
 
   async setFrameRate(account: DesktopAccountReference, fps: number): Promise<void> {

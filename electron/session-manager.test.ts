@@ -27,6 +27,7 @@ interface FakeView extends NativeSessionView {
   setMuted: Mock<(muted: boolean) => void>
   setProxy: Mock<(config: import('./contracts.js').SessionProxyConfig | null) => Promise<void>>
   setVisible: Mock<(visible: boolean) => void>
+  setPerformanceMode?: Mock<(mode: 'normal' | 'eco' | 'ultra') => void>
   setZoomFactor: Mock<(factor: number) => void>
   testProxy: Mock<(targetUrl: string) => Promise<import('./contracts.js').SessionProxyTestResult>>
 }
@@ -55,6 +56,7 @@ function createHarness(
       setMuted: vi.fn(),
       setProxy: vi.fn(async () => undefined),
       setVisible: vi.fn(),
+      setPerformanceMode: vi.fn(),
       setZoomFactor: vi.fn(),
       testProxy: vi.fn(async () => ({
         latencyMs: 1,
@@ -78,6 +80,19 @@ function createHarness(
 }
 
 describe('SessionManager', () => {
+  it('applies the benchmark-approved Ultra profile without reload or recreation', async () => {
+    const harness = createHarness()
+    await harness.manager.createSession('account-ultra', 'https://game.example/')
+    const view = harness.views.get('account-ultra')!
+    expect(harness.manager.setUltraMode(true)).toBe(true)
+    expect(view.setPerformanceMode!).toHaveBeenLastCalledWith('ultra')
+    expect(harness.manager.setUltraMode(false)).toBe(false)
+    expect(view.setPerformanceMode!).toHaveBeenLastCalledWith('normal')
+    expect(view.loadURL).toHaveBeenCalledOnce()
+    expect(view.reload).not.toHaveBeenCalled()
+    expect(harness.createView).toHaveBeenCalledOnce()
+  })
+
   it('loads an account extension before the game and can replace it without recreating the view', async () => {
     const harness = createHarness()
     await harness.manager.createSession(
@@ -389,6 +404,29 @@ describe('SessionManager', () => {
 
     harness.manager.setEcoMode(false)
     expect(view.setFrameRateLimit).toHaveBeenLastCalledWith(0)
+  })
+
+  it('applies Ultra visual priorities without recreating or reloading games', async () => {
+    const harness = createHarness()
+    for (const accountId of ['account-1', 'account-2']) {
+      await harness.manager.createSession(accountId, 'https://game.example/')
+      harness.manager.showSession(accountId)
+    }
+    harness.manager.focusSession('account-1')
+    expect(harness.manager.setUltraMode(true)).toBe(true)
+    expect(harness.manager.getPerformanceMode()).toBe('ultra')
+    expect(harness.views.get('account-1')?.setFrameRateLimit).toHaveBeenLastCalledWith(30)
+    expect(harness.views.get('account-2')?.setFrameRateLimit).toHaveBeenLastCalledWith(2)
+    harness.manager.focusSession('account-2')
+    expect(harness.views.get('account-1')?.setFrameRateLimit).toHaveBeenLastCalledWith(2)
+    expect(harness.views.get('account-2')?.setFrameRateLimit).toHaveBeenLastCalledWith(30)
+    harness.manager.setUltraMode(false)
+    expect(harness.manager.getPerformanceMode()).toBe('normal')
+    for (const view of harness.views.values()) {
+      expect(view.loadURL).toHaveBeenCalledOnce()
+      expect(view.reload).not.toHaveBeenCalled()
+      expect(view.destroy).not.toHaveBeenCalled()
+    }
   })
 
   it('reduces visual work while the app is hidden and restores each FPS budget', async () => {

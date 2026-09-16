@@ -1,9 +1,11 @@
 import type { ConfiguredAccount } from './configured-account-service'
+import { GRID_MODES, type GridMode } from './grid-layout-service'
 
 export interface SavedGridWorkspace {
   accountIds: string[]
   createdAt: string
   id: string
+  layoutMode: GridMode
   name: string
   updatedAt: string
 }
@@ -31,6 +33,12 @@ function defaultId(): string {
 }
 
 function cleanName(value: string): string { return value.trim().replace(/\s+/g, ' ').slice(0, 40) }
+
+function cleanLayoutMode(value: unknown): GridMode {
+  return typeof value === 'string' && (GRID_MODES as readonly string[]).includes(value)
+    ? value as GridMode
+    : 'auto'
+}
 
 function isSavedGrid(value: unknown): value is SavedGridWorkspace {
   if (!value || typeof value !== 'object') return false
@@ -65,6 +73,7 @@ export class GridWorkspaceService {
       return parsed.filter(isSavedGrid).map((grid) => ({
         ...grid,
         accountIds: [...new Set(grid.accountIds)].filter((id) => !valid || valid.has(id)),
+        layoutMode: cleanLayoutMode(grid.layoutMode),
         name: cleanName(grid.name) || 'Grade sem nome',
       }))
     } catch { return [] }
@@ -72,7 +81,7 @@ export class GridWorkspaceService {
 
   save(
     userId: string,
-    input: { accountIds: readonly string[]; id?: string | null; name: string },
+    input: { accountIds: readonly string[]; id?: string | null; layoutMode?: GridMode; name: string },
   ): SavedGridWorkspace | null {
     const name = cleanName(input.name)
     const accountIds = [...new Set(input.accountIds.filter(Boolean))]
@@ -81,8 +90,16 @@ export class GridWorkspaceService {
     const timestamp = this.now().toISOString()
     const index = input.id ? grids.findIndex((grid) => grid.id === input.id) : -1
     const saved: SavedGridWorkspace = index >= 0
-      ? { ...grids[index]!, name, accountIds, updatedAt: timestamp }
-      : { id: this.createId(), name, accountIds, createdAt: timestamp, updatedAt: timestamp }
+      ? {
+          ...grids[index]!, name, accountIds,
+          layoutMode: cleanLayoutMode(input.layoutMode ?? grids[index]!.layoutMode),
+          updatedAt: timestamp,
+        }
+      : {
+          id: this.createId(), name, accountIds,
+          layoutMode: cleanLayoutMode(input.layoutMode),
+          createdAt: timestamp, updatedAt: timestamp,
+        }
     if (index >= 0) grids[index] = saved
     else grids.push(saved)
     this.write(this.keyFor(userId), JSON.stringify(grids))
@@ -95,6 +112,20 @@ export class GridWorkspaceService {
     if (remaining.length === grids.length) return false
     this.write(this.keyFor(userId), JSON.stringify(remaining))
     return true
+  }
+
+  setLayout(userId: string, gridId: string, layoutMode: GridMode): SavedGridWorkspace | null {
+    const grids = this.list(userId)
+    const index = grids.findIndex((grid) => grid.id === gridId)
+    if (index < 0) return null
+    const updated = {
+      ...grids[index]!,
+      layoutMode: cleanLayoutMode(layoutMode),
+      updatedAt: this.now().toISOString(),
+    }
+    grids[index] = updated
+    this.write(this.keyFor(userId), JSON.stringify(grids))
+    return { ...updated, accountIds: [...updated.accountIds] }
   }
 
   createForGames(
@@ -112,7 +143,10 @@ export class GridWorkspaceService {
       const timestamp = this.now().toISOString()
       const accountIds = group.map((account) => account.id)
       if (matching) { matching.accountIds = accountIds; matching.updatedAt = timestamp }
-      else existing.push({ id: this.createId(), name, accountIds, createdAt: timestamp, updatedAt: timestamp })
+      else existing.push({
+        id: this.createId(), name, accountIds, layoutMode: 'auto',
+        createdAt: timestamp, updatedAt: timestamp,
+      })
     })
     this.write(this.keyFor(userId), JSON.stringify(existing))
     return this.list(userId)

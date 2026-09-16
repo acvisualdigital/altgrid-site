@@ -67,6 +67,7 @@ function createSessionApi() {
     removeExtension: vi.fn(async () => true),
     resizeSession: vi.fn(async (accountId: string) => snapshot(accountId, true)),
     setEcoMode: vi.fn(async (enabled: boolean) => enabled),
+    setUltraMode: vi.fn(async (enabled: boolean) => enabled),
     setFrameRate: vi.fn(async (accountId: string, fps: number) => ({
       ...snapshot(accountId, true),
       frameRate: fps,

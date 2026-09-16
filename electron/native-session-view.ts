@@ -1,5 +1,4 @@
 import {
-  app,
   session,
   WebContentsView,
   type BrowserWindow,
@@ -18,18 +17,18 @@ import type {
   NativeSessionViewFactory,
 } from './session-manager.js'
 import { isAllowedSessionUrl } from './url-policy.js'
+import { sampleProcessMetrics } from './process-metrics-sampler.js'
+import {
+  resolveGamePerformanceProfile,
+  type AccountParkingStrategy,
+  type GamePerformanceProfile,
+} from './game-performance-profile.js'
 
 const hardenedSessions = new WeakSet<Session>()
 // Parked views keep their network/timer lifecycle alive, but should almost
 // never redraw. Two FPS is enough for lightweight idle-game effects while
 // avoiding a hidden renderer competing with the focused account.
 const PARKED_COMPATIBILITY_FRAME_RATE = 2
-const PARKED_INITIAL_COLLECTION_DELAY_MS = 8_000
-const PARKED_COLLECTION_INTERVAL_MS = 5 * 60_000
-const PRESSURE_COLLECTION_MIN_KB = 768 * 1024
-const PRESSURE_COLLECTION_GROWTH_KB = 128 * 1024
-const COLLECTION_MAX_APP_CPU_PERCENT = 25
-let cachedAppMetrics: Electron.ProcessMetric[] | null = null
 const sessionPreloadPath = join(
   dirname(fileURLToPath(import.meta.url)),
   'session-preload.cjs',
@@ -41,6 +40,10 @@ function destinationLabel(url: string): string {
   } catch {
     return 'Destino inválido'
   }
+}
+
+function safeOrigin(url: string): string {
+  try { return new URL(url).origin } catch { return 'unknown' }
 }
 
 function hardenPartition(sessionInstance: Session): void {
@@ -88,22 +91,8 @@ function finiteNonNegative(value: unknown): number {
     : 0
 }
 
-function stableCollectionOffset(accountId: string): number {
-  let hash = 0
-  for (const character of accountId) {
-    hash = (hash * 31 + character.charCodeAt(0)) >>> 0
-  }
-  return hash % 30_000
-}
-
 function currentAppMetrics(): Electron.ProcessMetric[] {
-  if (!cachedAppMetrics) {
-    cachedAppMetrics = app.getAppMetrics()
-    queueMicrotask(() => {
-      cachedAppMetrics = null
-    })
-  }
-  return cachedAppMetrics
+  return sampleProcessMetrics().metrics
 }
 
 export async function clearNativeSessionPartition(partition: string): Promise<void> {
@@ -116,9 +105,6 @@ export function createNativeSessionViewFactory(
   hostWindow: BrowserWindow,
   allowInsecureLoopback: boolean,
 ): NativeSessionViewFactory {
-  // Four simultaneous full collections can otherwise introduce stutter.
-  let collectionInFlight = false
-  let nextCollectionAt = 0
   return ({ accountId, onEvent, partition }): NativeSessionView => {
     const isolatedSession = session.fromPartition(partition, { cache: true })
 
@@ -137,15 +123,19 @@ export function createNativeSessionViewFactory(
     let requestedMuted = false
     let requestedZoomFactor = 1
     let parked = true
+    let parkingStrategy: AccountParkingStrategy = 'ATTACHED_OFFSCREEN'
+    let performanceMode: 'normal' | 'eco' | 'ultra' = 'normal'
+    let backgroundThrottlingApplyCount = 0
+    let backgroundThrottlingLastReason: string | null = null
+    let backgroundThrottlingLastAppliedAt: string | null = null
+    let parkingFallbackReason: string | null = null
+    let profile: GamePerformanceProfile = resolveGamePerformanceProfile('')
+    let detachedAt: number | null = null
+    let detachUrl = ''
+    let detachPid: number | null = null
     let presentationApplied = false
     let lastSentFrameRate: number | null = null
-    let parkedCollectionTimer: NodeJS.Timeout | null = null
-    let pressureCollectionTimer: NodeJS.Timeout | null = null
-    let manualCollectionTimer: NodeJS.Timeout | null = null
     let manualCollectionPending = false
-    let lastCollectionAt = 0
-    let lastPressureKb = 0
-    const parkedCollectionOffsetMs = stableCollectionOffset(accountId)
     let currentBounds = { height: 720, width: 1_280, x: 0, y: 0 }
     let proxyCredentials: Pick<SessionProxyConfig, 'password' | 'username'> | null = null
     let loadedExtensionId: string | null = null
@@ -211,15 +201,28 @@ export function createNativeSessionViewFactory(
       view.setBounds(parked ? parkedBounds(currentBounds) : currentBounds)
     }
 
-    const applyBackgroundThrottling = (): void => {
+    const fallBackToAttachedParking = (reason: string): void => {
+      if (parkingStrategy !== 'DETACHED_VIEW') return
+      parkingStrategy = 'ATTACHED_OFFSCREEN'
+      parkingFallbackReason = reason
+      detachedAt = null
+      if (!attached && !destroyed && !hostWindow.isDestroyed()) {
+        hostWindow.contentView.addChildView(view)
+        attached = true
+      }
+      applyBounds()
+      view.setVisible(!parked)
+    }
+
+    const applyBackgroundThrottling = (reason = 'presentation-change'): void => {
       if (!view.webContents.isDestroyed()) {
-        // Chromium's background timer throttling becomes increasingly
-        // aggressive after a page stays hidden for a few minutes. Idle games
-        // use ordinary timers for heartbeats, so throttling those timers can
-        // make the game server terminate an otherwise healthy session. Keep
-        // timers/network alive and reduce only visual work through the rAF
-        // budget below.
-        view.webContents.setBackgroundThrottling(false)
+        // The full benchmark matrix approved Chromium throttling together
+        // with detached parking only for Ultra. Normal and Eco retain the
+        // compatibility policy that keeps idle-game heartbeats responsive.
+        view.webContents.setBackgroundThrottling(performanceMode === 'ultra')
+        backgroundThrottlingApplyCount++
+        backgroundThrottlingLastReason = reason
+        backgroundThrottlingLastAppliedAt = new Date().toISOString()
       }
     }
 
@@ -257,99 +260,22 @@ export function createNativeSessionViewFactory(
       // timers/network state while a view is parked. Restore both immediately
       // when it returns to the screen.
       view.webContents.setAudioMuted(requestedMuted || parked)
-      view.webContents.setImageAnimationPolicy(parked ? 'noAnimation' : 'animate')
-    }
-
-    const cancelParkedCollection = (): void => {
-      if (parkedCollectionTimer) {
-        clearTimeout(parkedCollectionTimer)
-        parkedCollectionTimer = null
-      }
+      view.webContents.setImageAnimationPolicy(parked ? profile.imageAnimationPolicy : 'animate')
     }
 
     const collectUnusedMemory = async (): Promise<boolean> => {
-      if (destroyed || view.webContents.isDestroyed()
-        || collectionInFlight || Date.now() < nextCollectionAt
-        || (lastCollectionAt > 0 && Date.now() - lastCollectionAt < PARKED_COLLECTION_INTERVAL_MS)) return false
-      // Never add a major collection to an already busy frame/network cycle.
-      // A skipped request leaves the cooldown untouched and can be reconsidered
-      // by normal maintenance; collections still remain serialized globally.
-      const cpuPercent = currentAppMetrics().reduce(
-        (sum, metric) => sum + finiteNonNegative(metric.cpu?.percentCPUUsage), 0,
-      )
-      if (cpuPercent > COLLECTION_MAX_APP_CPU_PERCENT) return false
-      collectionInFlight = true
-      lastCollectionAt = Date.now()
+      if (destroyed || view.webContents.isDestroyed() || !allowInsecureLoopback
+        || process.env.ALTGRID_EXPERIMENTAL_EXPOSE_GC !== 'true') return false
       try {
-        // Request async major GC in an isolated world. Do not reload the game,
-        // clear storage/cache, or discard live game objects to lower the HUD.
+        // Manual development experiment only. Never scheduled automatically
+        // and never enabled in a packaged build.
         await view.webContents.executeJavaScriptInIsolatedWorld(999, [{
           code: "globalThis.gc?.({ type: 'major', execution: 'async' })",
         }])
         return true
       } catch {
         return false
-      } finally {
-        collectionInFlight = false
-        nextCollectionAt = Date.now() + 15_000
       }
-    }
-
-    const considerMemoryPressure = (privateKb: number): void => {
-      // Re-arm after successful reclamation/natural GC. Keeping the old peak
-      // forever would make the trigger climb by 128 MiB on every cycle.
-      if (privateKb < PRESSURE_COLLECTION_MIN_KB) lastPressureKb = 0
-      if (destroyed || pressureCollectionTimer || privateKb < PRESSURE_COLLECTION_MIN_KB
-        || privateKb < lastPressureKb + PRESSURE_COLLECTION_GROWTH_KB
-        || Date.now() - lastCollectionAt < PARKED_COLLECTION_INTERVAL_MS) return
-      pressureCollectionTimer = setTimeout(() => {
-        pressureCollectionTimer = null
-        if (destroyed || view.webContents.isDestroyed()) return
-        const latest = currentAppMetrics().find((metric) => metric.pid === view.webContents.getOSProcessId())
-        if (finiteNonNegative(latest?.memory.privateBytes ?? latest?.memory.workingSetSize)
-          < PRESSURE_COLLECTION_MIN_KB) return
-        void collectUnusedMemory().then((collected) => {
-          // If live game data stays large, don't repeatedly force GC at the
-          // same level. Retry only after additional measured growth.
-          if (collected && !destroyed && !view.webContents.isDestroyed()) {
-            const after = currentAppMetrics().find((metric) => metric.pid === view.webContents.getOSProcessId())
-            lastPressureKb = finiteNonNegative(after?.memory.privateBytes ?? after?.memory.workingSetSize)
-          }
-        })
-      }, parkedCollectionOffsetMs)
-    }
-
-    // The shell pauses its HUD polling when minimized. Maintenance must still
-    // run for games kept online in that state, independently of the UI.
-    const memoryMonitorTimer = setInterval(() => {
-      if (destroyed || view.webContents.isDestroyed()) return
-      const metric = currentAppMetrics().find((item) => item.pid === view.webContents.getOSProcessId())
-      considerMemoryPressure(finiteNonNegative(metric?.memory.privateBytes ?? metric?.memory.workingSetSize))
-    }, 60_000)
-    memoryMonitorTimer.unref()
-
-    const scheduleParkedCollection = (): void => {
-      cancelParkedCollection()
-      if (!parked || destroyed || view.webContents.isDestroyed()) {
-        return
-      }
-      // Give pending page work a chance to settle, then ask V8 to release
-      // unreachable objects from the hidden renderer. The game, timers,
-      // sockets and persistent session stay alive.
-      const collectAndReschedule = (): void => {
-        parkedCollectionTimer = null
-        if (parked && !destroyed && !view.webContents.isDestroyed()) {
-          void collectUnusedMemory()
-          parkedCollectionTimer = setTimeout(
-            collectAndReschedule,
-            PARKED_COLLECTION_INTERVAL_MS + parkedCollectionOffsetMs,
-          )
-        }
-      }
-      parkedCollectionTimer = setTimeout(
-        collectAndReschedule,
-        PARKED_INITIAL_COLLECTION_DELAY_MS + Math.min(parkedCollectionOffsetMs, 7_000),
-      )
     }
 
     view.setBackgroundColor('#080c11')
@@ -434,12 +360,16 @@ export function createNativeSessionViewFactory(
       lastSentFrameRate = null
       // Reapply after navigation/visibility changes: Electron needs the policy
       // on the live renderer, not just the initial empty WebContents.
-      applyBackgroundThrottling()
+      applyBackgroundThrottling('document-finished-loading')
       applyZoomFactor()
       applyFrameRateLimit()
       onEvent({ type: 'ready' })
     })
     view.webContents.on('did-navigate', (_event, url) => {
+      if (parkingStrategy === 'DETACHED_VIEW' && detachedAt !== null
+        && safeOrigin(url) !== detachUrl) {
+        fallBackToAttachedParking('unexpected-navigation')
+      }
       onEvent({ type: 'navigated', url })
     })
     view.webContents.on('did-navigate-in-page', (_event, url) => {
@@ -457,8 +387,16 @@ export function createNativeSessionViewFactory(
       },
     )
     view.webContents.on('render-process-gone', (_event, details) => {
+      if (parkingStrategy === 'DETACHED_VIEW' && detachedAt !== null) {
+        fallBackToAttachedParking(`render-process-gone:${details.reason}`)
+      }
       if (!destroyed && details.reason !== 'clean-exit') {
         onEvent({ detail: 'Sessão interrompida.', type: 'crashed' })
+      }
+    })
+    view.webContents.on('unresponsive', () => {
+      if (parkingStrategy === 'DETACHED_VIEW' && detachedAt !== null) {
+        fallBackToAttachedParking('unresponsive')
       }
     })
 
@@ -473,20 +411,11 @@ export function createNativeSessionViewFactory(
       },
 
       requestMemoryCleanup(): boolean {
-        if (destroyed || view.webContents.isDestroyed() || manualCollectionPending) return false
+        if (destroyed || view.webContents.isDestroyed() || manualCollectionPending
+          || !allowInsecureLoopback
+          || process.env.ALTGRID_EXPERIMENTAL_EXPOSE_GC !== 'true') return false
         manualCollectionPending = true
-        // Queue, never run collections concurrently or reload authenticated games.
-        // Busy sessions have up to five minutes to settle before abandoning a request.
-        let attempts = 0
-        const attempt = async (): Promise<void> => {
-          manualCollectionTimer = null
-          if (destroyed || view.webContents.isDestroyed()) { manualCollectionPending = false; return }
-          if (await collectUnusedMemory()) { manualCollectionPending = false; return }
-          if (++attempts < 20 && !destroyed) {
-            manualCollectionTimer = setTimeout(() => void attempt(), 15_000)
-          } else manualCollectionPending = false
-        }
-        manualCollectionTimer = setTimeout(() => void attempt(), parkedCollectionOffsetMs)
+        void collectUnusedMemory().finally(() => { manualCollectionPending = false })
         return true
       },
 
@@ -496,15 +425,7 @@ export function createNativeSessionViewFactory(
         }
 
         destroyed = true
-        if (manualCollectionTimer) clearTimeout(manualCollectionTimer)
-        manualCollectionTimer = null
         manualCollectionPending = false
-        clearInterval(memoryMonitorTimer)
-        cancelParkedCollection()
-        if (pressureCollectionTimer) {
-          clearTimeout(pressureCollectionTimer)
-          pressureCollectionTimer = null
-        }
         view.setVisible(false)
 
         for (const popupWindow of popupWindows) {
@@ -545,6 +466,39 @@ export function createNativeSessionViewFactory(
         }
       },
 
+      getProcessId(): number | null {
+        if (view.webContents.isDestroyed()) return null
+        const pid = view.webContents.getOSProcessId()
+        return pid > 0 ? pid : null
+      },
+
+      getDiagnostics() {
+        const rawUrl = view.webContents.isDestroyed() ? '' : view.webContents.getURL()
+        let origin = 'unknown'
+        try { origin = new URL(rawUrl).origin } catch { /* Redacted diagnostic. */ }
+        return {
+          webContentsId: view.webContents.id,
+          pid: view.webContents.isDestroyed() ? null : view.webContents.getOSProcessId(),
+          origin,
+          parked,
+          attached,
+          parkingStrategy,
+          parkingFallbackReason,
+          detachedAt,
+          detachedDurationMs: detachedAt === null ? 0 : Date.now() - detachedAt,
+          detachPid,
+          urlChangedWhileDetached: detachedAt !== null && safeOrigin(rawUrl) !== detachUrl,
+          muted: requestedMuted || parked,
+          requestedMuted,
+          backgroundThrottling: performanceMode === 'ultra',
+          backgroundThrottlingApplyCount,
+          backgroundThrottlingLastReason,
+          backgroundThrottlingLastAppliedAt,
+          imageAnimationPolicy: parked ? profile.imageAnimationPolicy : 'animate',
+          profileId: profile.id,
+        }
+      },
+
       async getResourceUsage(): Promise<{ cpuPercent: number; privateKb: number; sharedKb: number }> {
         if (view.webContents.isDestroyed()) {
           return { cpuPercent: 0, privateKb: 0, sharedKb: 0 }
@@ -559,7 +513,6 @@ export function createNativeSessionViewFactory(
           usage?.privateBytes ?? usage?.workingSetSize,
         )
         const workingSetKb = finiteNonNegative(usage?.workingSetSize)
-        considerMemoryPressure(privateKb)
         return {
           cpuPercent: finiteNonNegative(metric?.cpu?.percentCPUUsage),
           privateKb,
@@ -568,6 +521,7 @@ export function createNativeSessionViewFactory(
       },
 
       loadURL(url): Promise<void> {
+        profile = resolveGamePerformanceProfile(url)
         return view.webContents.loadURL(url)
       },
 
@@ -594,7 +548,7 @@ export function createNativeSessionViewFactory(
 
       setEcoMode(_enabled): void {
         if (!view.webContents.isDestroyed()) {
-          applyBackgroundThrottling()
+          applyBackgroundThrottling('performance-mode-change')
         }
       },
 
@@ -686,17 +640,66 @@ export function createNativeSessionViewFactory(
           // Keep the WebContents and persistent partition alive while hiding
           // its pixels when another account is displayed.
           parked = !visible
-          applyBounds()
-          view.setVisible(visible)
-          applyBackgroundThrottling()
+          if (parkingStrategy === 'DETACHED_VIEW' && parked) {
+            detachUrl = safeOrigin(view.webContents.getURL())
+            detachPid = view.webContents.getOSProcessId()
+            detachedAt = Date.now()
+            view.setVisible(false)
+            if (attached && !hostWindow.isDestroyed()) {
+              hostWindow.contentView.removeChildView(view)
+              attached = false
+            }
+          } else {
+            if (!attached && !hostWindow.isDestroyed()) {
+              hostWindow.contentView.addChildView(view)
+              attached = true
+            }
+            if (!parked && detachedAt !== null) {
+              const currentUrl = view.webContents.getURL()
+              const currentOrigin = safeOrigin(currentUrl)
+              const currentPid = view.webContents.getOSProcessId()
+              if (!currentUrl || currentOrigin !== detachUrl || currentPid !== detachPid) {
+                fallBackToAttachedParking(!currentUrl ? 'blank-page' : currentOrigin !== detachUrl
+                  ? 'unexpected-navigation' : 'renderer-recreated')
+              }
+              detachedAt = null
+            }
+            applyBounds()
+            view.setVisible(visible)
+          }
+          applyBackgroundThrottling('visibility-change')
           applyFrameRateLimit()
           applyParkedMediaPolicy()
-          if (parked) {
-            scheduleParkedCollection()
-          } else {
-            cancelParkedCollection()
+        }
+      },
+
+      setPerformanceMode(mode): void {
+        if (destroyed) return
+        performanceMode = mode
+        const nextParking: AccountParkingStrategy = mode === 'ultra'
+          ? 'DETACHED_VIEW'
+          : 'ATTACHED_OFFSCREEN'
+        if (parkingStrategy !== nextParking) {
+          parkingStrategy = nextParking
+          parkingFallbackReason = null
+          if (parked && nextParking === 'DETACHED_VIEW' && attached && !hostWindow.isDestroyed()) {
+            detachUrl = safeOrigin(view.webContents.getURL())
+            detachPid = view.webContents.getOSProcessId()
+            detachedAt = Date.now()
+            view.setVisible(false)
+            hostWindow.contentView.removeChildView(view)
+            attached = false
+          } else if (nextParking === 'ATTACHED_OFFSCREEN' && !attached && !hostWindow.isDestroyed()) {
+            hostWindow.contentView.addChildView(view)
+            attached = true
+            detachedAt = null
+            applyBounds()
+            view.setVisible(!parked)
           }
         }
+        applyBackgroundThrottling('performance-mode-change')
+        applyFrameRateLimit()
+        applyParkedMediaPolicy()
       },
 
       setZoomFactor(factor): void {

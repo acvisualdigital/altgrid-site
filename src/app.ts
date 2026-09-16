@@ -409,6 +409,7 @@ export interface AccountSessionLauncher {
   getResourceUsage?(): Promise<SessionResourceUsage[]>
   requestMemoryCleanup?(): Promise<number>
   getDiagnostics?(): Promise<DesktopDiagnostics>
+  captureHeapSnapshot?(target: 'main' | 'shell'): Promise<string | null>
   open(
     account: ConfiguredAccount,
     target: AccountSessionLaunchTarget | null,
@@ -422,6 +423,7 @@ export interface AccountSessionLauncher {
   removeExtension?(account: ConfiguredAccount): Promise<boolean>
   removeProxy?(account: ConfiguredAccount): Promise<boolean>
   setEcoMode(enabled: boolean, backgroundFps: EcoBackgroundFps): Promise<boolean> | boolean
+  setUltraMode?(enabled: boolean): Promise<boolean> | boolean
   setFrameRate(account: ConfiguredAccount, fps: number): Promise<void> | void
   setInterfaceScale?(
     account: ConfiguredAccount,
@@ -1065,6 +1067,9 @@ export class AuthApp {
   private resourceUsageLoading = false
   private lastResourceUsageAt = 0
   private resourceUsageTimer: ReturnType<typeof setInterval> | null = null
+  private performanceDebugTimer: ReturnType<typeof setInterval> | null = null
+  private performanceDebugBusy = false
+  private performanceDebugStarting = false
   private sessionAlertTimer: ReturnType<typeof setTimeout> | null = null
   private readonly backgroundAccountIds = new Set<string>()
   private chatNicknameSaving = false
@@ -1215,11 +1220,15 @@ export class AuthApp {
       setEcoMode: (enabled, backgroundFps) => (
         sessionLauncher?.setEcoMode?.(enabled, backgroundFps) ?? false
       ),
+      setUltraMode: sessionLauncher?.setUltraMode
+        ? (enabled) => sessionLauncher.setUltraMode!(enabled) : undefined,
       setFrameRate: (account, fps) => sessionLauncher?.setFrameRate?.(account, fps),
       requestMemoryCleanup: sessionLauncher?.requestMemoryCleanup
         ? () => sessionLauncher.requestMemoryCleanup!() : undefined,
       getDiagnostics: sessionLauncher?.getDiagnostics
         ? () => sessionLauncher.getDiagnostics!() : undefined,
+      captureHeapSnapshot: sessionLauncher?.captureHeapSnapshot
+        ? (target) => sessionLauncher.captureHeapSnapshot!(target) : undefined,
       setInterfaceScale: sessionLauncher?.setInterfaceScale
         ? (account, scale) => sessionLauncher.setInterfaceScale!(account, scale)
         : undefined,
@@ -1370,6 +1379,7 @@ export class AuthApp {
     this.stopPaymentPolling()
     this.stopPresenceTracking()
     this.stopResourceMonitoring()
+    this.stopPerformanceDebugMonitor()
     this.stopAdminPaymentAlerts()
     this.stopAppAdPopupTimer()
     void this.releaseTrackedSessions()
@@ -1984,6 +1994,7 @@ export class AuthApp {
     this.stopPresenceTracking()
     this.stopPaymentPolling()
     this.stopResourceMonitoring()
+    this.stopPerformanceDebugMonitor()
     this.stopAdminPaymentAlerts()
     this.backendStateRevision += 1
     void this.releaseTrackedSessions()
@@ -3815,6 +3826,19 @@ export class AuthApp {
   }
 
   private storeGridModePreference(mode: GridMode): void {
+    const userId = this.session?.user.id
+    const gridId = this.selectedGridWorkspaceId
+    if (userId && gridId) {
+      const updated = this.gridWorkspaceService.setLayout(userId, gridId, mode)
+      if (updated) {
+        this.savedGridWorkspaces = this.savedGridWorkspaces.map((grid) => (
+          grid.id === updated.id
+            ? { ...grid, layoutMode: updated.layoutMode, updatedAt: updated.updatedAt }
+            : grid
+        ))
+        return
+      }
+    }
     try {
       localStorage.setItem(GRID_MODE_STORAGE_KEY, mode)
     } catch {
@@ -3834,6 +3858,7 @@ export class AuthApp {
         ? selected
         : null
     } catch { this.selectedGridWorkspaceId = null }
+    this.gridMode = this.selectedGridWorkspace()?.layoutMode ?? this.readGridModePreference()
   }
 
   private selectGridWorkspace(gridId: string | null): void {
@@ -3842,6 +3867,7 @@ export class AuthApp {
       && this.savedGridWorkspaces.some((grid) => grid.id === gridId)
       ? gridId
       : null
+    this.gridMode = this.selectedGridWorkspace()?.layoutMode ?? this.readGridModePreference()
     this.gridPageIndex = 0
     this.maximizedAccountId = null
     if (userId) {
@@ -5040,6 +5066,9 @@ export class AuthApp {
   private setUltraMode(enabled: boolean): void {
     if (enabled === this.ultraMode || (enabled && (!this.session || this.activeDialog))) return
     this.ultraMode = enabled
+    void Promise.resolve(this.sessionLauncher.setUltraMode?.(enabled)).catch(() => {
+      this.showSessionAlert('Não foi possível aplicar o limite visual do Modo Ultra aos jogos.')
+    })
     if (enabled) {
       this.presentationBeforeUltra = { screensOnly: this.screensOnly, workspaceMode: this.workspaceMode, maximizedAccountId: this.maximizedAccountId, chatWasOpen: Boolean(this.chatService?.getState().open) }
       this.screensOnly = true
@@ -6030,7 +6059,7 @@ export class AuthApp {
                 <label class="setting-toggle"><span><strong>Confirmar antes de fechar</strong><small>Evita encerrar sessões por acidente.</small></span><input data-preference="confirm-close" type="checkbox" ${confirmClose ? 'checked' : ''} /></label>
               </section>
               <section data-settings-panel="accounts" hidden><h3>Contas e desempenho</h3><p>Cookies, sessões e proxies ficam somente neste dispositivo, isolados por conta.</p><div class="resource-summary"><span><small>Uso das sessões</small><strong>${escapeHtml(formatMemoryKb(totalPrivateKb))} · ${totalCpu.toFixed(1)}% CPU</strong></span><button class="button button--secondary" data-refresh-resource-usage type="button" ${this.resourceUsageLoading ? 'disabled' : ''}>${this.resourceUsageLoading ? 'Medindo…' : 'Medir agora'}</button></div>${usageRows ? `<div class="resource-list">${usageRows}</div>` : '<p class="modal__note">Abra suas contas e clique em “Medir agora” para ver o consumo por sessão.</p>'}<p class="modal__note">O perfil de 10 FPS reduz trabalho de CPU/GPU das contas em segundo plano. Como cada jogo mantém um navegador isolado e ativo, a RAM só é totalmente liberada ao fechar a conta.</p></section>
-              <section data-settings-panel="accounts" hidden><h3>Diagnóstico local</h3><p>O relatório não inclui logins, cookies ou credenciais.</p>${this.renderPerformanceSummary()}<div class="resource-summary">${this.sessionLauncher.requestMemoryCleanup ? '<button class="button button--secondary" data-clean-memory type="button">Limpar RAM</button>' : ''}${this.sessionLauncher.getDiagnostics ? '<button class="button button--secondary" data-export-diagnostics type="button">Salvar relatório</button>' : ''}</div></section>
+              <section data-settings-panel="accounts" hidden><h3>Diagnóstico local</h3><p>O relatório não inclui logins, cookies ou credenciais.</p>${this.renderPerformanceSummary()}<div data-performance-debug></div><div class="resource-summary">${this.sessionLauncher.getDiagnostics ? '<button class="button button--secondary" data-export-diagnostics type="button">Salvar relatório</button>' : ''}</div></section>
               <section data-settings-panel="visual" hidden><h3>Visual</h3><p>O tema escuro premium acompanha automaticamente o AltGrid.</p></section>
               <section data-settings-panel="updates" hidden><h3>Atualizações</h3><p>Canal atual: <strong>${updateChannel}</strong> · instalada ${APP_VERSION}${this.configText('latest_version') ? ` · disponível ${escapeHtml(this.configText('latest_version')!)}` : ''}</p><button class="button button--secondary" data-check-update type="button">Verificar atualização</button></section>
               <section data-settings-panel="notifications" hidden><h3>Notificações</h3><label class="setting-toggle"><span><strong>Avisos do AltGrid</strong><small>Atualizações, anúncios e alertas do sistema.</small></span><input data-preference="notifications" type="checkbox" ${notifications ? 'checked' : ''} /></label><label class="setting-toggle"><span><strong>Som de menções no chat</strong><small>Avisa quando alguém mencionar seu nick.</small></span><input data-preference="chat-sound" type="checkbox" ${localStorage.getItem('altgrid.preference.chat-sound') !== 'false' ? 'checked' : ''} /></label></section>
@@ -9553,6 +9582,76 @@ export class AuthApp {
     this.resourceUsageLoading = false
   }
 
+  private stopPerformanceDebugMonitor(): void {
+    if (this.performanceDebugTimer !== null) {
+      clearInterval(this.performanceDebugTimer)
+      this.performanceDebugTimer = null
+    }
+  }
+
+  private async refreshPerformanceDebugMonitor(): Promise<void> {
+    if (!this.sessionLauncher.getDiagnostics || this.performanceDebugBusy || this.destroyed
+      || this.activeDialog !== 'settings' || this.activeSettingsTab !== 'accounts') return
+    this.performanceDebugBusy = true
+    try {
+      const report = await this.sessionLauncher.getDiagnostics()
+      if (!report.performanceDebugEnabled || this.activeDialog !== 'settings'
+        || this.activeSettingsTab !== 'accounts' || this.destroyed) return
+      const target = this.root.querySelector<HTMLElement>('[data-performance-debug]')
+      if (!target) return
+      this.performanceHistory.capture(report)
+      const totalKb = report.processes.reduce((sum, process) => sum + process.privateKb, 0)
+      const cpu = report.processes.reduce((sum, process) => sum + process.cpuPercent, 0)
+      const processRows = report.sessions.map((session) => {
+        const metric = report.processes.find((process) => process.pid === session.pid)
+        return `<div class="resource-row"><span><strong>${escapeHtml(session.label)}</strong><small>${escapeHtml(session.accountId ?? '—')} · WC ${session.webContentsId ?? '—'} · PID ${session.pid ?? '—'}</small><small>${escapeHtml(session.origin ?? 'unknown')} · ${escapeHtml(session.partition ?? '—')}</small><small>${escapeHtml(session.visualState ?? 'BACKGROUND')} · ${escapeHtml(session.parkingStrategy ?? 'ATTACHED_OFFSCREEN')} · ${session.frameRate} FPS · ${session.muted ? 'muted' : 'áudio livre'}</small><small>Background throttling: ${session.backgroundThrottling ? 'true' : 'false'} · aplicações: ${session.backgroundThrottlingApplyCount ?? 0} · motivo: ${escapeHtml(session.backgroundThrottlingLastReason ?? '—')} · ${escapeHtml(session.backgroundThrottlingLastAppliedAt ?? '—')}</small></span><b>${escapeHtml(formatMemoryKb(metric?.privateKb ?? 0))}<small>${(metric?.cpuPercent ?? 0).toFixed(1)}% CPU</small></b></div>`
+      }).join('')
+      const categoryRows = report.totals ? [
+        ['AltGrid', report.totals.altgridOverheadKb],
+        ['Jogos', report.totals.gameRenderersKb],
+        ['GPU', report.totals.gpuKb],
+        ['Serviços Chromium', report.totals.chromiumServicesKb],
+        ['Outros', report.totals.unknownKb],
+      ].map(([label, value]) => `<div class="resource-row"><span><strong>${label}</strong></span><b>${escapeHtml(formatMemoryKb(Number(value)))}</b></div>`).join('') : ''
+      const chromiumRows = report.processes.map((process) => `<div class="resource-row"><span><strong>${escapeHtml(process.name || process.serviceName || process.type)}</strong><small>${escapeHtml(process.classification ?? 'UNKNOWN')} · PID ${process.pid ?? '—'}</small></span><b>${escapeHtml(formatMemoryKb(process.privateKb))}<small>${process.cpuPercent.toFixed(1)}% CPU · WS ${escapeHtml(formatMemoryKb(process.workingSetKb ?? 0))}</small></b></div>`).join('')
+      const ipcRows = (report.ipc ?? []).map((item) => `<div class="resource-row"><span><strong>${escapeHtml(item.channel)}</strong><small>${item.count} chamadas</small></span><b>${item.callsPerSecond.toFixed(2)}/s<small>${item.averageBytes} B média · ${item.maxBytes} B máx.</small></b></div>`).join('')
+      const heapActions = this.sessionLauncher.captureHeapSnapshot
+        ? '<div class="resource-summary"><button class="button button--secondary" data-capture-heap="main" type="button">Heap do Main</button><button class="button button--secondary" data-capture-heap="shell" type="button">Heap da interface</button></div><p class="modal__note">Snapshots podem conter conteúdo em memória. Use somente localmente e não compartilhe sem revisão.</p>'
+        : ''
+      target.innerHTML = `<h4>Monitor de desenvolvimento · 2 s</h4><p>Modo: ${escapeHtml(report.performanceMode ?? 'normal')} · Ativa: ${escapeHtml(report.activeSession ?? 'nenhuma')} · ${report.sessions.length} visualizações · ${report.processes.length} processos</p><p>RAM total: ${escapeHtml(formatMemoryKb(totalKb))} · CPU: ${cpu.toFixed(1)}%</p><p>Background throttling — Shell: ${report.shellBackgroundThrottling === false ? 'false' : 'true'}</p><h4>Classificação</h4><div class="resource-list">${categoryRows}</div><h4>Contas</h4><div class="resource-list">${processRows}</div><h4>Processos Electron/Chromium</h4><div class="resource-list">${chromiumRows}</div><h4>IPC (sem conteúdo)</h4><div class="resource-list">${ipcRows || '<p>Nenhuma chamada registrada.</p>'}</div>${heapActions}`
+      target.querySelectorAll<HTMLButtonElement>('[data-capture-heap]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const targetProcess = button.dataset.captureHeap as 'main' | 'shell'
+          button.disabled = true
+          void this.sessionLauncher.captureHeapSnapshot?.(targetProcess)
+            .catch(() => this.showSessionAlert('Não foi possível capturar o heap.'))
+            .finally(() => { button.disabled = false })
+        }, { once: true })
+      })
+    } catch { /* Development diagnostics must not interrupt games. */ }
+    finally { this.performanceDebugBusy = false }
+  }
+
+  private async startPerformanceDebugMonitor(): Promise<void> {
+    if (!this.sessionLauncher.getDiagnostics || this.performanceDebugTimer !== null
+      || this.performanceDebugStarting) return
+    this.performanceDebugStarting = true
+    try {
+      const report = await this.sessionLauncher.getDiagnostics()
+      if (!report.performanceDebugEnabled || this.destroyed || this.activeDialog !== 'settings'
+        || this.activeSettingsTab !== 'accounts') return
+      void this.refreshPerformanceDebugMonitor()
+      this.performanceDebugTimer = setInterval(() => {
+        if (this.activeDialog !== 'settings' || this.activeSettingsTab !== 'accounts' || this.destroyed) {
+          this.stopPerformanceDebugMonitor()
+        } else {
+          void this.refreshPerformanceDebugMonitor()
+        }
+      }, 2_000)
+    } catch { /* Debug mode is optional. */ }
+    finally { this.performanceDebugStarting = false }
+  }
+
   private updateUtilityMetrics(): void {
     const utility = this.root.querySelector<HTMLElement>('[data-workspace-utility]')
     if (!utility) return
@@ -9586,6 +9685,8 @@ export class AuthApp {
 
   private activateSettingsTab(tabName: SettingsTab): void {
     this.activeSettingsTab = tabName
+    if (tabName === 'accounts') void this.startPerformanceDebugMonitor()
+    else this.stopPerformanceDebugMonitor()
     this.root.querySelectorAll<HTMLButtonElement>('[data-settings-tab]').forEach((tab) => {
       tab.classList.toggle('is-active', tab.dataset.settingsTab === tabName)
     })
